@@ -389,7 +389,7 @@ export default function OverviewPage() {
       )}
       {activeSubTab === "Logs" && (
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-4">
-          <div className="flex items-start justify-between gap-4">
+          <div className="flex items-center justify-between gap-4">
             <div>
               <h2 className="mt-4 text-sm font-medium text-primary">Logs</h2>
               <p className="mt-1 text-xs text-white/60">
