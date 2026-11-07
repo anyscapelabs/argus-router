@@ -76,6 +76,19 @@ export default function OverviewPage() {
   const logs = useMemo(() => generateLogs(), []);
   const usage = useUsage();
   const usageRows = usage.data?.rows ?? [];
+  const modelUsage = useMemo(() => {
+    const map = new Map<string, { model: string; requests: number; input: number; output: number; cacheRead: number; cacheWrite: number }>();
+    for (const r of usageRows) {
+      const m = r.model ?? "unknown";
+      const e = map.get(m) ?? { model: m, requests: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+      e.requests += 1;
+      e.input += r.inputTokens ?? 0;
+      e.output += r.outputTokens ?? 0;
+      e.cacheRead += r.cacheReadTokens ?? 0;
+      map.set(m, e);
+    }
+    return Array.from(map.values());
+  }, [usageRows]);
   useEffect(() => {
     const platform = navigator.platform.toLowerCase();
     if (platform.includes("mac")) setOs("macOS");
@@ -424,6 +437,32 @@ export default function OverviewPage() {
             <p className="mt-1 text-xs text-white/60">
               Breakdown of usage per model.
             </p>
+          </div>
+          <div className="max-w-full overflow-x-auto rounded-md border border-border-secondary">
+            <table className="w-full text-left text-xs">
+              <thead>
+                <tr className="border-b border-border-secondary bg-tertiary text-white/40">
+                  <th className="px-2 py-2 font-medium rounded-tl-md">Model</th>
+                  <th className="px-2 py-2 text-right font-medium">Requests</th>
+                  <th className="px-2 py-2 text-right font-medium">Input tokens</th>
+                  <th className="px-2 py-2 text-right font-medium">Output tokens</th>
+                  <th className="px-2 py-2 text-right font-medium">Cache read</th>
+                  <th className="px-2 py-2 text-right font-medium rounded-tr-md">Cache write</th>
+                </tr>
+              </thead>
+              <tbody>
+                {modelUsage.map((m) => (
+                  <tr key={m.model} className="border-b border-border-secondary/50 transition-colors hover:bg-[#202020]">
+                    <td className="px-2 py-2 font-medium text-primary">{m.model}</td>
+                    <td className="px-2 py-2 text-right text-white/70">{m.requests.toLocaleString()}</td>
+                    <td className="px-2 py-2 text-right text-white/70">{m.input.toLocaleString()}</td>
+                    <td className="px-2 py-2 text-right text-white/70">{m.output.toLocaleString()}</td>
+                    <td className="px-2 py-2 text-right text-white/70">{m.cacheRead.toLocaleString()}</td>
+                    <td className="px-2 py-2 text-right text-white/70">{m.cacheWrite.toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
       )}
