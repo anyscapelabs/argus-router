@@ -25,10 +25,10 @@ const definition = defineChart(
     marks,
     scales: {
       x: {
-        scale: () => scaleBand<string>().paddingInner(0.2).paddingOuter(0.1),
+        scale: () => scaleBand<string>().paddingInner(0.1).paddingOuter(0.05),
         axis: {
           line: false,
-          ticks: { size: 0, padding: 8, format: (value: string) => `${value}:00` },
+          ticks: { size: 0, padding: 6, format: (value: string) => `${value}:00` },
         },
       },
       y: { scale: scaleLinear, grid: true, axis: true },
