@@ -27,14 +27,6 @@ pub struct Capabilities {
     pub reasoning: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, Default)]
-pub struct ProviderRoute {
-    #[serde(default)]
-    pub only: Vec<String>,
-    #[serde(default, rename = "allow_fallbacks")]
-    pub allow_fallbacks: bool,
-}
-
 /// Per-1M-token prices in USD, displayed in the dashboard models list.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Pricing {
@@ -53,7 +45,7 @@ pub struct ModelCatalogEntry {
     pub provider: String,
     pub upstream_model: String,
     #[serde(default)]
-    pub provider_routing: Option<ProviderRoute>,
+    pub provider_routing: Option<serde_json::Value>,
     pub context: i64,
     pub max_output: i64,
     pub capabilities: Capabilities,
