@@ -1,3 +1,51 @@
-export default function billingSettingsPage() {
-  return null;
+"use client";
+
+import { useModels } from "@/domains/models/hooks";
+import { usePlans } from "@/domains/plans/hooks";
+
+export default function BillingPage() {
+  const models = useModels();
+  const plans = usePlans();
+  const currentPlan = models.data?.plan ?? "free";
+
+  return (
+    <div className="flex min-h-full flex-1 flex-col px-2">
+      <h2 className="text-sm font-medium text-primary">Billing &amp; Plans</h2>
+      <p className="mt-1 text-xs text-white/60">
+        Choose the plan that fits your usage. Prices are per month.
+      </p>
+      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {plans.isLoading && (
+          <p className="text-xs text-white/60">Loading plans…</p>
+        )}
+        {plans.data?.plans.map((plan) => {
+          const isCurrent = plan.id === currentPlan;
+          return (
+            <div
+              key={plan.id}
+              className={`rounded-md border p-3 ${
+                isCurrent ? "border-[#3b82f6] bg-white/5" : "border-border-secondary bg-tertiary"
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-medium text-primary">{plan.name}</h3>
+                {isCurrent && (
+                  <span className="rounded-sm bg-[#3b82f6]/20 px-1.5 py-0.5 text-[10px] text-[#3b82f6]">
+                    Current
+                  </span>
+                )}
+              </div>
+              <p className="mt-1 text-lg font-semibold text-primary">
+                ${plan.price}
+                <span className="text-xs font-normal text-white/40">/mo</span>
+              </p>
+              <p className="mt-2 text-xs text-white/60">
+                {plan.models.length} models included
+              </p>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 }

@@ -43,6 +43,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let catalog = services::catalog::CatalogCache::new(seeded);
     tracing::info!(entries = catalog.snapshot().len(), "model catalog loaded");
 
+    let plans = services::plans::seed_entries();
+    if let Err(error) = app_db.seed_plans(&plans).await {
+        tracing::warn!(%error, "plan seeding failed");
+    }
+    if let Err(error) = app_db.seed_plan_allowlists(&plans).await {
+        tracing::warn!(%error, "plan allowlist seeding failed");
+    }
+
     let config = auth::auth_config(&settings);
     let store = auth::make_store(config, database.clone());
     let (auth, api_keys) = auth::build_auth(&settings, store).await?;

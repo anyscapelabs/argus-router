@@ -9,6 +9,7 @@ export const API_ROUTES = {
   agents: `${API_URL}/api/v1/agents`,
   health: `${API_URL}/api/v1/health`,
   models: `${API_URL}/api/v1/models`,
+  plans: `${API_URL}/api/v1/plans`,
   profile: `${API_URL}/api/v1/profile`,
   workspace: `${API_URL}/api/v1/workspace`,
 } as const;

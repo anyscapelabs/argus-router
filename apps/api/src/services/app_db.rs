@@ -15,6 +15,15 @@ pub struct AppDb {
     pool: PgPool,
 }
 
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanView {
+    pub id: String,
+    pub name: String,
+    pub price: String,
+    pub models: Vec<String>,
+}
+
 pub const FREE_PLAN_ID: &str = "free";
 
 /// Model ids allowed on the free plan. Seed only — edit via SQL/plan
@@ -52,11 +61,16 @@ impl AppDb {
             "CREATE TABLE IF NOT EXISTS plans (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
+                price TEXT NOT NULL DEFAULT '0',
                 created_at TEXT NOT NULL
             )",
         )
         .execute(&self.pool)
         .await?;
+        // Backfill the price column on databases created before it existed.
+        let _ = sqlx::query("ALTER TABLE plans ADD COLUMN IF NOT EXISTS price TEXT NOT NULL DEFAULT '0'")
+            .execute(&self.pool)
+            .await;
 
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS user_entitlements (
@@ -116,6 +130,59 @@ impl AppDb {
         }
 
         Ok(())
+    }
+
+    /// Upserts plans from the plans catalog (id, name, price).
+    pub async fn seed_plans(&self, plans: &[crate::services::plans::PlanCatalogEntry]) -> Result<(), sqlx::Error> {
+        for plan in plans {
+            sqlx::query(
+                "INSERT INTO plans (id, name, price, created_at) VALUES ($1, $2, $3, $4)
+                 ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, price = EXCLUDED.price",
+            )
+            .bind(&plan.id)
+            .bind(&plan.name)
+            .bind(&plan.price)
+            .bind(chrono::Utc::now().to_rfc3339())
+            .execute(&self.pool)
+            .await?;
+        }
+        Ok(())
+    }
+
+    /// Replaces each plan's allowlist with its configured models (fixed per plan).
+    pub async fn seed_plan_allowlists(&self, plans: &[crate::services::plans::PlanCatalogEntry]) -> Result<(), sqlx::Error> {
+        for plan in plans {
+            sqlx::query("DELETE FROM model_allowlist WHERE plan_id = $1")
+                .bind(&plan.id)
+                .execute(&self.pool)
+                .await?;
+            for model_id in &plan.models {
+                sqlx::query(
+                    "INSERT INTO model_allowlist (plan_id, model_id) VALUES ($1, $2) ON CONFLICT (plan_id, model_id) DO NOTHING",
+                )
+                .bind(&plan.id)
+                .bind(model_id)
+                .execute(&self.pool)
+                .await?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Returns all plans with their model allowlists.
+    pub async fn list_plans(&self) -> Result<Vec<PlanView>, sqlx::Error> {
+        let rows = sqlx::query("SELECT id, name, price FROM plans ORDER BY id")
+            .fetch_all(&self.pool)
+            .await?;
+        let mut out = Vec::new();
+        for row in rows {
+            let id: String = row.get("id");
+            let name: String = row.get("name");
+            let price: String = row.try_get("price").unwrap_or_else(|_| "0".to_owned());
+            let models = self.allowlist_of(&id).await.unwrap_or_default();
+            out.push(PlanView { id, name, price, models });
+        }
+        Ok(out)
     }
 
     pub async fn plan_of(&self, user_id: &str) -> Result<String, sqlx::Error> {

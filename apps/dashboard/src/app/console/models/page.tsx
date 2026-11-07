@@ -37,11 +37,13 @@ function relativeTime(timestamp: number | undefined): string {
 function Toggle({
   on,
   busy,
+  disabled,
   label,
   onClick,
 }: {
   on: boolean;
   busy?: boolean;
+  disabled?: boolean;
   label: string;
   onClick: () => void;
 }) {
@@ -49,10 +51,10 @@ function Toggle({
     <button
       type="button"
       onClick={onClick}
-      disabled={busy}
-      className={`relative inline-block h-5 w-9 cursor-pointer rounded-full transition-colors ${
-        on ? "bg-[#3b82f6]" : "bg-white/20"
-      } ${busy ? "opacity-50" : ""}`}
+      disabled={busy || disabled}
+      className={`relative inline-block h-5 w-9 rounded-full transition-colors ${
+        disabled ? "cursor-not-allowed opacity-40" : "cursor-pointer"
+      } ${on ? "bg-[#3b82f6]" : "bg-white/20"} ${busy ? "opacity-50" : ""}`}
       aria-label={label}
     >
       <span
@@ -306,12 +308,13 @@ function Row({
       <td className="px-2 py-2 text-white/70">{price(model.pricing.cacheRead)}</td>
       <td className="px-2 py-2 text-white/70">{price(model.pricing.cacheWrite)}</td>
       <td className="px-2 py-1">
-        <Toggle
-          on={model.enabled}
-          busy={busy}
-          label={`Toggle ${model.name}`}
-          onClick={onToggle}
-        />
+       <Toggle
+                     on={model.enabled}
+                     busy={busy}
+                     disabled={!model.enabled}
+                     label={`Toggle ${model.name}`}
+                     onClick={onToggle}
+                   />
       </td>
     </tr>
   );
