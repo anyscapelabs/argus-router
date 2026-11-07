@@ -1,0 +1,3 @@
+# rust-icu bindings are pre-generated per ICU major version.
+[env]
+RUST_ICU_MAJOR_VERSION_NUMBER = "74"

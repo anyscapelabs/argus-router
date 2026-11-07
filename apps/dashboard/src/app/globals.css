@@ -1,0 +1,122 @@
+@import "tailwindcss";
+
+:root {
+  --background: #000000;
+  --foreground: #ededed;
+  --border: #161616;
+  --border-secondary: #323232;
+  --accent: #ffffff;
+  --primary: #ffffff;
+  --secondary: #141414;
+  --tertiary: #282828;
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-border: var(--border);
+  --color-border-secondary: var(--border-secondary);
+  --color-accent: var(--accent);
+  --color-primary: var(--primary);
+  --color-secondary: var(--secondary);
+  --color-tertiary: var(--tertiary);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --font-pixel: var(--font-geist-pixel);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+}
+
+/* Force white text on focused inputs (block Chrome's autofill black-text + browser default) */
+input,
+input:focus,
+input:focus-visible,
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+input:-webkit-autofill:focus-visible,
+input:-webkit-autofill:active,
+input:-moz-autofill,
+input:-moz-autofill:hover,
+input:-moz-autofill:focus,
+input:-moz-autofill:active {
+  color: var(--foreground) !important;
+  -webkit-text-fill-color: var(--foreground) !important;
+  caret-color: var(--foreground) !important;
+  box-shadow: none !important;
+  transition:
+    background-color 0s ease-in-out 0s,
+    color 0s ease-in-out 0s !important;
+}
+
+::selection {
+  background: #161616;
+  color: var(--foreground);
+}
+
+/* uPlot renders its legend as a DOM table outside the canvas; without this
+   it keeps the library's default near-black text on the dark card. The
+   bundled type set has no `background` option, so the canvas is cleared
+   through CSS instead. */
+.u-plot,
+.uplot,
+.uplot canvas {
+  background: transparent !important;
+}
+.u-legend {
+  font-size: 11px;
+  line-height: 1.6;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.u-legend td {
+  padding: 0 6px;
+}
+
+.u-legend .u-label {
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.u-legend .u-value {
+  color: var(--foreground);
+}
+
+/* Custom scrollbars — slim, themed to the console palette. Firefox gets the
+   two-line `scrollbar-color` shorthand; Chromium/WebKit get the styled
+   pseudo-elements (width + hover states live here). */
+* {
+  scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
+  scrollbar-width: thin;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+  border-radius: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.35);
+  background-clip: content-box;
+  border: 2px solid transparent;
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}

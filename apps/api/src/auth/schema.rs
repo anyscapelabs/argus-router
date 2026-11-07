@@ -1,0 +1,120 @@
+use better_auth::seaorm::sea_orm::entity::prelude::*;
+use better_auth::seaorm::{AuthEntity, sea_orm};
+
+pub mod user {
+    use super::*;
+
+    #[derive(Clone, Debug, serde::Serialize, DeriveEntityModel, AuthEntity)]
+    #[auth(role = "user")]
+    #[sea_orm(table_name = "users")]
+    pub struct Model {
+        #[sea_orm(primary_key, auto_increment = false)]
+        pub id: String,
+        pub name: Option<String>,
+        pub email: Option<String>,
+        pub email_verified: bool,
+        pub image: Option<String>,
+        pub created_at: DateTimeUtc,
+        pub updated_at: DateTimeUtc,
+        pub locale: Option<String>,
+    }
+
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {}
+
+    impl ActiveModelBehavior for ActiveModel {}
+}
+
+pub mod session {
+    use super::*;
+
+    #[derive(Clone, Debug, serde::Serialize, DeriveEntityModel, AuthEntity)]
+    #[auth(role = "session")]
+    #[sea_orm(table_name = "sessions")]
+    pub struct Model {
+        #[sea_orm(primary_key, auto_increment = false)]
+        pub id: String,
+        pub expires_at: DateTimeUtc,
+        pub token: String,
+        pub created_at: DateTimeUtc,
+        pub updated_at: DateTimeUtc,
+        pub ip_address: Option<String>,
+        pub user_agent: Option<String>,
+        pub user_id: String,
+        /// Workspace the session is currently acting in. Written by the
+        /// better-auth organization plugin, which refuses to start unless the
+        /// bound session model declares it (`require_plugin_fields`).
+        pub active_organization_id: Option<String>,
+        /// Reserved for organization teams; declared so the table matches the
+        /// plugin's own session model and teams can be enabled later without a
+        /// schema change.
+        pub active_team_id: Option<String>,
+        pub active: bool,
+    }
+
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {}
+
+    impl ActiveModelBehavior for ActiveModel {}
+}
+
+pub mod account {
+    use super::*;
+
+    #[derive(Clone, Debug, serde::Serialize, DeriveEntityModel, AuthEntity)]
+    #[auth(role = "account")]
+    #[sea_orm(table_name = "accounts")]
+    pub struct Model {
+        #[sea_orm(primary_key, auto_increment = false)]
+        pub id: String,
+        pub account_id: String,
+        pub provider_id: String,
+        pub user_id: String,
+        pub access_token: Option<String>,
+        pub refresh_token: Option<String>,
+        pub id_token: Option<String>,
+        pub access_token_expires_at: Option<DateTimeUtc>,
+        pub refresh_token_expires_at: Option<DateTimeUtc>,
+        pub scope: Option<String>,
+        pub password: Option<String>,
+        pub created_at: DateTimeUtc,
+        pub updated_at: DateTimeUtc,
+    }
+
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {}
+
+    impl ActiveModelBehavior for ActiveModel {}
+}
+
+pub mod verification {
+    use super::*;
+
+    #[derive(Clone, Debug, serde::Serialize, DeriveEntityModel, AuthEntity)]
+    #[auth(role = "verification")]
+    #[sea_orm(table_name = "verifications")]
+    pub struct Model {
+        #[sea_orm(primary_key, auto_increment = false)]
+        pub id: String,
+        pub identifier: String,
+        pub value: String,
+        pub expires_at: DateTimeUtc,
+        pub created_at: DateTimeUtc,
+        pub updated_at: DateTimeUtc,
+    }
+
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {}
+
+    impl ActiveModelBehavior for ActiveModel {}
+}
+
+pub struct AppAuthSchema;
+
+impl better_auth::AuthSchema for AppAuthSchema {
+    type User = user::Model;
+    type Session = session::Model;
+    type Account = account::Model;
+    type Verification = verification::Model;
+}
+

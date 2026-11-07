@@ -1,0 +1,32 @@
+[package]
+name = "api"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+axum = "0.8"
+async-trait = "0.1.89"
+better-auth = { version = "1.0.0-alpha.5", features = ["axum", "seaorm2"] }
+better-auth-seaorm = "1.0.0-alpha.5"
+chrono = { version = "0.4.45", features = ["serde"] }
+dotenvy = "0.15.7"
+async-stream = "0.3.6"
+futures-util = "0.3.31"
+reqwest = { version = "0.12.24", default-features = false, features = ["json", "rustls-tls", "stream"] }
+sea-orm = { version = "2.0.4", features = ["sqlx-sqlite", "runtime-tokio-rustls"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+# sqlx 0.9 split the former `runtime-tokio-rustls` into `runtime-tokio` +
+# `tls-rustls`. Neon Postgres needs TLS (`sslmode=require`), so `tls-rustls`
+# (ring/webpki) rides along; sqlite was dropped when the app data moved to the
+# shared Postgres database.
+sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres"] }
+tokio = { version = "1.54.1", features = ["full"] }
+tower-http = { version = "0.7.1", features = ["cors", "trace"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+urlencoding = "2.1.3"
+
+# NOTE: `upstash-redis-rs` (0.1.2) uses `#![feature(macro_metavar_expr)]`,
+# which only works on nightly. Upstash Redis integration lives in
+# `src/services/cache.rs` as a direct `reqwest` REST client instead.
