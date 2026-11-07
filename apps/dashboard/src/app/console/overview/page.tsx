@@ -375,7 +375,9 @@ export default function OverviewPage() {
           </div>
           <div className="mt-4 flex items-center justify-between">
             <div>
-              <h3 className="text-sm font-medium text-primary">Total usage (hourly)</h3>
+              <h3 className="text-sm font-medium text-primary">
+                Total {usageMetric === "cost" ? "cost" : "tokens"} (hourly)
+              </h3>
               <p className="mt-1 text-xs text-white/60">Cost and tokens per hour.</p>
             </div>
             <div className="flex gap-1">
