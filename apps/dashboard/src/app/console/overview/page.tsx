@@ -460,7 +460,7 @@ export default function OverviewPage() {
               </button>
             </div>
           </div>
-          <div ref={chartRef} className="h-64 w-full rounded-md border border-border-secondary bg-[#262626] p-4" />
+          <div ref={chartRef} className="h-64 w-full rounded-md border border-border-secondary bg-[#262626] p-2" />
         </div>
       )}
     </div>
