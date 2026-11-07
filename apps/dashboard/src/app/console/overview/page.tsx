@@ -96,15 +96,18 @@ export default function OverviewPage() {
       width,
       height: 224,
       legend: { show: false },
+      padding: [4, 4, 0, 0],
       scales: { x: { time: false }, y: { auto: true } },
       axes: [
         {
+          size: 16,
           stroke: "rgba(255,255,255,0.55)",
           grid: { show: false },
           ticks: { show: false },
           values: (_, vals) => vals.map((v) => `${v}:00`),
         },
         {
+          size: 32,
           stroke: "rgba(255,255,255,0.55)",
           grid: { show: false },
           ticks: { show: false },
