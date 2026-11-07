@@ -112,8 +112,8 @@ export default function OverviewPage() {
         {},
         {
           stroke: "#e5e5e5",
-          width: 2,
-          fill: "rgba(255,255,255,0.08)",
+          fill: "rgba(255,255,255,0.25)",
+          paths: uPlot.paths.bars!({ size: [0.6], gap: 2 }),
         },
       ],
     });
