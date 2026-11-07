@@ -26,14 +26,6 @@ pub struct PlanView {
 
 pub const FREE_PLAN_ID: &str = "free";
 
-/// Model ids allowed on the free plan. Seed only — edit via SQL/plan
-/// management; the boot-time seeding keeps existing rows untouched. These
-/// are model ids from our catalog (served via OpenRouter upstream).
-const FREE_PLAN_MODELS: [&str; 3] = [
-    "nvidia/nemotron-3-ultra-550b-a55b:free",
-    "nvidia/nemotron-3.5-super-vl:free",
-    "nvidia/nemotron-3.5-lightning:free",
-];
 
 impl AppDb {
     pub async fn connect(settings: &Settings) -> Result<Self, Box<dyn std::error::Error>> {
@@ -115,16 +107,6 @@ impl AppDb {
         .bind(chrono::Utc::now().to_rfc3339())
         .execute(&self.pool)
         .await?;
-
-        for model_id in FREE_PLAN_MODELS {
-            sqlx::query(
-                "INSERT INTO model_allowlist (plan_id, model_id) VALUES ($1, $2) ON CONFLICT (plan_id, model_id) DO NOTHING",
-            )
-            .bind(FREE_PLAN_ID)
-            .bind(model_id)
-            .execute(&self.pool)
-            .await?;
-        }
 
         Ok(())
     }

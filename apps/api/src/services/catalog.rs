@@ -129,7 +129,16 @@ impl CatalogCache {
 const EMBEDDED: &str = include_str!("../../catalog/models.json");
 
 pub fn seed_entries() -> Vec<ModelCatalogEntry> {
-    let mut entries = from_json(EMBEDDED);
+    let body = if let Ok(path) = std::env::var("CATALOG_PATH") {
+        if !path.trim().is_empty() {
+            std::fs::read_to_string(path.trim()).unwrap_or_else(|_| EMBEDDED.to_owned())
+        } else {
+            EMBEDDED.to_owned()
+        }
+    } else {
+        EMBEDDED.to_owned()
+    };
+    let mut entries = from_json(&body);
     entries.sort_by(|a, b| a.id.cmp(&b.id));
     entries
 }
