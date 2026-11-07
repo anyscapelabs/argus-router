@@ -334,7 +334,7 @@ export default function OverviewPage() {
           <div className="flex min-w-0 flex-col overflow-hidden rounded-md border border-border-secondary bg-[#262626] p-3">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-xs text-white/60">Credit balance</p>
+                <p className="text-xs font-medium text-white/60">Credit balance</p>
                 <p className="mt-1 text-2xl font-medium text-primary">$0.00</p>
               </div>
               <button
@@ -345,7 +345,7 @@ export default function OverviewPage() {
               </button>
             </div>
             <div className="mt-3 flex items-center justify-between border-t border-border-secondary pt-3">
-              <p className="text-xs text-white/60">Auto recharge</p>
+              <p className="text-xs font-medium text-white/60">Auto recharge</p>
               <button
                 type="button"
                 className="text-xs text-[#3b82f6] transition-colors hover:text-[#2563eb]"
