@@ -1,10 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { GoChevronDown, GoDownload, GoChevronRight, GoInfo } from "react-icons/go";
+import { useEffect, useMemo, useState } from "react";
+import { GoChevronDown, GoDownload, GoChevronRight } from "react-icons/go";
 import { useUsage } from "@/domains/usage/hooks";
-import uPlot from "uplot";
-import "uplot/dist/uPlot.min.css";
 
 const platforms = [
   { label: "macOS", detail: "Apple Silicon" },
@@ -86,58 +84,6 @@ export default function OverviewPage() {
     else if (platform.includes("linux")) setOs("Linux");
   }, []);
 
-  useEffect(() => {
-    const el = chartRef.current;
-    if (!el) return;
-    const hours = Array.from({ length: 24 }, (_, i) => i);
-    const values = hours.map((h) => Math.abs(Math.sin(h * 0.5) * 10 + 2));
-    const data: [number[], number[]] = [hours, values];
-    const options = (width: number): uPlot.Options => ({
-      width,
-      height: 224,
-      legend: { show: false },
-      padding: [4, 4, 0, 0],
-      scales: { x: { time: false }, y: { auto: true } },
-      axes: [
-        {
-          show: false,
-          size: 0,
-          grid: { show: false },
-          ticks: { show: false },
-        },
-        {
-          size: 24,
-          stroke: "rgba(255,255,255,0.55)",
-          grid: { show: false },
-          ticks: { show: false },
-        },
-      ],
-      series: [
-        {},
-        {
-          stroke: "#e5e5e5",
-          fill: "#e5e5e5",
-          paths: uPlot.paths.bars!({ size: [0.6], gap: 2 }),
-        },
-      ],
-    });
-    const settle = () => {
-      const width = Math.max(120, Math.floor(el.clientWidth));
-      if (plotRef.current) {
-        plotRef.current.setSize({ width, height: 224 });
-      } else {
-        plotRef.current = new uPlot(options(width), data, el);
-      }
-    };
-    settle();
-    const observer = new ResizeObserver(settle);
-    observer.observe(el);
-    return () => {
-      observer.disconnect();
-      plotRef.current?.destroy();
-      plotRef.current = null;
-    };
-  }, [usageMetric]);
 
   const recentLogs = logs.slice(-5);
 
@@ -464,7 +410,18 @@ export default function OverviewPage() {
               </button>
             </div>
           </div>
-          <div ref={chartRef} className="h-64 w-full rounded-md border border-border-secondary bg-[#262626] p-2" />
+          <div className="flex h-64 w-full items-end gap-1 rounded-md border border-border-secondary bg-[#262626] p-2">
+            {Array.from({ length: 24 }, (_, i) => {
+              const h = Math.abs(Math.sin(i * 0.5) * 60 + 20);
+              return (
+                <div
+                  key={i}
+                  className="flex-1 bg-white"
+                  style={{ height: `${h}%` }}
+                />
+              );
+            })}
+          </div>
         </div>
       )}
     </div>
