@@ -345,7 +345,7 @@ export default function OverviewPage() {
               </button>
             </div>
             <div className="mt-3 flex items-center justify-between border-t border-border-secondary pt-3">
-              <p className="text-sm font-medium text-primary">Auto recharge</p>
+              <p className="text-xs text-white/60">Auto recharge</p>
               <button
                 type="button"
                 className="text-xs text-[#3b82f6] transition-colors hover:text-[#2563eb]"
