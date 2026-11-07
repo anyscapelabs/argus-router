@@ -10,15 +10,20 @@ pub mod openai;
 use axum::http::HeaderMap;
 use better_auth::plugins::api_key::VerifyApiKey;
 
+use std::time::Instant;
+
 use crate::proxy::ErrCode;
 use crate::proxy::Errx;
+use crate::proxy::ir::Event;
+use crate::services::catalog::ModelCatalogEntry;
+use crate::services::usage::UsageRow;
 use crate::state::AppState;
 
 /// A paired service account: the key's user and its plan's model allowlist.
 pub struct Principal {
-    /// The key's owning user; surfaced for future per-user usage tracking.
-    #[allow(dead_code)]
+    pub key_id: String,
     pub user_id: String,
+    pub plan: String,
     pub allowlist: Vec<String>,
 }
 
@@ -82,6 +87,7 @@ async fn authenticate(state: &AppState, headers: &HeaderMap) -> Result<Principal
                 "the API key lacks a user reference",
             )
         })?;
+    let key_id = view.id.clone();
     let plan = state.app_db.plan_of(&user_id).await.map_err(|_| {
         Errx::new(ErrCode::Upstream, 500, "the plan lookup failed")
     })?;
@@ -89,7 +95,9 @@ async fn authenticate(state: &AppState, headers: &HeaderMap) -> Result<Principal
         Errx::new(ErrCode::Upstream, 500, "the allowlist lookup failed")
     })?;
     Ok(Principal {
+        key_id,
         user_id,
+        plan,
         allowlist,
     })
 }
@@ -123,25 +131,110 @@ use serde_json::Value;
 use crate::proxy::adapters::EventStream;
 use crate::proxy::service;
 
+fn payload_model(payload: &Value) -> String {
+    payload
+        .get("model")
+        .and_then(|found| found.as_str())
+        .filter(|found| !found.is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| "unknown".to_owned())
+}
+
+fn cost_usd(entry: &ModelCatalogEntry, input: i64, output: i64, cache_read: i64) -> f64 {
+    let parse = |s: &str| s.parse::<f64>().unwrap_or(0.0);
+    (input as f64 * parse(&entry.pricing.input)
+        + output as f64 * parse(&entry.pricing.output)
+        + cache_read as f64 * parse(entry.pricing.cache_read.as_deref().unwrap_or("0")))
+        / 1_000_000.0
+}
+
 /// `POST /v1/chat/completions` — OpenAI-compatible ingress.
 pub async fn openai_chat_completions(
     State(state): State<AppState>,
     headers: HeaderMap,
     AxumJson(payload): AxumJson<Value>,
 ) -> Response {
+    let start = Instant::now();
+    let model_for_log = payload_model(&payload);
+
     let principal = match authenticate(&state, &headers).await {
         Ok(principal) => principal,
-        Err(item) => return openai::error_response(item),
+        Err(item) => {
+            state.usage.record(UsageRow {
+                key_id: None,
+                user_id: None,
+                plan_id: None,
+                model: model_for_log,
+                provider: None,
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_read_tokens: 0,
+                cost_usd: 0.0,
+                status: item.status as i32,
+                latency_ms: Some(start.elapsed().as_millis() as i64),
+                error_code: Some(item.code.as_str().to_owned()),
+            });
+            return openai::error_response(item);
+        }
     };
+
     let (model, mut chat) = match openai::parse(&payload) {
         Ok(found) => found,
-        Err(item) => return openai::error_response(item),
+        Err(item) => {
+            state.usage.record(UsageRow {
+                key_id: Some(principal.key_id.clone()),
+                user_id: Some(principal.user_id.clone()),
+                plan_id: Some(principal.plan.clone()),
+                model: model_for_log,
+                provider: None,
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_read_tokens: 0,
+                cost_usd: 0.0,
+                status: item.status as i32,
+                latency_ms: Some(start.elapsed().as_millis() as i64),
+                error_code: Some(item.code.as_str().to_owned()),
+            });
+            return openai::error_response(item);
+        }
     };
+
     let resolved = match service::resolve(&state.catalog, &model) {
         Ok(resolved) => resolved,
-        Err(item) => return openai::error_response(item),
+        Err(item) => {
+            state.usage.record(UsageRow {
+                key_id: Some(principal.key_id.clone()),
+                user_id: Some(principal.user_id.clone()),
+                plan_id: Some(principal.plan.clone()),
+                model: model.clone(),
+                provider: None,
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_read_tokens: 0,
+                cost_usd: 0.0,
+                status: item.status as i32,
+                latency_ms: Some(start.elapsed().as_millis() as i64),
+                error_code: Some(item.code.as_str().to_owned()),
+            });
+            return openai::error_response(item);
+        }
     };
+
     if let Err(item) = service::guard_entitlement(&resolved, &principal.allowlist) {
+        state.usage.record(UsageRow {
+            key_id: Some(principal.key_id.clone()),
+            user_id: Some(principal.user_id.clone()),
+            plan_id: Some(principal.plan.clone()),
+            model: model.clone(),
+            provider: Some(resolved.provider.id.to_owned()),
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_read_tokens: 0,
+            cost_usd: 0.0,
+            status: item.status as i32,
+            latency_ms: Some(start.elapsed().as_millis() as i64),
+            error_code: Some(item.code.as_str().to_owned()),
+        });
         return openai::error_response(item);
     }
     openai::clamp_params(&mut chat, resolved.entry.max_output);
@@ -154,16 +247,120 @@ pub async fn openai_chat_completions(
     let client = shared_client();
 
     if streaming {
-        let events = match service::stream_chat(&client, &resolved, chat).await {
-            Ok(events) => events,
-            Err(item) => return openai::error_response(item),
+        let (tx, rx) = tokio::sync::mpsc::channel::<Result<Event, Errx>>(64);
+        let key_id = principal.key_id.clone();
+        let user_id = principal.user_id.clone();
+        let plan = principal.plan.clone();
+        let model_rec = model.clone();
+        let provider_rec = resolved.provider.id.to_owned();
+        let entry = resolved.entry.clone();
+        let usage_rec = state.usage.clone();
+        let chat_for_task = chat;
+        let resolved_for_task = resolved;
+        tokio::spawn(async move {
+            let mut input_tokens = 0i64;
+            let mut output_tokens = 0i64;
+            let mut cache_read_tokens = 0i64;
+            let mut status = 200i32;
+            let mut error_code: Option<String> = None;
+            match service::stream_chat(&client, &resolved_for_task, chat_for_task).await {
+                Ok(mut stream) => {
+                    while let Some(item) = stream.next().await {
+                        match &item {
+                            Ok(Event::Usage {
+                                input_tokens: i,
+                                output_tokens: o,
+                                cache_read_tokens: c,
+                            }) => {
+                                input_tokens = *i;
+                                output_tokens = *o;
+                                cache_read_tokens = *c;
+                            }
+                            Err(err) => {
+                                status = err.status as i32;
+                                error_code = Some(err.code.as_str().to_owned());
+                            }
+                            _ => {}
+                        }
+                        if tx.send(item).await.is_err() {
+                            break;
+                        }
+                    }
+                }
+                Err(err) => {
+                    status = err.status as i32;
+                    error_code = Some(err.code.as_str().to_owned());
+                    let _ = tx.send(Err(err)).await;
+                }
+            }
+            let latency = start.elapsed().as_millis() as i64;
+            let cost = cost_usd(&entry, input_tokens, output_tokens, cache_read_tokens);
+            usage_rec.record(UsageRow {
+                key_id: Some(key_id),
+                user_id: Some(user_id),
+                plan_id: Some(plan),
+                model: model_rec,
+                provider: Some(provider_rec),
+                input_tokens,
+                output_tokens,
+                cache_read_tokens,
+                cost_usd: cost,
+                status,
+                latency_ms: Some(latency),
+                error_code,
+            });
+        });
+        let events = async_stream::stream! {
+            let mut rx = rx;
+            while let Some(item) = rx.recv().await {
+                yield item;
+            }
         };
-        sse_turn(events, turn_state).into_response()
+        sse_turn(Box::pin(events), turn_state).into_response()
     } else {
         match service::finish_chat(&client, &resolved, chat).await {
-            Ok(turn) => (StatusCode::OK, Json(openai::completion(&turn_state, &turn)))
-                .into_response(),
-            Err(item) => openai::error_response(item),
+            Ok(turn) => {
+                let latency = start.elapsed().as_millis() as i64;
+                let cost = cost_usd(
+                    &resolved.entry,
+                    turn.usage.input_tokens,
+                    turn.usage.output_tokens,
+                    turn.usage.cache_read_tokens,
+                );
+                state.usage.record(UsageRow {
+                    key_id: Some(principal.key_id.clone()),
+                    user_id: Some(principal.user_id.clone()),
+                    plan_id: Some(principal.plan.clone()),
+                    model: model.clone(),
+                    provider: Some(resolved.provider.id.to_owned()),
+                    input_tokens: turn.usage.input_tokens,
+                    output_tokens: turn.usage.output_tokens,
+                    cache_read_tokens: turn.usage.cache_read_tokens,
+                    cost_usd: cost,
+                    status: 200,
+                    latency_ms: Some(latency),
+                    error_code: None,
+                });
+                (StatusCode::OK, Json(openai::completion(&turn_state, &turn)))
+                    .into_response()
+            }
+            Err(item) => {
+                state.usage.record(UsageRow {
+                    key_id: Some(principal.key_id.clone()),
+                    user_id: Some(principal.user_id.clone()),
+                    plan_id: Some(principal.plan.clone()),
+                    model: model.clone(),
+                    provider: Some(resolved.provider.id.to_owned()),
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    cache_read_tokens: 0,
+                    cost_usd: 0.0,
+                    status: item.status as i32,
+                    latency_ms: Some(start.elapsed().as_millis() as i64),
+                    error_code: Some(item.code.as_str().to_owned()),
+                });
+                openai::error_response(item)
+            }
         }
     }
 }
@@ -175,23 +372,86 @@ pub async fn gemini_models_action(
     Path(model_action): Path<String>,
     AxumJson(payload): AxumJson<Value>,
 ) -> Response {
+    let start = Instant::now();
     let (model, streaming) = match gemini::split_path(&model_action) {
         Ok(found) => found,
         Err(item) => return gemini::error_response(item),
     };
     let principal = match authenticate(&state, &headers).await {
         Ok(principal) => principal,
-        Err(item) => return gemini::error_response(item),
+        Err(item) => {
+            state.usage.record(UsageRow {
+                key_id: None,
+                user_id: None,
+                plan_id: None,
+                model: model.clone(),
+                provider: None,
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_read_tokens: 0,
+                cost_usd: 0.0,
+                status: item.status as i32,
+                latency_ms: Some(start.elapsed().as_millis() as i64),
+                error_code: Some(item.code.as_str().to_owned()),
+            });
+            return gemini::error_response(item);
+        }
     };
     let mut chat = match gemini::parse(&payload) {
         Ok(chat) => chat,
-        Err(item) => return gemini::error_response(item),
+        Err(item) => {
+            state.usage.record(UsageRow {
+                key_id: Some(principal.key_id.clone()),
+                user_id: Some(principal.user_id.clone()),
+                plan_id: Some(principal.plan.clone()),
+                model: model.clone(),
+                provider: None,
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_read_tokens: 0,
+                cost_usd: 0.0,
+                status: item.status as i32,
+                latency_ms: Some(start.elapsed().as_millis() as i64),
+                error_code: Some(item.code.as_str().to_owned()),
+            });
+            return gemini::error_response(item);
+        }
     };
     let resolved = match service::resolve(&state.catalog, &model) {
         Ok(resolved) => resolved,
-        Err(item) => return gemini::error_response(item),
+        Err(item) => {
+            state.usage.record(UsageRow {
+                key_id: Some(principal.key_id.clone()),
+                user_id: Some(principal.user_id.clone()),
+                plan_id: Some(principal.plan.clone()),
+                model: model.clone(),
+                provider: None,
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_read_tokens: 0,
+                cost_usd: 0.0,
+                status: item.status as i32,
+                latency_ms: Some(start.elapsed().as_millis() as i64),
+                error_code: Some(item.code.as_str().to_owned()),
+            });
+            return gemini::error_response(item);
+        }
     };
     if let Err(item) = service::guard_entitlement(&resolved, &principal.allowlist) {
+        state.usage.record(UsageRow {
+            key_id: Some(principal.key_id.clone()),
+            user_id: Some(principal.user_id.clone()),
+            plan_id: Some(principal.plan.clone()),
+            model: model.clone(),
+            provider: Some(resolved.provider.id.to_owned()),
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_read_tokens: 0,
+            cost_usd: 0.0,
+            status: item.status as i32,
+            latency_ms: Some(start.elapsed().as_millis() as i64),
+            error_code: Some(item.code.as_str().to_owned()),
+        });
         return gemini::error_response(item);
     }
     gemini::clamp_params(&mut chat, resolved.entry.max_output);
@@ -200,17 +460,119 @@ pub async fn gemini_models_action(
     let client = shared_client();
 
     if streaming {
-        let events = match service::stream_chat(&client, &resolved, chat).await {
-            Ok(events) => events,
-            Err(item) => return gemini::error_response(item),
+        let (tx, rx) = tokio::sync::mpsc::channel::<Result<Event, Errx>>(64);
+        let key_id = principal.key_id.clone();
+        let user_id = principal.user_id.clone();
+        let plan = principal.plan.clone();
+        let model_rec = model.clone();
+        let provider_rec = resolved.provider.id.to_owned();
+        let entry = resolved.entry.clone();
+        let usage_rec = state.usage.clone();
+        let chat_for_task = chat;
+        let resolved_for_task = resolved;
+        tokio::spawn(async move {
+            let mut input_tokens = 0i64;
+            let mut output_tokens = 0i64;
+            let mut cache_read_tokens = 0i64;
+            let mut status = 200i32;
+            let mut error_code: Option<String> = None;
+            match service::stream_chat(&client, &resolved_for_task, chat_for_task).await {
+                Ok(mut stream) => {
+                    while let Some(item) = stream.next().await {
+                        match &item {
+                            Ok(Event::Usage {
+                                input_tokens: i,
+                                output_tokens: o,
+                                cache_read_tokens: c,
+                            }) => {
+                                input_tokens = *i;
+                                output_tokens = *o;
+                                cache_read_tokens = *c;
+                            }
+                            Err(err) => {
+                                status = err.status as i32;
+                                error_code = Some(err.code.as_str().to_owned());
+                            }
+                            _ => {}
+                        }
+                        if tx.send(item).await.is_err() {
+                            break;
+                        }
+                    }
+                }
+                Err(err) => {
+                    status = err.status as i32;
+                    error_code = Some(err.code.as_str().to_owned());
+                    let _ = tx.send(Err(err)).await;
+                }
+            }
+            let latency = start.elapsed().as_millis() as i64;
+            let cost = cost_usd(&entry, input_tokens, output_tokens, cache_read_tokens);
+            usage_rec.record(UsageRow {
+                key_id: Some(key_id),
+                user_id: Some(user_id),
+                plan_id: Some(plan),
+                model: model_rec,
+                provider: Some(provider_rec),
+                input_tokens,
+                output_tokens,
+                cache_read_tokens,
+                cost_usd: cost,
+                status,
+                latency_ms: Some(latency),
+                error_code,
+            });
+        });
+        let events = async_stream::stream! {
+            let mut rx = rx;
+            while let Some(item) = rx.recv().await {
+                yield item;
+            }
         };
-        gemini_sse(events, turn_state).into_response()
+        gemini_sse(Box::pin(events), turn_state).into_response()
     } else {
         match service::finish_chat(&client, &resolved, chat).await {
             Ok(turn) => {
+                let latency = start.elapsed().as_millis() as i64;
+                let cost = cost_usd(
+                    &resolved.entry,
+                    turn.usage.input_tokens,
+                    turn.usage.output_tokens,
+                    turn.usage.cache_read_tokens,
+                );
+                state.usage.record(UsageRow {
+                    key_id: Some(principal.key_id.clone()),
+                    user_id: Some(principal.user_id.clone()),
+                    plan_id: Some(principal.plan.clone()),
+                    model: model.clone(),
+                    provider: Some(resolved.provider.id.to_owned()),
+                    input_tokens: turn.usage.input_tokens,
+                    output_tokens: turn.usage.output_tokens,
+                    cache_read_tokens: turn.usage.cache_read_tokens,
+                    cost_usd: cost,
+                    status: 200,
+                    latency_ms: Some(latency),
+                    error_code: None,
+                });
                 (StatusCode::OK, Json(gemini::completion(&turn_state, &turn))).into_response()
             }
-            Err(item) => gemini::error_response(item),
+            Err(item) => {
+                state.usage.record(UsageRow {
+                    key_id: Some(principal.key_id.clone()),
+                    user_id: Some(principal.user_id.clone()),
+                    plan_id: Some(principal.plan.clone()),
+                    model: model.clone(),
+                    provider: Some(resolved.provider.id.to_owned()),
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    cache_read_tokens: 0,
+                    cost_usd: 0.0,
+                    status: item.status as i32,
+                    latency_ms: Some(start.elapsed().as_millis() as i64),
+                    error_code: Some(item.code.as_str().to_owned()),
+                });
+                gemini::error_response(item)
+            }
         }
     }
 }

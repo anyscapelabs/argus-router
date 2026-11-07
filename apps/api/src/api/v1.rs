@@ -4,6 +4,7 @@ pub mod health;
 pub mod models;
 pub mod plans;
 pub mod profile;
+pub mod usage;
 pub mod workspace;
 
 use axum::Router;
@@ -21,5 +22,6 @@ pub fn router() -> Router<AppState> {
         .nest("/models", models::router())
         .nest("/plans", plans::router())
         .nest("/profile", profile::router())
+        .nest("/usage", usage::router())
         .nest("/workspace", workspace::router())
 }

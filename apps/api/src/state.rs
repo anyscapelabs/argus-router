@@ -9,6 +9,7 @@ use crate::config::Settings;
 use crate::services::app_db::AppDb;
 use crate::services::cache::Cache;
 use crate::services::catalog::CatalogCache;
+use crate::services::usage::UsageRecorder;
 
 /// Shared application state, resolved per-route via `FromRef`.
 #[derive(Clone)]
@@ -24,6 +25,8 @@ pub struct AppState {
     pub catalog: CatalogCache,
     /// Upstash Redis cache for hot reads (profile, ...); no-ops unconfigured.
     pub cache: Cache,
+    /// Batched usage recorder (never stores prompt content).
+    pub usage: UsageRecorder,
     pub db: better_auth::seaorm::DatabaseConnection,
 }
 

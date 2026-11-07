@@ -15,6 +15,12 @@ pub struct AppDb {
     pool: PgPool,
 }
 
+impl AppDb {
+    pub fn pool(&self) -> PgPool {
+        self.pool.clone()
+    }
+}
+
 #[derive(Clone, Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PlanView {
@@ -93,6 +99,33 @@ impl AppDb {
         )
         .execute(&self.pool)
         .await?;
+
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS usage_logs (
+                id BIGSERIAL PRIMARY KEY,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                key_id TEXT,
+                user_id TEXT,
+                plan_id TEXT,
+                model TEXT NOT NULL,
+                provider TEXT,
+                input_tokens BIGINT NOT NULL DEFAULT 0,
+                output_tokens BIGINT NOT NULL DEFAULT 0,
+                cache_read_tokens BIGINT NOT NULL DEFAULT 0,
+                cost_usd DOUBLE PRECISION NOT NULL DEFAULT 0,
+                status INTEGER NOT NULL,
+                latency_ms BIGINT,
+                error_code TEXT
+            )",
+        )
+        .execute(&self.pool)
+        .await?;
+        let _ = sqlx::query("CREATE INDEX IF NOT EXISTS usage_logs_key_created ON usage_logs (key_id, created_at)")
+            .execute(&self.pool)
+            .await;
+        let _ = sqlx::query("CREATE INDEX IF NOT EXISTS usage_logs_user_created ON usage_logs (user_id, created_at)")
+            .execute(&self.pool)
+            .await;
 
         Ok(())
     }

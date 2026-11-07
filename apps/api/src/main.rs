@@ -32,6 +32,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let database = auth::connect_database(&settings).await?;
     auth::run_migrations(&database).await?;
     let app_db = services::app_db::AppDb::connect(&settings).await?;
+    let usage = services::usage::UsageRecorder::new(app_db.pool());
     // The dynamic catalog: seeded from the embedded JSON into the
     // `model_catalog` table, then loaded from Postgres into the live cache
     // (`POST /api/v1/models/refresh` re-seeds it from our catalog without a
@@ -71,6 +72,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         app_db,
         catalog,
         cache,
+        usage,
         db: database,
     };
 

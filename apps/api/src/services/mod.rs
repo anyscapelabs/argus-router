@@ -5,4 +5,5 @@ pub mod catalog;
 pub mod email;
 pub mod plans;
 pub mod providers;
+pub mod usage;
 pub mod workspace;
