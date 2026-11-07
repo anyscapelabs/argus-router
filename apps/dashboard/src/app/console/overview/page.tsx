@@ -417,15 +417,15 @@ export default function OverviewPage() {
               </tbody>
             </table>
           </div>
-        </div>
-        <div className="flex items-center justify-between rounded-md border border-border-secondary bg-[#262626] p-3">
-          <p className="text-sm font-medium text-primary">Auto recharge</p>
-          <button
-            type="button"
-            className="text-xs text-[#3b82f6] transition-colors hover:text-[#2563eb]"
-          >
-            Set up
-          </button>
+          <div className="flex items-center justify-between rounded-md border border-border-secondary bg-[#262626] p-3">
+            <p className="text-sm font-medium text-primary">Auto recharge</p>
+            <button
+              type="button"
+              className="text-xs text-[#3b82f6] transition-colors hover:text-[#2563eb]"
+            >
+              Set up
+            </button>
+          </div>
         </div>
       )}
     </div>
