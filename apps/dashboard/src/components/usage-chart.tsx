@@ -41,7 +41,7 @@ const definition = defineChart(
 const renderer = motion({ initial: "always" });
 
 export function UsageChart() {
-  const width = 900;
+  const width = 700;
   const height = 240;
   return (
     <div style={{ width, height }}>
