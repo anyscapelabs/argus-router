@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { GoChevronDown, GoDownload, GoChevronRight } from "react-icons/go";
 import { useUsage } from "@/domains/usage/hooks";
+import { UsageChart } from "@/components/usage-chart";
 
 const platforms = [
   { label: "macOS", detail: "Apple Silicon" },
@@ -408,30 +409,8 @@ export default function OverviewPage() {
               </button>
             </div>
           </div>
-          <div className="flex h-64 w-full gap-0 rounded-md border border-border-secondary bg-[#262626] p-2">
-            <div className="flex flex-col justify-between border-r border-border-secondary pr-1 text-[10px] text-white/40">
-              <span>100</span>
-              <span>0</span>
-            </div>
-            <div className="flex flex-1 flex-col">
-              <div className="flex h-full items-end gap-1 border-b border-border-secondary pb-1">
-                {Array.from({ length: 24 }, (_, i) => {
-                  const h = Math.abs(Math.sin(i * 0.5) * 60 + 20);
-                  return (
-                    <div
-                      key={i}
-                      className="flex-1 bg-white"
-                      style={{ height: `${h}%` }}
-                    />
-                  );
-                })}
-              </div>
-              <div className="mt-1 flex gap-1 text-[10px] text-white/40">
-                {Array.from({ length: 24 }, (_, i) => (
-                  <span key={i} className="flex-1 text-center">{i}</span>
-                ))}
-              </div>
-            </div>
+          <div className="h-64 w-full rounded-md border border-border-secondary bg-[#262626] p-2">
+            <UsageChart />
           </div>
         </div>
       )}
