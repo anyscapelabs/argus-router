@@ -339,7 +339,7 @@ export default function OverviewPage() {
               </div>
               <button
                 type="button"
-                className="rounded-sm bg-[#3b82f6] px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-[#2563eb]"
+                className="cursor-pointer rounded-sm bg-accent px-3 py-1.5 text-xs font-medium text-background transition-colors hover:opacity-90"
               >
                 Add Payment Method
               </button>
@@ -348,7 +348,7 @@ export default function OverviewPage() {
               <p className="text-xs font-medium text-white/60">Auto recharge</p>
               <button
                 type="button"
-                className="text-xs text-[#3b82f6] transition-colors hover:text-[#2563eb]"
+                className="cursor-pointer text-xs text-accent transition-colors hover:opacity-80"
               >
                 Set up
               </button>
