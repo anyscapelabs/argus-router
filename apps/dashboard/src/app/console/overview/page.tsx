@@ -343,7 +343,7 @@ export default function OverviewPage() {
       {activeSubTab === "Leaderboard" && (
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-4">
           <div>
-            <h2 className="text-sm font-medium text-primary">Most used models</h2>
+            <h2 className="mt-4 text-sm font-medium text-primary">Most used models</h2>
             <p className="mt-1 text-xs text-white/60">
               Leaderboard of models by request count.
             </p>
