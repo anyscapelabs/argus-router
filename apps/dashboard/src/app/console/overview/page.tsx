@@ -419,6 +419,12 @@ export default function OverviewPage() {
               ))}
             </div>
           </div>
+          <div className="mt-4">
+            <h3 className="text-sm font-medium text-primary">Usage by Model</h3>
+            <p className="mt-1 text-xs text-white/60">
+              Breakdown of usage per model.
+            </p>
+          </div>
         </div>
       )}
     </div>
