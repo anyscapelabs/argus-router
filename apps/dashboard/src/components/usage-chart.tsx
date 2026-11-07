@@ -30,7 +30,7 @@ const definition = defineChart(
       },
       y: { scale: scaleLinear, grid: true, axis: true },
     },
-    margin: { top: 5, right: 5, bottom: 0, left: 30 },
+    margin: { top: 5, right: 5, bottom: 20, left: 30 },
   },
   {},
 );
