@@ -372,7 +372,7 @@ export default function OverviewPage() {
               </p>
             </div>
           </div>
-          <div>
+          <div className="mt-4">
             <h3 className="text-sm font-medium text-primary">Total usage (hourly)</h3>
             <p className="mt-1 text-xs text-white/60">Cost and tokens per hour.</p>
           </div>
