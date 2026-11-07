@@ -474,6 +474,58 @@ export default function OverviewPage() {
               </tbody>
             </table>
           </div>
+          <div className="mt-6">
+            <h3 className="text-sm font-medium text-primary">Usage by Service Account</h3>
+            <p className="mt-1 text-xs text-white/60">
+              Breakdown of usage per service account key.
+            </p>
+          </div>
+          <div className="max-w-full overflow-x-auto rounded-md border border-border-secondary">
+            <table className="w-full text-left text-xs">
+              <thead>
+                <tr className="border-b border-border-secondary bg-tertiary text-white/40">
+                  <th className="px-2 py-2 font-medium rounded-tl-md">Service account</th>
+                  <th className="px-2 py-2 text-right font-medium">Requests</th>
+                  <th className="px-2 py-2 text-right font-medium">Input tokens</th>
+                  <th className="px-2 py-2 text-right font-medium">Output tokens</th>
+                  <th className="px-2 py-2 text-right font-medium rounded-tr-md">Cost</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(() => {
+                  const map = new Map<string, { key: string; requests: number; input: number; output: number; cost: number }>();
+                  for (const r of usageRows) {
+                    const k = r.keyId ?? "unknown";
+                    const e = map.get(k) ?? { key: k, requests: 0, input: 0, output: 0, cost: 0 };
+                    e.requests += 1;
+                    e.input += r.inputTokens ?? 0;
+                    e.output += r.outputTokens ?? 0;
+                    e.cost += r.costUsd ?? 0;
+                    map.set(k, e);
+                  }
+                  const rows = Array.from(map.values());
+                  if (rows.length === 0) {
+                    return (
+                      <tr>
+                        <td colSpan={5} className="px-2 py-6 text-center text-xs text-white/40">
+                          No usage in this range
+                        </td>
+                      </tr>
+                    );
+                  }
+                  return rows.map((k) => (
+                    <tr key={k.key} className="border-b border-border-secondary/50 transition-colors hover:bg-[#202020]">
+                      <td className="px-2 py-2 font-medium text-primary">{k.key}</td>
+                      <td className="px-2 py-2 text-right text-white/70">{k.requests.toLocaleString()}</td>
+                      <td className="px-2 py-2 text-right text-white/70">{k.input.toLocaleString()}</td>
+                      <td className="px-2 py-2 text-right text-white/70">{k.output.toLocaleString()}</td>
+                      <td className="px-2 py-2 text-right text-white/70">${k.cost.toFixed(4)}</td>
+                    </tr>
+                  ));
+                })()}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>
