@@ -409,12 +409,12 @@ export default function OverviewPage() {
             </div>
           </div>
           <div className="flex h-64 w-full gap-2 rounded-md border border-border-secondary bg-[#262626] p-2">
-            <div className="flex flex-col justify-between text-[10px] text-white/40">
+            <div className="flex flex-col justify-between border-r border-white/20 pr-1 text-[10px] text-white/40">
               <span>100</span>
               <span>0</span>
             </div>
             <div className="flex flex-1 flex-col">
-              <div className="flex h-full items-end gap-1">
+              <div className="flex h-full items-end gap-1 border-b border-white/20 pb-1">
                 {Array.from({ length: 24 }, (_, i) => {
                   const h = Math.abs(Math.sin(i * 0.5) * 60 + 20);
                   return (
