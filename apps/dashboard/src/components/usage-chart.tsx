@@ -3,6 +3,7 @@
 import { barY, defineChart } from "@tanstack/charts";
 import { Chart as RendererChart } from "@tanstack/charts/react/core";
 import { motion } from "@tanstack/charts/motion";
+import { tooltip } from "@tanstack/charts/tooltip";
 import { scaleBand, scaleLinear } from "d3-scale";
 
 const rows = Array.from({ length: 24 }, (_, i) => ({
@@ -32,7 +33,23 @@ const definition = defineChart(
     },
     margin: { top: 5, right: 5, bottom: 20, left: 30 },
   },
-  {},
+  {
+    focus: "group-x",
+    tooltip: {
+      use: tooltip,
+      className: "sc-chart-tooltip",
+      anchor: "group-center",
+      placement: "auto",
+      content: (points: any) => ({
+        title: `${points[0]?.xValue ?? ""}:00`,
+        rows: points.map((point: any) => ({
+          label: "Usage",
+          value: Number(point.yValue ?? 0).toFixed(2),
+          color: point.color,
+        })),
+      }),
+    },
+  },
 );
 
 const renderer = motion({ initial: "always" });
