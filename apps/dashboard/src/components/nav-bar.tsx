@@ -15,7 +15,7 @@ export function NavBar() {
   const pathname = usePathname();
 
   return (
-    <nav className="flex shrink-0 flex-row gap-4 border-b border-border-secondary">
+    <nav className="flex shrink-0 flex-row gap-4 border-b border-border-secondary -ml-2">
       {tabs.map((tab) => {
         const active = pathname === tab.href || pathname?.startsWith(`${tab.href}/`);
         return (
