@@ -45,14 +45,14 @@ export default function ConsoleLayout({ children }: { children: React.ReactNode 
               content column below scrolls. Settings adds its own left rail. */}
           <NavBar />
           {isSettings ? (
-            <div className="mt-6 flex min-h-0 min-w-0 w-full flex-1">
+            <div className="pt-6 flex min-h-0 min-w-0 w-full flex-1">
               <SettingsSidebar />
               <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden px-2 py-1">
                 <div className="mx-auto w-full max-w-2xl">{children}</div>
               </div>
             </div>
           ) : (
-            <div className="mt-10 min-h-0 min-w-0 w-full flex-1 overflow-y-auto overflow-x-hidden px-2 py-1">{children}</div>
+            <div className="pt-10 min-h-0 min-w-0 w-full flex-1 overflow-y-auto overflow-x-hidden px-2 py-1">{children}</div>
           )}
         </div>
       </main>
