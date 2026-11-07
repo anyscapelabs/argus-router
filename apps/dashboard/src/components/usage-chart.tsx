@@ -25,7 +25,7 @@ const definition = defineChart(
     marks,
     scales: {
       x: {
-        scale: () => scaleBand<string>().paddingInner(0).paddingOuter(0),
+        scale: () => scaleBand<string>().paddingInner(0.4).paddingOuter(0.1),
         axis: false,
       },
       y: { scale: scaleLinear, grid: true, axis: true },
