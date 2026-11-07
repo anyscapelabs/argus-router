@@ -410,7 +410,7 @@ export default function OverviewPage() {
             </div>
           </div>
           <div className="rounded-md border border-border-secondary bg-[#262626] p-2">
-            <UsageChart />
+            <UsageChart metric={usageMetric} />
             <div className="ml-[30px] -mt-2 flex w-[715px] gap-0 text-[10px] text-white/40">
               {Array.from({ length: 24 }, (_, i) => (
                 <span key={i} className="flex-1 text-center">
