@@ -408,7 +408,7 @@ export default function OverviewPage() {
             </div>
           </div>
           <div className="flex h-64 w-full flex-col items-center justify-center rounded-md border border-border-secondary bg-[#262626] p-4">
-            <GoInfo className="size-6 text-white/40" />
+            <GoInfo className="size-4 text-white/40" />
             <p className="mt-2 text-xs text-white/40">No usage in this range</p>
           </div>
         </div>
