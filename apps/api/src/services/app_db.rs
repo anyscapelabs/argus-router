@@ -29,13 +29,10 @@ pub const FREE_PLAN_ID: &str = "free";
 /// Model ids allowed on the free plan. Seed only — edit via SQL/plan
 /// management; the boot-time seeding keeps existing rows untouched. These
 /// are model ids from our catalog (served via OpenRouter upstream).
-const FREE_PLAN_MODELS: [&str; 6] = [
+const FREE_PLAN_MODELS: [&str; 3] = [
     "nvidia/nemotron-3-ultra-550b-a55b:free",
     "nvidia/nemotron-3.5-super-vl:free",
     "nvidia/nemotron-3.5-lightning:free",
-    "qwen/qwen3.7-flash",
-    "z-ai/glm-5.3-flash",
-    "deepseek/deepseek-v4.1-flash-1017",
 ];
 
 impl AppDb {
