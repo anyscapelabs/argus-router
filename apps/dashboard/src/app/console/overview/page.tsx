@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { GoChevronDown, GoDownload, GoChevronRight, GoInfo } from "react-icons/go";
 import { useUsage } from "@/domains/usage/hooks";
+import uPlot from "uplot";
+import "uplot/dist/uPlot.min.css";
 
 const platforms = [
   { label: "macOS", detail: "Apple Silicon" },
@@ -75,12 +77,63 @@ export default function OverviewPage() {
   const logs = useMemo(() => generateLogs(), []);
   const usage = useUsage();
   const usageRows = usage.data?.rows ?? [];
+  const chartRef = useRef<HTMLDivElement>(null);
+  const plotRef = useRef<uPlot | null>(null);
   useEffect(() => {
     const platform = navigator.platform.toLowerCase();
     if (platform.includes("mac")) setOs("macOS");
     else if (platform.includes("win")) setOs("Windows");
     else if (platform.includes("linux")) setOs("Linux");
   }, []);
+
+  useEffect(() => {
+    const el = chartRef.current;
+    if (!el) return;
+    const hours = Array.from({ length: 24 }, (_, i) => i);
+    const values = hours.map((h) => Math.abs(Math.sin(h * 0.5) * 10 + 2));
+    const data: [number[], number[]] = [hours, values];
+    const options = (width: number): uPlot.Options => ({
+      width,
+      height: 224,
+      legend: { show: false },
+      scales: { x: { time: false }, y: { auto: true } },
+      axes: [
+        {
+          stroke: "rgba(255,255,255,0.55)",
+          grid: { stroke: "rgba(255,255,255,0.07)" },
+          values: (_, vals) => vals.map((v) => `${v}:00`),
+        },
+        {
+          stroke: "rgba(255,255,255,0.55)",
+          grid: { stroke: "rgba(255,255,255,0.07)" },
+        },
+      ],
+      series: [
+        {},
+        {
+          stroke: "#e5e5e5",
+          width: 2,
+          fill: "rgba(255,255,255,0.08)",
+        },
+      ],
+    });
+    const settle = () => {
+      const width = Math.max(120, Math.floor(el.clientWidth));
+      if (plotRef.current) {
+        plotRef.current.setSize({ width, height: 224 });
+      } else {
+        plotRef.current = new uPlot(options(width), data, el);
+      }
+    };
+    settle();
+    const observer = new ResizeObserver(settle);
+    observer.observe(el);
+    return () => {
+      observer.disconnect();
+      plotRef.current?.destroy();
+      plotRef.current = null;
+    };
+  }, [usageMetric]);
 
   const recentLogs = logs.slice(-5);
 
@@ -407,10 +460,7 @@ export default function OverviewPage() {
               </button>
             </div>
           </div>
-          <div className="flex h-64 w-full flex-col items-center justify-center rounded-md border border-border-secondary bg-[#262626] p-4">
-            <GoInfo className="size-4 text-white/40" />
-            <p className="mt-2 text-xs text-white/40">No usage in this range</p>
-          </div>
+          <div ref={chartRef} className="h-64 w-full rounded-md border border-border-secondary bg-[#262626] p-4" />
         </div>
       )}
     </div>
