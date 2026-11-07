@@ -1,74 +1,14 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { GoTrash, GoKebabHorizontal } from "react-icons/go";
 import { MenuDropdown } from "@/components/menu-dropdown";
 import { useApiKeys, useRevokeApiKey } from "@/domains/keys/hooks";
+import { useUsage } from "@/domains/usage/hooks";
 import uPlot from "uplot";
 import "uplot/dist/uPlot.min.css";
-
-const requests = [
-  {
-    id: "req_1",
-    model: "GPT-5",
-    provider: "OpenAI",
-    status: 200,
-    inputTokens: 850,
-    outputTokens: 350,
-    duration: "1.4s",
-    firstToken: "320 ms",
-    cost: "$0.0124",
-    date: "2026-11-01",
-    time: "14:02",
-  },
-  {
-    id: "req_2",
-    model: "Claude 4",
-    provider: "Anthropic",
-    status: 200,
-    inputTokens: 620,
-    outputTokens: 270,
-    duration: "1.1s",
-    firstToken: "270 ms",
-    cost: "$0.0096",
-    date: "2026-11-02",
-    time: "09:47",
-  },
-  {
-    id: "req_3",
-    model: "GPT-5",
-    provider: "OpenAI",
-    status: 429,
-    inputTokens: 0,
-    outputTokens: 0,
-    duration: "—",
-    firstToken: "—",
-    cost: "$0.0000",
-    date: "2026-11-03",
-    time: "18:20",
-  },
-  {
-    id: "req_4",
-    model: "Llama 3",
-    provider: "Meta",
-    status: 200,
-    inputTokens: 310,
-    outputTokens: 140,
-    duration: "0.8s",
-    firstToken: "190 ms",
-    cost: "$0.0021",
-    date: "2026-11-04",
-    time: "22:05",
-  },
-];
-
-const modelCounts = [
-  { model: "GPT-5", count: 2 },
-  { model: "Claude 4", count: 1 },
-  { model: "Llama 3", count: 1 },
-];
 
 /** Serves the accent from the stylesheet so the bars follow the theme tokens
  *  instead of a hard-coded blue. Canvas paint can't consume `var()`, so the
@@ -97,29 +37,36 @@ export default function ServiceAccountDetailPage() {
   const id = params?.id ?? "";
   const keys = useApiKeys();
   const revoke = useRevokeApiKey();
+  const usage = useUsage(id);
   const account = (keys.data?.apiKeys ?? []).find((k) => k.id === id);
+
+  const rows = usage.data?.rows ?? [];
+  const totalCost = rows.reduce((sum, r) => sum + (r.costUsd ?? 0), 0);
+  const totalRequests = rows.length;
+  const totalTokens = rows.reduce((sum, r) => sum + (r.inputTokens ?? 0) + (r.outputTokens ?? 0), 0);
+
+  const modelCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const r of rows) {
+      const model = r.model ?? "unknown";
+      counts.set(model, (counts.get(model) ?? 0) + 1);
+    }
+    return Array.from(counts.entries()).map(([model, count]) => ({ model, count }));
+  }, [rows]);
 
   const chartRef = useRef<HTMLDivElement>(null);
   const plotRef = useRef<uPlot | null>(null);
 
   useEffect(() => {
     const el = chartRef.current;
-    if (!el) return;
+    if (!el || modelCounts.length === 0) return;
     const data = [modelCounts.map((_, i) => i), modelCounts.map((m) => m.count)] as [number[], number[]];
 
-    // Dark canvas: uPlot's defaults draw black labels on a white panel, which
-    // reads as an invisible/black-on-dark graph card.
     const options = (width: number): uPlot.Options => {
       const accent = themeColor("#e5e5e5");
-      // Bars do not dim: solid accent fill, solid stroke. With the scale
-      // pinned to 0..max the tallest bar reaches the full plotting height
-      // instead of floating where the padded auto-scale puts it.
       return {
         width,
         height: 192,
-        // Pin the y scale to 0..max so the tallest bar reaches the full
-        // plotting height instead of floating where the padded auto-scale
-        // puts it.
         scales: {
           y: { range: [0, Math.max(...modelCounts.map((m) => m.count))] },
         },
@@ -129,7 +76,6 @@ export default function ServiceAccountDetailPage() {
             label: "Requests",
             stroke: accent,
             fill: withAlpha(accent, 1),
-            // Thin bars: a slot-fraction of 0.12 keeps clear gaps between them.
             paths: uPlot.paths.bars!({ size: [0.12], gap: 2 }),
           },
         ],
@@ -150,9 +96,6 @@ export default function ServiceAccountDetailPage() {
     };
 
     const settle = () => {
-      // The canvas is ever-set to what the *card* offers right now; a
-      // window resize re-measures through the observer below, so the plot
-      // never outgrows the card and forces the page wide.
       const width = Math.max(120, Math.floor(el.clientWidth));
       if (plotRef.current) {
         plotRef.current.setSize({ width, height: 192 });
@@ -169,7 +112,7 @@ export default function ServiceAccountDetailPage() {
       plotRef.current?.destroy();
       plotRef.current = null;
     };
-  }, []);
+  }, [modelCounts]);
 
   return (
     <div className="px-2 py-1">
@@ -205,9 +148,9 @@ export default function ServiceAccountDetailPage() {
       <p className="mt-1 text-sm text-white/60">
         Details for this service account.
       </p>
-      {(keys.isError || revoke.isError) && (
+      {(keys.isError || revoke.isError || usage.isError) && (
         <p className="mt-2 text-xs text-red-400">
-          {keys.isError ? keys.error.message : revoke.error?.message}
+          {keys.isError ? keys.error.message : revoke.error?.message ?? usage.error?.message}
         </p>
       )}
       {account && keys.isSuccess && (
@@ -235,22 +178,20 @@ export default function ServiceAccountDetailPage() {
       <div className="mt-6 grid min-w-0 grid-cols-3 gap-4">
         <div className="min-w-0 overflow-hidden rounded-md border border-border-secondary bg-[#262626] p-2">
           <p className="text-xs text-white/60">Total cost</p>
-          <p className="mt-1 text-2xl font-medium text-primary">$12.40</p>
+          <p className="mt-1 text-2xl font-medium text-primary">${totalCost.toFixed(4)}</p>
         </div>
         <div className="min-w-0 overflow-hidden rounded-md border border-border-secondary bg-[#262626] p-2">
           <p className="text-xs text-white/60">Total requests</p>
-          <p className="mt-1 text-2xl font-medium text-primary">1,284</p>
+          <p className="mt-1 text-2xl font-medium text-primary">{totalRequests.toLocaleString()}</p>
         </div>
         <div className="min-w-0 overflow-hidden rounded-md border border-border-secondary bg-[#262626] p-2">
           <p className="text-xs text-white/60">Total tokens</p>
-          <p className="mt-1 text-2xl font-medium text-primary">342,901</p>
+          <p className="mt-1 text-2xl font-medium text-primary">{totalTokens.toLocaleString()}</p>
         </div>
       </div>
 
       <div className="mt-6 rounded-md border border-border-secondary bg-[#262626] p-4">
         <h2 className="text-sm font-medium text-primary">Models per request</h2>
-        {/* Height leaves a legend row under the 192px canvas, so uPlot's DOM
-            legend is never clipped by the card edge. */}
         <div ref={chartRef} className="mt-4 h-56 w-full" />
       </div>
 
@@ -266,21 +207,28 @@ export default function ServiceAccountDetailPage() {
                 <th className="px-2 py-2 text-right font-medium">In</th>
                 <th className="px-2 py-2 text-right font-medium">Out</th>
                 <th className="px-2 py-2 text-right font-medium">Latency</th>
-                <th className="px-2 py-2 text-right font-medium">1st token</th>
                 <th className="px-2 py-2 text-right font-medium">Cost</th>
                 <th className="px-2 py-2 font-medium rounded-tr-md">Date</th>
               </tr>
             </thead>
             <tbody>
-              {requests.map((r) => {
-                const total = r.inputTokens + r.outputTokens;
+              {usage.isLoading && (
+                <tr>
+                  <td colSpan={8} className="px-2 py-3 text-white/60">
+                    Loading usage…
+                  </td>
+                </tr>
+              )}
+              {rows.map((r) => {
                 return (
                   <tr key={r.id} className="border-b border-border-secondary/50 transition-colors hover:bg-[#202020]">
-                    <td className="px-2 py-2 whitespace-nowrap text-white/70">{r.time}</td>
+                    <td className="px-2 py-2 whitespace-nowrap text-white/70">
+                      {r.createdAt ? new Date(r.createdAt).toLocaleTimeString() : "-"}
+                    </td>
                     <td className="px-2 py-2">
                       <div className="min-w-0">
-                        <div className="font-medium text-primary">{r.model}</div>
-                        <div className="text-[10px] text-white/40">{r.provider}</div>
+                        <div className="font-medium text-primary">{r.model ?? "-"}</div>
+                        <div className="text-[10px] text-white/40">{r.provider ?? ""}</div>
                       </div>
                     </td>
                     <td className="px-2 py-2">
@@ -289,17 +237,18 @@ export default function ServiceAccountDetailPage() {
                           r.status === 200 ? "bg-white/10 text-primary" : "bg-white/10 text-yellow-400"
                         }`}
                       >
-                        {r.status}
+                        {r.status ?? "-"}
                       </span>
                     </td>
-                    <td className="px-2 py-2 text-right text-white/70">{r.inputTokens.toLocaleString()}</td>
-                    <td className="px-2 py-2 text-right text-white/70">{r.outputTokens.toLocaleString()}</td>
-                    <td className="px-2 py-2 text-right text-white/70" title={`${total.toLocaleString()} tokens`}>
-                      {r.duration}
+                    <td className="px-2 py-2 text-right text-white/70">{(r.inputTokens ?? 0).toLocaleString()}</td>
+                    <td className="px-2 py-2 text-right text-white/70">{(r.outputTokens ?? 0).toLocaleString()}</td>
+                    <td className="px-2 py-2 text-right text-white/70">
+                      {r.latencyMs != null ? `${(r.latencyMs / 1000).toFixed(1)}s` : "-"}
                     </td>
-                    <td className="px-2 py-2 text-right text-white/70">{r.firstToken}</td>
-                    <td className="px-2 py-2 text-right text-white/70">{r.cost}</td>
-                    <td className="px-2 py-2 whitespace-nowrap text-white/70">{r.date}</td>
+                    <td className="px-2 py-2 text-right text-white/70">${(r.costUsd ?? 0).toFixed(4)}</td>
+                    <td className="px-2 py-2 whitespace-nowrap text-white/70">
+                      {r.createdAt ? new Date(r.createdAt).toLocaleDateString() : "-"}
+                    </td>
                   </tr>
                 );
               })}
