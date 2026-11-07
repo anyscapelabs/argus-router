@@ -100,19 +100,21 @@ export default function OverviewPage() {
       axes: [
         {
           stroke: "rgba(255,255,255,0.55)",
-          grid: { stroke: "rgba(255,255,255,0.07)" },
+          grid: { show: false },
+          ticks: { show: false },
           values: (_, vals) => vals.map((v) => `${v}:00`),
         },
         {
           stroke: "rgba(255,255,255,0.55)",
-          grid: { stroke: "rgba(255,255,255,0.07)" },
+          grid: { show: false },
+          ticks: { show: false },
         },
       ],
       series: [
         {},
         {
           stroke: "#e5e5e5",
-          fill: "rgba(255,255,255,0.25)",
+          fill: "#e5e5e5",
           paths: uPlot.paths.bars!({ size: [0.6], gap: 2 }),
         },
       ],
