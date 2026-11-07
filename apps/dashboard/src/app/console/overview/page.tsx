@@ -253,7 +253,7 @@ export default function OverviewPage() {
                 {hovered && (
                   <div className="pointer-events-none absolute -top-4 right-0 z-20 w-56 translate-y-[-100%] rounded-md border border-border-secondary bg-[#262626] p-3 shadow-2xl after:absolute after:top-full after:right-8 after:-translate-y-px after:border-4 after:border-transparent after:border-t-border-secondary">
                     <div className="flex items-center gap-2">
-                      <span className="text-[11px] text-white/50">{hovered.date.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit" })} · 9h ago</span>
+                      <span className="text-[11px] text-white/50" suppressHydrationWarning>{hovered.date.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit" })} · 9h ago</span>
                     </div>
                     <div className="mt-2 flex items-center gap-2">
                       <span
@@ -310,7 +310,7 @@ export default function OverviewPage() {
                       <span className="text-white/80">{log.model}</span>
                       <span className="hidden text-white/40 lg:inline">{log.tokens.toLocaleString()} tokens</span>
                       <span className="hidden text-white/40 md:inline">{log.duration}</span>
-                      <span className="ml-auto text-white/40">
+                      <span className="ml-auto text-white/40" suppressHydrationWarning>
                         {log.date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
                       </span>
                     </div>
