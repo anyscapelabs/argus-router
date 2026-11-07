@@ -26,10 +26,7 @@ const definition = defineChart(
     scales: {
       x: {
         scale: () => scaleBand<string>().paddingInner(0).paddingOuter(0),
-        axis: {
-          line: false,
-          ticks: { size: 0, padding: 4, format: (value: string) => `${value}:00` },
-        },
+        axis: false,
       },
       y: { scale: scaleLinear, grid: true, axis: true },
     },

@@ -409,8 +409,13 @@ export default function OverviewPage() {
               </button>
             </div>
           </div>
-          <div className="h-64 w-full rounded-md border border-border-secondary bg-[#262626] p-2">
+          <div className="rounded-md border border-border-secondary bg-[#262626] p-2">
             <UsageChart />
+            <div className="mt-1 flex gap-0 text-[10px] text-white/40">
+              {Array.from({ length: 24 }, (_, i) => (
+                <span key={i} className="flex-1 text-center">{i}:00</span>
+              ))}
+            </div>
           </div>
         </div>
       )}
