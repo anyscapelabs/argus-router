@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { GoChevronDown, GoDownload, GoChevronRight } from "react-icons/go";
+import { GoChevronDown, GoDownload, GoChevronRight, GoInfo } from "react-icons/go";
 import { useUsage } from "@/domains/usage/hooks";
 
 const platforms = [
@@ -407,8 +407,9 @@ export default function OverviewPage() {
               </button>
             </div>
           </div>
-          <div className="h-64 w-full rounded-md border border-border-secondary bg-[#262626] p-4">
-            <p className="text-xs text-white/40">Chart placeholder</p>
+          <div className="flex h-64 w-full flex-col items-center justify-center rounded-md border border-border-secondary bg-[#262626] p-4">
+            <GoInfo className="size-6 text-white/40" />
+            <p className="mt-2 text-xs text-white/40">No usage in this range</p>
           </div>
         </div>
       )}
