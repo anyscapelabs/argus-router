@@ -91,9 +91,7 @@ async fn authenticate(state: &AppState, headers: &HeaderMap) -> Result<Principal
         .id
         .typed()
         .cloned()
-        .ok_or_else(|| {
-            Errx::new(ErrCode::Upstream, 500, "the API key lacks an id")
-        })?;
+        .map_err(|_| Errx::new(ErrCode::Upstream, 500, "the API key lacks an id"))?;
     let plan = state.app_db.plan_of(&user_id).await.map_err(|_| {
         Errx::new(ErrCode::Upstream, 500, "the plan lookup failed")
     })?;
