@@ -77,14 +77,15 @@ export default function OverviewPage() {
   const usage = useUsage();
   const usageRows = usage.data?.rows ?? [];
   const modelUsage = useMemo(() => {
-    const map = new Map<string, { model: string; requests: number; input: number; output: number; cacheRead: number; cacheWrite: number }>();
+    const map = new Map<string, { model: string; requests: number; input: number; output: number; cacheRead: number; cacheWrite: number; cost: number }>();
     for (const r of usageRows) {
       const m = r.model ?? "unknown";
-      const e = map.get(m) ?? { model: m, requests: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+      const e = map.get(m) ?? { model: m, requests: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
       e.requests += 1;
       e.input += r.inputTokens ?? 0;
       e.output += r.outputTokens ?? 0;
       e.cacheRead += r.cacheReadTokens ?? 0;
+      e.cost += r.costUsd ?? 0;
       map.set(m, e);
     }
     return Array.from(map.values());
@@ -447,6 +448,7 @@ export default function OverviewPage() {
                   <th className="px-2 py-2 text-right font-medium">Input tokens</th>
                   <th className="px-2 py-2 text-right font-medium">Output tokens</th>
                   <th className="px-2 py-2 text-right font-medium">Cache read</th>
+                  <th className="px-2 py-2 text-right font-medium">Cost</th>
                   <th className="px-2 py-2 text-right font-medium rounded-tr-md">Cache write</th>
                 </tr>
               </thead>
@@ -458,6 +460,7 @@ export default function OverviewPage() {
                     <td className="px-2 py-2 text-right text-white/70">{m.input.toLocaleString()}</td>
                     <td className="px-2 py-2 text-right text-white/70">{m.output.toLocaleString()}</td>
                     <td className="px-2 py-2 text-right text-white/70">{m.cacheRead.toLocaleString()}</td>
+                    <td className="px-2 py-2 text-right text-white/70">${m.cost.toFixed(4)}</td>
                     <td className="px-2 py-2 text-right text-white/70">{m.cacheWrite.toLocaleString()}</td>
                   </tr>
                 ))}
