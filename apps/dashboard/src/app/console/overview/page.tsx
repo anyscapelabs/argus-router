@@ -324,7 +324,7 @@ export default function OverviewPage() {
         </div>
       )}
       {activeSubTab === "My usage" && (
-        <div className="mx-auto flex w-full max-w-2xl flex-col gap-4">
+        <div className="mx-auto flex w-full max-w-3xl flex-col gap-4">
           <div>
             <h2 className="text-sm font-medium text-primary">My usage</h2>
             <p className="mt-1 text-xs text-white/60">
