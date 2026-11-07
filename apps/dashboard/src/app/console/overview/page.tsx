@@ -75,8 +75,6 @@ export default function OverviewPage() {
   const logs = useMemo(() => generateLogs(), []);
   const usage = useUsage();
   const usageRows = usage.data?.rows ?? [];
-  const chartRef = useRef<HTMLDivElement>(null);
-  const plotRef = useRef<uPlot | null>(null);
   useEffect(() => {
     const platform = navigator.platform.toLowerCase();
     if (platform.includes("mac")) setOs("macOS");
