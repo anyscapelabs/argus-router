@@ -331,17 +331,28 @@ export default function OverviewPage() {
               Token usage and cost across your service accounts.
             </p>
           </div>
-          <div className="flex min-w-0 items-center justify-between overflow-hidden rounded-md border border-border-secondary bg-[#262626] p-3">
-            <div>
-              <p className="text-xs text-white/60">Credit balance</p>
-              <p className="mt-1 text-2xl font-medium text-primary">$0.00</p>
+          <div className="flex min-w-0 flex-col overflow-hidden rounded-md border border-border-secondary bg-[#262626] p-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-white/60">Credit balance</p>
+                <p className="mt-1 text-2xl font-medium text-primary">$0.00</p>
+              </div>
+              <button
+                type="button"
+                className="rounded-sm bg-[#3b82f6] px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-[#2563eb]"
+              >
+                Add Payment Method
+              </button>
             </div>
-            <button
-              type="button"
-              className="rounded-sm bg-[#3b82f6] px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-[#2563eb]"
-            >
-              Add Payment Method
-            </button>
+            <div className="mt-3 flex items-center justify-between border-t border-border-secondary pt-3">
+              <p className="text-sm font-medium text-primary">Auto recharge</p>
+              <button
+                type="button"
+                className="text-xs text-[#3b82f6] transition-colors hover:text-[#2563eb]"
+              >
+                Set up
+              </button>
+            </div>
           </div>
           <div className="grid min-w-0 grid-cols-3 gap-4">
             <div className="min-w-0 overflow-hidden rounded-md border border-border-secondary bg-[#262626] p-2">
@@ -416,15 +427,6 @@ export default function OverviewPage() {
                 ))}
               </tbody>
             </table>
-          </div>
-          <div className="flex items-center justify-between rounded-md border border-border-secondary bg-[#262626] p-3">
-            <p className="text-sm font-medium text-primary">Auto recharge</p>
-            <button
-              type="button"
-              className="text-xs text-[#3b82f6] transition-colors hover:text-[#2563eb]"
-            >
-              Set up
-            </button>
           </div>
         </div>
       )}
