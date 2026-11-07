@@ -71,12 +71,14 @@ pub fn guard_entitlement(resolved: &Resolved, allowlist: &[String]) -> Result<()
 }
 
 fn target_for(resolved: &Resolved) -> Result<adapters::Target, Errx> {
-    adapters::target_for(
+    let mut target = adapters::target_for(
         resolved.provider,
         &resolved.entry.upstream_model,
         &resolved.key,
         TargetOptions::default(),
-    )
+    )?;
+    target.provider_routing = resolved.entry.provider_routing.clone();
+    Ok(target)
 }
 
 pub async fn stream_chat(

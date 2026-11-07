@@ -38,6 +38,7 @@ pub struct Target {
     pub api_key: String,
     pub extra_headers: &'static [(&'static str, &'static str)],
     pub quirks: Quirks,
+    pub provider_routing: Option<crate::services::catalog::ProviderRoute>,
 }
 
 /// Desktop's `Router.TargetFor`: validates a model id + origin pair into a
@@ -67,6 +68,7 @@ pub fn target_for(
         api_key: api_key.to_owned(),
         extra_headers: provider.extra_headers,
         quirks: opts.quirks.unwrap_or(provider.quirks),
+        provider_routing: None,
     })
 }
 
@@ -111,6 +113,12 @@ fn build_request(target: &Target, chat: &Chat, streaming: bool) -> Value {
     }
     if !chat.params.stop.is_empty() {
         payload["stop"] = json!(chat.params.stop);
+    }
+    if let Some(routing) = &target.provider_routing {
+        payload["provider"] = json!({
+            "only": routing.only,
+            "allow_fallbacks": routing.allow_fallbacks,
+        });
     }
     if chat.has_tools() {
         payload["tools"] = json!(chat
