@@ -100,14 +100,13 @@ export default function OverviewPage() {
       scales: { x: { time: false }, y: { auto: true } },
       axes: [
         {
-          size: 16,
-          stroke: "rgba(255,255,255,0.55)",
+          show: false,
+          size: 0,
           grid: { show: false },
           ticks: { show: false },
-          values: (_, vals) => vals.map((v) => `${v}:00`),
         },
         {
-          size: 32,
+          size: 24,
           stroke: "rgba(255,255,255,0.55)",
           grid: { show: false },
           ticks: { show: false },
