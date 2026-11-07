@@ -37,7 +37,6 @@ pub struct Pricing {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct ModelCatalogEntry {
     pub id: String,
     pub name: String,
