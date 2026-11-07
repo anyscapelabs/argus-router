@@ -354,10 +354,6 @@ export default function OverviewPage() {
               </button>
             </div>
           </div>
-          <div>
-            <h3 className="text-sm font-medium text-primary">Total usage (hourly)</h3>
-            <p className="mt-1 text-xs text-white/60">Cost and tokens per hour.</p>
-          </div>
           <div className="grid min-w-0 grid-cols-3 gap-4">
             <div className="min-w-0 overflow-hidden rounded-md border border-border-secondary bg-[#262626] p-2">
               <p className="text-xs text-white/60">Total cost</p>
@@ -375,6 +371,10 @@ export default function OverviewPage() {
                 {usageRows.reduce((s, r) => s + (r.inputTokens ?? 0) + (r.outputTokens ?? 0), 0).toLocaleString()}
               </p>
             </div>
+          </div>
+          <div>
+            <h3 className="text-sm font-medium text-primary">Total usage (hourly)</h3>
+            <p className="mt-1 text-xs text-white/60">Cost and tokens per hour.</p>
           </div>
         </div>
       )}
