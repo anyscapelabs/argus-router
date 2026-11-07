@@ -22,7 +22,7 @@ export function NavBar() {
           <Link
             key={tab.label}
             href={tab.href}
-            className={`-mb-px inline-flex shrink-0 border-b-2 px-2 py-1 text-sm font-medium transition-colors ${
+            className={`-mb-px inline-flex shrink-0 border-b-2 px-3 py-2 text-sm font-medium transition-colors ${
               active
                 ? "border-primary bg-white/10 text-primary"
                 : "border-transparent text-white/60 hover:bg-white/5 hover:text-primary"
