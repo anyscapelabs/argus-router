@@ -191,7 +191,7 @@ impl AppDb {
                     index: "payload".into(),
                     source: Box::new(error),
                 })?;
-            let _ = sqlx::query(
+            sqlx::query(
                 "INSERT INTO model_catalog (id, payload, updated_at) VALUES ($1, $2::jsonb, $3)
                  ON CONFLICT (id) DO UPDATE SET payload = EXCLUDED.payload, updated_at = EXCLUDED.updated_at",
             )
