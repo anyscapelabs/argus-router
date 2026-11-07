@@ -24,10 +24,16 @@ const definition = defineChart(
   {
     marks,
     scales: {
-      x: { scale: () => scaleBand<string>().paddingInner(0.2).paddingOuter(0.1) },
-      y: { scale: scaleLinear, grid: false, axis: false },
+      x: {
+        scale: () => scaleBand<string>().paddingInner(0.2).paddingOuter(0.1),
+        axis: {
+          line: false,
+          ticks: { size: 0, padding: 8, format: (value: string) => `${value}:00` },
+        },
+      },
+      y: { scale: scaleLinear, grid: true, axis: true },
     },
-    margin: { top: 4, right: 4, bottom: 4, left: 4 },
+    margin: { top: 5, right: 5, bottom: 35, left: 30 },
   },
   {},
 );
