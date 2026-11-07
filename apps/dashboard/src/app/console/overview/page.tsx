@@ -378,7 +378,9 @@ export default function OverviewPage() {
               <h3 className="text-sm font-medium text-primary">
                 Total {usageMetric === "cost" ? "cost" : "tokens"} (hourly)
               </h3>
-              <p className="mt-1 text-xs text-white/60">Cost and tokens per hour.</p>
+              <p className="mt-1 text-xs text-white/60">
+                {usageMetric === "cost" ? "Cost per hour." : "Tokens per hour."}
+              </p>
             </div>
             <div className="flex gap-1">
               <button
