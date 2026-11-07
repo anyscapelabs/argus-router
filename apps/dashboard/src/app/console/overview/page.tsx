@@ -411,7 +411,7 @@ export default function OverviewPage() {
           </div>
           <div className="rounded-md border border-border-secondary bg-[#262626] p-2">
             <UsageChart />
-            <div className="mt-1 flex gap-0 text-[10px] text-white/40">
+            <div className="mt-0 flex gap-0 text-[10px] text-white/40">
               {Array.from({ length: 24 }, (_, i) => (
                 <span key={i} className="flex-1 text-center">
                   {i % 5 === 0 ? `${i}:00` : ""}
