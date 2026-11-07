@@ -407,6 +407,9 @@ export default function OverviewPage() {
               </button>
             </div>
           </div>
+          <div className="h-64 w-full rounded-md border border-border-secondary bg-[#262626] p-4">
+            <p className="text-xs text-white/40">Chart placeholder</p>
+          </div>
         </div>
       )}
     </div>
