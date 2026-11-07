@@ -1,16 +1,30 @@
 "use client";
 
+import { GoSync } from "react-icons/go";
 import { useModels } from "@/domains/models/hooks";
-import { usePlans } from "@/domains/plans/hooks";
+import { usePlans, useRefreshPlans } from "@/domains/plans/hooks";
 
 export default function BillingPage() {
   const models = useModels();
   const plans = usePlans();
+  const refresh = useRefreshPlans();
   const currentPlan = models.data?.plan ?? "free";
 
   return (
     <div className="flex min-h-full flex-1 flex-col px-2">
-      <h2 className="text-sm font-medium text-primary">Billing &amp; Plans</h2>
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-medium text-primary">Billing &amp; Plans</h2>
+        <button
+          type="button"
+          onClick={() => refresh.mutate()}
+          disabled={refresh.isPending}
+          className="flex size-6 cursor-pointer items-center justify-center rounded-sm border border-border-secondary bg-tertiary text-white/60 transition-colors hover:bg-white/10 hover:text-primary disabled:opacity-50"
+          aria-label="Refresh plans"
+          title="Re-seed plans from JSON"
+        >
+          <GoSync className="size-3.5" />
+        </button>
+      </div>
       <p className="mt-1 text-xs text-white/60">
         Choose the plan that fits your usage. Prices are per month.
       </p>

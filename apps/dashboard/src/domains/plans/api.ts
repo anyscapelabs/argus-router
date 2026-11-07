@@ -19,3 +19,12 @@ export async function getPlans(): Promise<PlansResult> {
   if (!response.ok) throw new Error("Failed to load plans");
   return response.json() as Promise<PlansResult>;
 }
+
+export async function refreshPlans(): Promise<{ refreshed: boolean; count: number }> {
+  const response = await fetch(`${API_ROUTES.plans}/refresh`, {
+    method: "POST",
+    credentials: "include",
+  });
+  if (!response.ok) throw new Error("Failed to refresh plans");
+  return response.json() as Promise<{ refreshed: boolean; count: number }>;
+}
