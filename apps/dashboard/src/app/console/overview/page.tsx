@@ -400,14 +400,14 @@ export default function OverviewPage() {
               <button
                 type="button"
                 onClick={() => setLogRange(logRange === "24h" ? "7d" : "24h")}
-                className="rounded-sm px-2 py-1 text-xs text-white/60 transition-colors hover:bg-white/5 hover:text-primary"
+                className="cursor-pointer rounded-sm bg-tertiary px-2 py-1 text-xs text-white/60 transition-colors hover:bg-white/10 hover:text-primary"
               >
                 {logRange === "24h" ? "24h" : "7d"}
               </button>
               <button
                 type="button"
                 onClick={() => usage.refetch()}
-                className="rounded-sm px-2 py-1 text-xs text-white/60 transition-colors hover:bg-white/5 hover:text-primary"
+                className="cursor-pointer rounded-sm bg-tertiary px-2 py-1 text-xs text-white/60 transition-colors hover:bg-white/10 hover:text-primary"
               >
                 Refresh
               </button>
