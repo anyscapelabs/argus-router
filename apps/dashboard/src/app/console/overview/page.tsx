@@ -70,6 +70,7 @@ export default function OverviewPage() {
   const [open, setOpen] = useState(false);
   const [activeSubTab, setActiveSubTab] = useState("Activity");
   const [hovered, setHovered] = useState<RequestLog | null>(null);
+  const [usageMetric, setUsageMetric] = useState<"cost" | "tokens">("cost");
 
   const logs = useMemo(() => generateLogs(), []);
   const usage = useUsage();
@@ -372,9 +373,35 @@ export default function OverviewPage() {
               </p>
             </div>
           </div>
-          <div className="mt-4">
-            <h3 className="text-sm font-medium text-primary">Total usage (hourly)</h3>
-            <p className="mt-1 text-xs text-white/60">Cost and tokens per hour.</p>
+          <div className="mt-4 flex items-center justify-between">
+            <div>
+              <h3 className="text-sm font-medium text-primary">Total usage (hourly)</h3>
+              <p className="mt-1 text-xs text-white/60">Cost and tokens per hour.</p>
+            </div>
+            <div className="flex gap-1">
+              <button
+                type="button"
+                onClick={() => setUsageMetric("cost")}
+                className={`rounded-sm px-2 py-1 text-xs transition-colors ${
+                  usageMetric === "cost"
+                    ? "bg-white/10 font-medium text-primary"
+                    : "text-white/60 hover:bg-white/5 hover:text-primary"
+                }`}
+              >
+                Cost
+              </button>
+              <button
+                type="button"
+                onClick={() => setUsageMetric("tokens")}
+                className={`rounded-sm px-2 py-1 text-xs transition-colors ${
+                  usageMetric === "tokens"
+                    ? "bg-white/10 font-medium text-primary"
+                    : "text-white/60 hover:bg-white/5 hover:text-primary"
+                }`}
+              >
+                Tokens
+              </button>
+            </div>
           </div>
         </div>
       )}
