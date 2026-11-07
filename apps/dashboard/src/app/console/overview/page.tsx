@@ -453,6 +453,13 @@ export default function OverviewPage() {
                 </tr>
               </thead>
               <tbody>
+                {modelUsage.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="px-2 py-6 text-center text-xs text-white/40">
+                      No usage in this range
+                    </td>
+                  </tr>
+                )}
                 {modelUsage.map((m) => (
                   <tr key={m.model} className="border-b border-border-secondary/50 transition-colors hover:bg-[#202020]">
                     <td className="px-2 py-2 font-medium text-primary">{m.model}</td>
