@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { GoChevronDown, GoDownload, GoChevronRight } from "react-icons/go";
+import { GoChevronDown, GoDownload, GoChevronRight, GoClock, GoSync } from "react-icons/go";
 import { useUsage } from "@/domains/usage/hooks";
 import { UsageChart } from "@/components/usage-chart";
 
@@ -400,15 +400,17 @@ export default function OverviewPage() {
               <button
                 type="button"
                 onClick={() => setLogRange(logRange === "24h" ? "7d" : "24h")}
-                className="cursor-pointer rounded-sm bg-tertiary px-2 py-1 text-xs text-white/60 transition-colors hover:bg-white/10 hover:text-primary"
+                className="flex cursor-pointer items-center gap-1 rounded-sm border border-border-secondary bg-tertiary px-2 py-1 text-xs text-primary transition-colors hover:bg-white/10"
               >
+                <GoClock className="size-3" />
                 {logRange === "24h" ? "24h" : "7d"}
               </button>
               <button
                 type="button"
                 onClick={() => usage.refetch()}
-                className="cursor-pointer rounded-sm bg-tertiary px-2 py-1 text-xs text-white/60 transition-colors hover:bg-white/10 hover:text-primary"
+                className="flex cursor-pointer items-center gap-1 rounded-sm border border-border-secondary bg-tertiary px-2 py-1 text-xs text-primary transition-colors hover:bg-white/10"
               >
+                <GoSync className="size-3" />
                 Refresh
               </button>
             </div>
