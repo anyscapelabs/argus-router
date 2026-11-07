@@ -39,8 +39,8 @@ export default function ConsoleLayout({ children }: { children: React.ReactNode 
        scrollbar is the content column's below. */
     <div className="flex h-dvh flex-col overflow-hidden">
       <TopBar />
-      <main className="flex min-h-0 min-w-0 flex-1 flex-col p-2">
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-md bg-secondary p-2">
+      <main className="flex min-h-0 min-w-0 flex-1 flex-col px-2 pb-2">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-md bg-secondary px-2 pb-2">
           {/* The tab bar stays pinned at the top of the card — only the
               content column below scrolls. Settings adds its own left rail. */}
           <NavBar />
