@@ -340,6 +340,52 @@ export default function OverviewPage() {
           </div>
         </div>
       )}
+      {activeSubTab === "Leaderboard" && (
+        <div className="mx-auto flex w-full max-w-3xl flex-col gap-4">
+          <div>
+            <h2 className="text-sm font-medium text-primary">Most used models</h2>
+            <p className="mt-1 text-xs text-white/60">
+              Leaderboard of models by request count.
+            </p>
+          </div>
+          <div className="max-w-full overflow-x-auto rounded-md border border-border-secondary">
+            <table className="w-full text-left text-xs">
+              <thead>
+                <tr className="border-b border-border-secondary bg-tertiary text-white/40">
+                  <th className="px-2 py-2 font-medium rounded-tl-md">Rank</th>
+                  <th className="px-2 py-2 font-medium">Model</th>
+                  <th className="px-2 py-2 text-right font-medium">Requests</th>
+                  <th className="px-2 py-2 text-right font-medium">Input tokens</th>
+                  <th className="px-2 py-2 text-right font-medium">Output tokens</th>
+                  <th className="px-2 py-2 text-right font-medium rounded-tr-md">Cost</th>
+                </tr>
+              </thead>
+              <tbody>
+                {modelUsage
+                  .slice()
+                  .sort((a, b) => b.requests - a.requests)
+                  .map((m, i) => (
+                    <tr key={m.model} className="border-b border-border-secondary/50 transition-colors hover:bg-[#202020]">
+                      <td className="px-2 py-2 text-white/70">{i + 1}</td>
+                      <td className="px-2 py-2 font-medium text-primary">{m.model}</td>
+                      <td className="px-2 py-2 text-right text-white/70">{m.requests.toLocaleString()}</td>
+                      <td className="px-2 py-2 text-right text-white/70">{m.input.toLocaleString()}</td>
+                      <td className="px-2 py-2 text-right text-white/70">{m.output.toLocaleString()}</td>
+                      <td className="px-2 py-2 text-right text-white/70">${m.cost.toFixed(4)}</td>
+                    </tr>
+                  ))}
+                {modelUsage.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="px-2 py-6 text-center text-xs text-white/40">
+                      No usage in this range
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
       {activeSubTab === "My usage" && (
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-4">
           <div>
