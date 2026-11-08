@@ -35,12 +35,11 @@ pub fn parse(payload: &Value) -> Result<(String, Chat), Errx> {
         messages: Vec::new(),
         tools: Vec::new(),
         tool_choice: ToolChoice::Auto,
-        params: Params::clamped(params_of(payload), 0),
+        // Leave the client's cap untouched here; the endpoint clamps it to
+        // `entry.max_output` via `clamp_params` once the model is resolved.
+        // (Passing 0 here used to squash every cap down to 1 token.)
+        params: Params::clamped(params_of(payload), i64::MAX),
     };
-    let mut params = params_of(payload);
-    // Re-clamp once we know the entries; the endpoint re-runs clamping
-    // against `entry.max_output` via `Params::clamped` after resolve.
-    let _ = &mut params;
 
     for message in messages {
         let role = message.get("role").and_then(|found| found.as_str()).unwrap_or("");

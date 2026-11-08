@@ -52,7 +52,7 @@ pub fn parse(payload: &Value) -> Result<Chat, Errx> {
         messages: Vec::new(),
         tools: Vec::new(),
         tool_choice: ToolChoice::Auto,
-        params: Params::clamped(None, 0),
+        params: Params::clamped(None, i64::MAX),
     };
     // Mirrors the upstream adapter: Gemini never carries call ids, so the
     // proxy mints stable ids and tracks function names until the response
@@ -228,7 +228,8 @@ pub fn parse(payload: &Value) -> Result<Chat, Errx> {
                 top_p: float("topP"),
                 stop,
             }),
-            0,
+            // Real clamp happens in `clamp_params` after model resolution.
+            i64::MAX,
         );
         chat.params = params;
     }
