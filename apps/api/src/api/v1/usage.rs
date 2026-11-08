@@ -3,6 +3,7 @@ use axum::http::StatusCode;
 use axum::routing::get;
 use axum::{Json as AxumJson, Router};
 use better_auth::integrations::axum::CurrentSession;
+use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
 use crate::auth::AppAuthSchema;
@@ -12,8 +13,20 @@ use sqlx::Row;
 
 #[derive(Deserialize, Default)]
 struct UsageQuery {
+    #[serde(alias = "keyId")]
     key_id: Option<String>,
+    since: Option<String>,
     limit: Option<i64>,
+}
+
+fn user_id(session: &CurrentSession<AppAuthSchema>) -> String {
+    session
+        .user
+        .id
+        .typed()
+        .ok()
+        .cloned()
+        .unwrap_or_default()
 }
 
 pub fn router() -> Router<AppState> {
@@ -22,26 +35,74 @@ pub fn router() -> Router<AppState> {
 
 async fn list_usage(
     State(state): State<AppState>,
-    _session: CurrentSession<AppAuthSchema>,
+    session: CurrentSession<AppAuthSchema>,
     Query(q): Query<UsageQuery>,
 ) -> Result<AxumJson<serde_json::Value>, (StatusCode, AxumJson<serde_json::Value>)> {
-    let limit = q.limit.unwrap_or(100).clamp(1, 1000);
+    let user = user_id(&session);
+    if user.is_empty() {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            AxumJson(serde_json::json!({"error": {"code": "SESSION", "message": "The session carries no user identifier."}})),
+        ));
+    }
+
+    let limit = q.limit.unwrap_or(500).clamp(1, 1000);
+    let since: Option<DateTime<Utc>> = match q.since.as_deref() {
+        Some(raw) => Some(
+            DateTime::parse_from_rfc3339(raw)
+                .map(|dt| dt.with_timezone(&Utc))
+                .map_err(|e| {
+                    (
+                        StatusCode::BAD_REQUEST,
+                        AxumJson(serde_json::json!({"error": {"code": "USAGE_SINCE", "message": format!("Invalid since: {e}")}})),
+                    )
+                })?,
+        ),
+        None => None,
+    };
+
     let pool = state.app_db.pool();
-    let rows = if let Some(key_id) = q.key_id {
-        sqlx::query(
-            "SELECT id, created_at, key_id, user_id, plan_id, model, provider, input_tokens, output_tokens, cache_read_tokens, cost_usd, status, latency_ms, error_code FROM usage_logs WHERE key_id = $1 ORDER BY created_at DESC LIMIT $2",
-        )
-        .bind(key_id)
-        .bind(limit)
-        .fetch_all(&pool)
-        .await
-    } else {
-        sqlx::query(
-            "SELECT id, created_at, key_id, user_id, plan_id, model, provider, input_tokens, output_tokens, cache_read_tokens, cost_usd, status, latency_ms, error_code FROM usage_logs ORDER BY created_at DESC LIMIT $1",
-        )
-        .bind(limit)
-        .fetch_all(&pool)
-        .await
+    let rows = match (q.key_id.as_deref(), since) {
+        (Some(key_id), Some(since)) => {
+            sqlx::query(
+                "SELECT id, created_at, key_id, user_id, plan_id, model, provider, input_tokens, output_tokens, cache_read_tokens, cost_usd, status, latency_ms, error_code FROM usage_logs WHERE user_id = $1 AND key_id = $2 AND created_at >= $3 ORDER BY created_at DESC LIMIT $4",
+            )
+            .bind(&user)
+            .bind(key_id)
+            .bind(since)
+            .bind(limit)
+            .fetch_all(&pool)
+            .await
+        }
+        (Some(key_id), None) => {
+            sqlx::query(
+                "SELECT id, created_at, key_id, user_id, plan_id, model, provider, input_tokens, output_tokens, cache_read_tokens, cost_usd, status, latency_ms, error_code FROM usage_logs WHERE user_id = $1 AND key_id = $2 ORDER BY created_at DESC LIMIT $3",
+            )
+            .bind(&user)
+            .bind(key_id)
+            .bind(limit)
+            .fetch_all(&pool)
+            .await
+        }
+        (None, Some(since)) => {
+            sqlx::query(
+                "SELECT id, created_at, key_id, user_id, plan_id, model, provider, input_tokens, output_tokens, cache_read_tokens, cost_usd, status, latency_ms, error_code FROM usage_logs WHERE user_id = $1 AND created_at >= $2 ORDER BY created_at DESC LIMIT $3",
+            )
+            .bind(&user)
+            .bind(since)
+            .bind(limit)
+            .fetch_all(&pool)
+            .await
+        }
+        (None, None) => {
+            sqlx::query(
+                "SELECT id, created_at, key_id, user_id, plan_id, model, provider, input_tokens, output_tokens, cache_read_tokens, cost_usd, status, latency_ms, error_code FROM usage_logs WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2",
+            )
+            .bind(&user)
+            .bind(limit)
+            .fetch_all(&pool)
+            .await
+        }
     }
     .map_err(|e| {
         (

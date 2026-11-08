@@ -7,7 +7,6 @@ const tabs = [
   { label: "Overview", href: "/console/overview" },
   { label: "Subscription", href: "/console/subscription" },
   { label: "Models", href: "/console/models" },
-  { label: "Provider", href: "/console/provider" },
   { label: "Settings", href: "/console/settings" },
 ];
 

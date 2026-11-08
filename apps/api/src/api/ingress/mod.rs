@@ -656,6 +656,8 @@ async fn openai_models_view(state: &AppState, headers: &HeaderMap) -> Result<Val
                 "object": "model",
                 "created": 0,
                 "owned_by": entry.provider,
+                "display_name": entry.name,
+                "name": entry.name,
             })
         })
         .collect();

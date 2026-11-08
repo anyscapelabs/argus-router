@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { GoChevronDown, GoDownload, GoChevronRight, GoClock, GoSync } from "react-icons/go";
 import { useUsage } from "@/domains/usage/hooks";
-import { UsageChart } from "@/components/usage-chart";
+import type { UsageRange, UsageRow } from "@/domains/usage/api";
+import { chartAxisLabels, UsageChart, UsageEmptyState } from "@/components/usage-chart";
 
 const platforms = [
   { label: "macOS", detail: "Apple Silicon" },
@@ -15,7 +16,7 @@ const platforms = [
   { label: "Linux", detail: ".AppImage" },
 ];
 
-const subTabs = ["Activity", "My usage", "Leaderboard", "Logs", "Audit"];
+const subTabs = ["Activity", "My usage", "Leaderboard", "Logs"];
 
 type RequestLog = {
   id: string;
@@ -24,38 +25,25 @@ type RequestLog = {
   status: number;
   tokens: number;
   duration: string;
-  firstToken: string;
   inputTokens: number;
   outputTokens: number;
   cost: string;
 };
 
-function generateLogs(): RequestLog[] {
-  const models = ["GLM-5.3-Flash", "GPT-5", "Claude 4", "Llama 3"];
-  const logs: RequestLog[] = [];
-  const today = new Date();
-  for (let i = 39; i >= 0; i--) {
-    const d = new Date(today);
-    d.setMinutes(d.getMinutes() - i * 47);
-    const seed = Math.abs(Math.sin(i * 12.9898) * 10000) % 1;
-    const status = seed > 0.85 ? 429 : seed > 0.95 ? 500 : 200;
-    const model = models[Math.floor(seed * models.length) % models.length];
-    const input = 500 + Math.floor(seed * 300);
-    const output = 200 + Math.floor(seed * 700);
-    logs.push({
-      id: `req_${i}`,
-      date: d,
-      model,
-      status,
-      tokens: input + output,
-      duration: `${(seed * 2 + 0.2).toFixed(1)}s`,
-      firstToken: `${Math.floor(seed * 800 + 100)} ms`,
-      inputTokens: input,
-      outputTokens: output,
-      cost: `$${(seed * 0.04).toFixed(2)}`,
-    });
-  }
-  return logs.reverse();
+function toActivityLog(row: UsageRow): RequestLog {
+  const input = row.inputTokens ?? 0;
+  const output = row.outputTokens ?? 0;
+  return {
+    id: String(row.id),
+    date: row.createdAt ? new Date(row.createdAt) : new Date(0),
+    model: row.model ?? "unknown",
+    status: row.status ?? 0,
+    tokens: input + output,
+    duration: row.latencyMs != null ? `${(row.latencyMs / 1000).toFixed(1)}s` : "-",
+    inputTokens: input,
+    outputTokens: output,
+    cost: `$${(row.costUsd ?? 0).toFixed(4)}`,
+  };
 }
 
 function getStatusColor(_status: number): string {
@@ -66,17 +54,60 @@ const levelColors = [
   "bg-[#1a1a1a]",
 ];
 
+function RangeControls({
+  range,
+  onRangeChange,
+  onRefresh,
+  isFetching,
+}: {
+  range: UsageRange;
+  onRangeChange: (next: UsageRange) => void;
+  onRefresh: () => void;
+  isFetching: boolean;
+}) {
+  return (
+    <div className="flex gap-1">
+      <button
+        type="button"
+        onClick={() =>
+          onRangeChange(range === "24h" ? "7d" : range === "7d" ? "30d" : "24h")
+        }
+        className="flex cursor-pointer items-center gap-1 rounded-sm border border-border-secondary bg-tertiary px-2 py-1 text-xs text-primary transition-colors hover:bg-white/10"
+      >
+        <GoClock className="size-3" />
+        {range}
+      </button>
+      <button
+        type="button"
+        onClick={onRefresh}
+        disabled={isFetching}
+        className={`flex cursor-pointer items-center gap-1 rounded-sm border border-border-secondary px-2 py-1 text-xs text-primary transition-colors ${
+          isFetching ? "bg-white/10" : "bg-tertiary hover:bg-white/10"
+        }`}
+      >
+        <GoSync className={`size-3 ${isFetching ? "animate-spin" : ""}`} />
+        Refresh
+      </button>
+    </div>
+  );
+}
+
 export default function OverviewPage() {
   const [os, setOs] = useState("Unknown");
   const [open, setOpen] = useState(false);
   const [activeSubTab, setActiveSubTab] = useState("Activity");
   const [hovered, setHovered] = useState<RequestLog | null>(null);
   const [usageMetric, setUsageMetric] = useState<"cost" | "tokens">("cost");
-  const [logRange, setLogRange] = useState("24h");
+  const [logRange, setLogRange] = useState<UsageRange>("24h");
 
-  const logs = useMemo(() => generateLogs(), []);
-  const usage = useUsage();
+  const usage = useUsage({ range: logRange });
   const usageRows = usage.data?.rows ?? [];
+  const logs = useMemo(() => {
+    return usageRows
+      .slice()
+      .reverse()
+      .map(toActivityLog);
+  }, [usageRows]);
   const modelUsage = useMemo(() => {
     const map = new Map<string, { model: string; requests: number; input: number; output: number; cacheRead: number; cacheWrite: number; cost: number }>();
     for (const r of usageRows) {
@@ -98,8 +129,11 @@ export default function OverviewPage() {
     else if (platform.includes("linux")) setOs("Linux");
   }, []);
 
-
+  const sparkLogs = logs.slice(-40);
   const recentLogs = logs.slice(-5);
+  const axisLabels = useMemo(() => chartAxisLabels(logRange), [logRange]);
+  const chartGranularity = logRange === "24h" ? "hourly" : "daily";
+
 
   return (
     <div className="flex min-h-full flex-1 flex-col px-2">
@@ -246,6 +280,7 @@ export default function OverviewPage() {
                   </div>
                   <button
                     type="button"
+                    onClick={() => setActiveSubTab("Logs")}
                     className="flex size-6 items-center justify-center rounded-sm border border-border-secondary bg-transparent text-white/60 transition-colors hover:bg-[#202020] hover:text-primary"
                     aria-label="View logs"
                   >
@@ -254,26 +289,38 @@ export default function OverviewPage() {
                 </div>
               </div>
               <p className="mt-0.5 text-xs text-white/40">
-                {logs.length} requests · Last 40
+                {sparkLogs.length === 0
+                  ? "No requests in this range"
+                  : `${sparkLogs.length} requests · Last ${Math.min(40, sparkLogs.length)}`}
               </p>
 
               <div className="relative mt-4">
-                <div className="flex h-12 w-full items-end gap-[2px]">
-                  {logs.map((req, i) => (
-                    <div
-                      key={req.id}
-                      onMouseEnter={() => setHovered(req)}
-                      onMouseLeave={() => setHovered(null)}
-                      className={`flex-1 cursor-pointer rounded-t-[2px] transition-all hover:ring-1 hover:ring-white/40 ${getStatusColor(req.status)}`}
-                      style={{ height: `${30 + ((i * 17) % 70)}%` }}
-                    />
-                  ))}
-                </div>
+                {sparkLogs.length === 0 ? (
+                  <UsageEmptyState className="h-24" />
+                ) : (
+                  <div className="flex h-12 w-full items-end gap-[2px]">
+                    {(() => {
+                      const maxTokens = Math.max(1, ...sparkLogs.map((l) => l.tokens));
+                      return sparkLogs.map((req) => {
+                        const heightPct = 18 + Math.round((req.tokens / maxTokens) * 82);
+                        return (
+                          <div
+                            key={req.id}
+                            onMouseEnter={() => setHovered(req)}
+                            onMouseLeave={() => setHovered(null)}
+                            className={`flex-1 cursor-pointer rounded-t-[2px] transition-all hover:ring-1 hover:ring-white/40 ${getStatusColor(req.status)}`}
+                            style={{ height: `${heightPct}%` }}
+                          />
+                        );
+                      });
+                    })()}
+                  </div>
+                )}
 
                 {hovered && (
                   <div className="pointer-events-none absolute -top-4 right-0 z-20 w-56 translate-y-[-100%] rounded-md border border-border-secondary bg-[#262626] p-3 shadow-2xl after:absolute after:top-full after:right-8 after:-translate-y-px after:border-4 after:border-transparent after:border-t-border-secondary">
                     <div className="flex items-center gap-2">
-                      <span className="text-[11px] text-white/50" suppressHydrationWarning>{hovered.date.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit" })} · 9h ago</span>
+                      <span className="text-[11px] text-white/50" suppressHydrationWarning>{hovered.date.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span>
                     </div>
                     <div className="mt-2 flex items-center gap-2">
                       <span
@@ -289,10 +336,6 @@ export default function OverviewPage() {
                       <div className="flex justify-between">
                         <span className="text-white/50">Duration</span>
                         <span className="text-white/80">{hovered.duration}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-white/50">First token</span>
-                        <span className="text-white/80">{hovered.firstToken}</span>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-white/50">Tokens</span>
@@ -314,27 +357,33 @@ export default function OverviewPage() {
                   <p className="text-xs font-medium text-primary">Recent requests</p>
                   <span className="text-xs text-white/40">Last 5</span>
                 </div>
-                <div className="mt-3 space-y-0.5">
-                  {recentLogs.map((log) => (
-                    <div
-                      key={log.id}
-                      className="group flex cursor-pointer items-center gap-3 rounded-md px-2 py-1.5 text-xs transition-colors hover:bg-[#202020]"
-                    >
-                      <span
-                        className={`rounded-sm px-1.5 py-0.5 font-medium ${
-                          log.status === 200 ? "bg-white/10 text-primary" : "bg-white/10 text-yellow-400"
-                        }`}
-                      >
-                        {log.status}
-                      </span>
-                      <span className="text-white/80">{log.model}</span>
-                      <span className="hidden text-white/40 lg:inline">{log.tokens.toLocaleString()} tokens</span>
-                      <span className="hidden text-white/40 md:inline">{log.duration}</span>
-                      <span className="ml-auto text-white/40" suppressHydrationWarning>
-                        {log.date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
-                      </span>
+                <div className="mt-3 min-h-[140px]">
+                  {recentLogs.length === 0 ? (
+                    <UsageEmptyState className="h-[140px]" />
+                  ) : (
+                    <div className="space-y-0.5">
+                      {recentLogs.map((log) => (
+                        <div
+                          key={log.id}
+                          className="group flex cursor-pointer items-center gap-3 rounded-md px-2 py-1.5 text-xs transition-colors hover:bg-[#202020]"
+                        >
+                          <span
+                            className={`rounded-sm px-1.5 py-0.5 font-medium ${
+                              log.status === 200 ? "bg-white/10 text-primary" : "bg-white/10 text-yellow-400"
+                            }`}
+                          >
+                            {log.status}
+                          </span>
+                          <span className="text-white/80">{log.model}</span>
+                          <span className="hidden text-white/40 lg:inline">{log.tokens.toLocaleString()} tokens</span>
+                          <span className="hidden text-white/40 md:inline">{log.duration}</span>
+                          <span className="ml-auto text-white/40" suppressHydrationWarning>
+                            {log.date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
+                          </span>
+                        </div>
+                      ))}
                     </div>
-                  ))}
+                  )}
                 </div>
               </div>
             </div>
@@ -343,11 +392,19 @@ export default function OverviewPage() {
       )}
       {activeSubTab === "Leaderboard" && (
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-4">
-          <div>
-            <h2 className="mt-4 text-sm font-medium text-primary">Most used models</h2>
-            <p className="mt-1 text-xs text-white/60">
-              Leaderboard of models by request count.
-            </p>
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <h2 className="mt-4 text-sm font-medium text-primary">Most used models</h2>
+              <p className="mt-1 text-xs text-white/60">
+                Leaderboard of models by request count.
+              </p>
+            </div>
+            <RangeControls
+              range={logRange}
+              onRangeChange={setLogRange}
+              onRefresh={() => usage.refetch()}
+              isFetching={usage.isFetching}
+            />
           </div>
           <div className="max-w-full overflow-x-auto rounded-md border border-border-secondary">
             <table className="w-full text-left text-xs">
@@ -396,24 +453,12 @@ export default function OverviewPage() {
                 Recent requests through the gateway.
               </p>
             </div>
-            <div className="flex gap-1">
-              <button
-                type="button"
-                onClick={() => setLogRange(logRange === "24h" ? "7d" : "24h")}
-                className="flex cursor-pointer items-center gap-1 rounded-sm border border-border-secondary bg-tertiary px-2 py-1 text-xs text-primary transition-colors hover:bg-white/10"
-              >
-                <GoClock className="size-3" />
-                {logRange === "24h" ? "24h" : "7d"}
-              </button>
-              <button
-                type="button"
-                onClick={() => usage.refetch()}
-                className="flex cursor-pointer items-center gap-1 rounded-sm border border-border-secondary bg-tertiary px-2 py-1 text-xs text-primary transition-colors hover:bg-white/10"
-              >
-                <GoSync className="size-3" />
-                Refresh
-              </button>
-            </div>
+            <RangeControls
+              range={logRange}
+              onRangeChange={setLogRange}
+              onRefresh={() => usage.refetch()}
+              isFetching={usage.isFetching}
+            />
           </div>
           <div className="max-w-full overflow-x-auto rounded-md border border-border-secondary">
             <table className="w-full text-left text-xs">
@@ -475,11 +520,19 @@ export default function OverviewPage() {
       )}
       {activeSubTab === "My usage" && (
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-4">
-          <div>
-            <h2 className="mt-4 text-sm font-medium text-primary">My usage</h2>
-            <p className="mt-1 text-xs text-white/60">
-              Token usage and cost across your service accounts.
-            </p>
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <h2 className="mt-4 text-sm font-medium text-primary">My usage</h2>
+              <p className="mt-1 text-xs text-white/60">
+                Token usage and cost across your service accounts.
+              </p>
+            </div>
+            <RangeControls
+              range={logRange}
+              onRangeChange={setLogRange}
+              onRefresh={() => usage.refetch()}
+              isFetching={usage.isFetching}
+            />
           </div>
           <div className="flex min-w-0 flex-col overflow-hidden rounded-md border border-border-secondary bg-[#262626] p-3">
             <div className="flex items-center justify-between">
@@ -525,10 +578,12 @@ export default function OverviewPage() {
           <div className="mt-4 flex items-center justify-between">
             <div>
               <h3 className="text-sm font-medium text-primary">
-                Total {usageMetric === "cost" ? "cost" : "tokens"} (hourly)
+                Total {usageMetric === "cost" ? "cost" : "tokens"} ({chartGranularity})
               </h3>
               <p className="mt-1 text-xs text-white/60">
-                {usageMetric === "cost" ? "Cost per hour." : "Tokens per hour."}
+                {usageMetric === "cost"
+                  ? `Cost per ${chartGranularity === "hourly" ? "hour" : "day"}.`
+                  : `Tokens per ${chartGranularity === "hourly" ? "hour" : "day"}.`}
               </p>
             </div>
             <div className="flex gap-1">
@@ -557,14 +612,16 @@ export default function OverviewPage() {
             </div>
           </div>
           <div className="rounded-md border border-border-secondary bg-[#262626] p-2">
-            <UsageChart metric={usageMetric} />
-            <div className="ml-[30px] -mt-2 flex w-[715px] gap-0 text-[10px] text-white/40">
-              {Array.from({ length: 24 }, (_, i) => (
-                <span key={i} className="flex-1 text-center">
-                  {i % 5 === 0 ? `${i}:00` : ""}
-                </span>
-              ))}
-            </div>
+            <UsageChart rows={usageRows} metric={usageMetric} range={logRange} />
+            {usageRows.length > 0 && (
+              <div className="ml-[30px] -mt-2 flex w-[715px] gap-0 text-[10px] text-white/40">
+                {axisLabels.map((label, i) => (
+                  <span key={i} className="flex-1 text-center">
+                    {label}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
           <div className="mt-4">
             <h3 className="text-sm font-medium text-primary">Usage by Model</h3>

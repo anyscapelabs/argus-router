@@ -21,8 +21,27 @@ export type UsageResult = {
   rows: UsageRow[];
 };
 
-export async function getUsage(keyId?: string): Promise<UsageResult> {
-  const url = keyId ? `${API_ROUTES.usage}?keyId=${encodeURIComponent(keyId)}` : API_ROUTES.usage;
+export type UsageRange = "24h" | "7d" | "30d";
+
+export type GetUsageParams = {
+  keyId?: string;
+  since?: string;
+  limit?: number;
+};
+
+export function sinceForRange(range: UsageRange, now = new Date()): string {
+  const ms =
+    range === "24h" ? 24 * 60 * 60 * 1000 : range === "7d" ? 7 * 24 * 60 * 60 * 1000 : 30 * 24 * 60 * 60 * 1000;
+  return new Date(now.getTime() - ms).toISOString();
+}
+
+export async function getUsage(params: GetUsageParams = {}): Promise<UsageResult> {
+  const search = new URLSearchParams();
+  if (params.keyId) search.set("key_id", params.keyId);
+  if (params.since) search.set("since", params.since);
+  if (params.limit != null) search.set("limit", String(params.limit));
+  const qs = search.toString();
+  const url = qs ? `${API_ROUTES.usage}?${qs}` : API_ROUTES.usage;
   const response = await fetch(url, { method: "GET", credentials: "include" });
   if (!response.ok) throw new Error("Failed to load usage");
   return response.json() as Promise<UsageResult>;

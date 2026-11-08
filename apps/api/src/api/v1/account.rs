@@ -73,7 +73,7 @@ fn db_error(error: sqlx::Error) -> ApiFailure {
 /// {
 ///   "user": {"id": "...", "name": "...", "email": "...", "image": "..."},
 ///   "plan": {"id": "free"},
-///   "allowlist": ["gpt-4o-mini", "..."]
+///   "allowlist": [{"id": "openai/gpt-5.6-luna", "display_name": "GPT-5.6 Luna", "name": "GPT-5.6 Luna"}]
 /// }
 /// ```
 async fn entitlements(
@@ -110,7 +110,25 @@ async fn entitlements(
     }
 
     let plan = state.app_db.plan_of(&user_id).await.map_err(db_error)?;
-    let allowlist = state.app_db.allowlist_of(&plan).await.map_err(db_error)?;
+    let allowlist_ids = state.app_db.allowlist_of(&plan).await.map_err(db_error)?;
+    // The desktop picker shows display names straight from the router:
+    // resolve each allowlisted id to its catalog name here.
+    let catalog = state.catalog.snapshot();
+    let allowlist: Vec<serde_json::Value> = allowlist_ids
+        .iter()
+        .map(|id| {
+            let name = catalog
+                .iter()
+                .find(|entry| entry.id() == id.as_str())
+                .map(|entry| entry.name.clone())
+                .unwrap_or_else(|| id.clone());
+            serde_json::json!({
+                "id": id,
+                "display_name": name,
+                "name": name,
+            })
+        })
+        .collect();
 
     Ok(AxumJson(serde_json::json!({
         "user": {
