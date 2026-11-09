@@ -57,6 +57,7 @@ impl AppDb {
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
                 price TEXT NOT NULL DEFAULT '0',
+                voice_minutes BIGINT NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL
             )",
         )
@@ -64,6 +65,9 @@ impl AppDb {
         .await?;
         // Backfill the price column on databases created before it existed.
         let _ = sqlx::query("ALTER TABLE plans ADD COLUMN IF NOT EXISTS price TEXT NOT NULL DEFAULT '0'")
+            .execute(&self.pool)
+            .await;
+        let _ = sqlx::query("ALTER TABLE plans ADD COLUMN IF NOT EXISTS voice_minutes BIGINT NOT NULL DEFAULT 0")
             .execute(&self.pool)
             .await;
 
@@ -144,16 +148,17 @@ impl AppDb {
         Ok(())
     }
 
-    /// Upserts plans from the plans catalog (id, name, price).
+    /// Upserts plans from the plans catalog (id, name, price, voice_minutes).
     pub async fn seed_plans(&self, plans: &[crate::services::plans::PlanCatalogEntry]) -> Result<(), sqlx::Error> {
         for plan in plans {
             sqlx::query(
-                "INSERT INTO plans (id, name, price, created_at) VALUES ($1, $2, $3, $4)
-                 ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, price = EXCLUDED.price",
+                "INSERT INTO plans (id, name, price, voice_minutes, created_at) VALUES ($1, $2, $3, $4, $5)
+                 ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, price = EXCLUDED.price, voice_minutes = EXCLUDED.voice_minutes",
             )
             .bind(&plan.id)
             .bind(&plan.name)
             .bind(&plan.price)
+            .bind(plan.voice_minutes)
             .bind(chrono::Utc::now().to_rfc3339())
             .execute(&self.pool)
             .await?;
@@ -225,6 +230,44 @@ impl AppDb {
             .fetch_all(&self.pool)
             .await?;
         Ok(rows.iter().map(|row| row.get("model_id")).collect())
+    }
+
+    /// Fetches the monthly voice_minutes limit for a given plan.
+    pub async fn voice_minutes_of(&self, plan_id: &str) -> Result<i64, sqlx::Error> {
+        let row = sqlx::query("SELECT voice_minutes FROM plans WHERE id = $1")
+            .bind(plan_id)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.and_then(|r| r.try_get::<i64, _>("voice_minutes").ok()).unwrap_or(0))
+    }
+
+    /// Calculates total voice minutes used by user in the current calendar month (status IN (200, 429) where latency_ms > 0).
+    /// Duration in latency_ms is converted to minutes: ceil(latency_ms / 60000.0).
+    pub async fn voice_minutes_used_this_month(&self, user_id: &str) -> Result<i64, sqlx::Error> {
+        use chrono::Datelike;
+        let now = chrono::Utc::now();
+        let start_of_month = now
+            .date_naive()
+            .with_day(1)
+            .and_then(|d| d.and_hms_opt(0, 0, 0))
+            .map(|dt| chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(dt, chrono::Utc))
+            .unwrap_or(now);
+
+        let row = sqlx::query(
+            "SELECT COALESCE(SUM(CEIL(latency_ms::numeric / 60000.0)), 0)::bigint as used_minutes
+             FROM usage_logs
+             WHERE user_id = $1
+               AND status IN (200, 429)
+               AND latency_ms > 0
+               AND provider = 'gemini-live'
+               AND created_at >= $2",
+        )
+        .bind(user_id)
+        .bind(start_of_month)
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(row.try_get::<i64, _>("used_minutes").unwrap_or(0))
     }
 
     /// Flips one model on/off the plan allowlist (dashboard models page).

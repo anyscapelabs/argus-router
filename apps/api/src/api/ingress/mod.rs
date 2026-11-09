@@ -5,6 +5,7 @@
 //! by echoing back the caller's dialect from the event stream adapter.
 
 pub mod gemini;
+pub mod live;
 pub mod openai;
 
 use axum::http::HeaderMap;
