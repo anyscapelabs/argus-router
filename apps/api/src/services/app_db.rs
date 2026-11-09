@@ -1,10 +1,19 @@
 use std::str::FromStr;
 
+use chrono::Utc;
+use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use sqlx::Row;
 
 use crate::config::Settings;
 use crate::services::catalog::ModelCatalogEntry;
+
+#[derive(Clone, Debug)]
+pub enum SearchQuotaCheck {
+    Allowed { used: i64, quota: i64 },
+    NotAvailable,
+    Exceeded { used: i64, quota: i64 },
+}
 
 /// App-owned database access — the auth tables are better-auth's domain (its
 /// store), everything about *paid* Argus lives here: plans, entitlements,
@@ -21,13 +30,14 @@ impl AppDb {
     }
 }
 
-#[derive(Clone, Debug, serde::Serialize)]
+#[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PlanView {
     pub id: String,
     pub name: String,
     pub price: String,
     pub searches_per_month: i64,
+    pub voice_minutes: i64,
     pub models: Vec<String>,
 }
 
@@ -58,6 +68,7 @@ impl AppDb {
                 name TEXT NOT NULL,
                 price TEXT NOT NULL DEFAULT '0',
                 searches_per_month BIGINT NOT NULL DEFAULT 0,
+                voice_minutes BIGINT NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL
             )",
         )
@@ -69,9 +80,16 @@ impl AppDb {
         )
         .execute(&self.pool)
         .await;
-        let _ = sqlx::query("ALTER TABLE plans ADD COLUMN IF NOT EXISTS searches_per_month BIGINT NOT NULL DEFAULT 0")
-            .execute(&self.pool)
-            .await;
+        let _ = sqlx::query(
+            "ALTER TABLE plans ADD COLUMN IF NOT EXISTS searches_per_month BIGINT NOT NULL DEFAULT 0",
+        )
+        .execute(&self.pool)
+        .await;
+        let _ = sqlx::query(
+            "ALTER TABLE plans ADD COLUMN IF NOT EXISTS voice_minutes BIGINT NOT NULL DEFAULT 0",
+        )
+        .execute(&self.pool)
+        .await;
 
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS user_entitlements (
@@ -131,9 +149,11 @@ impl AppDb {
         )
         .execute(&self.pool)
         .await;
-        let _ = sqlx::query("CREATE INDEX IF NOT EXISTS usage_logs_user_created ON usage_logs (user_id, created_at)")
-            .execute(&self.pool)
-            .await;
+        let _ = sqlx::query(
+            "CREATE INDEX IF NOT EXISTS usage_logs_user_created ON usage_logs (user_id, created_at)",
+        )
+        .execute(&self.pool)
+        .await;
 
         Ok(())
     }
@@ -141,33 +161,35 @@ impl AppDb {
     async fn seed(&self) -> Result<(), sqlx::Error> {
         // Idempotent seeds — existing rows stay untouched.
         sqlx::query(
-            "INSERT INTO plans (id, name, searches_per_month, created_at) VALUES ($1, $2, $3, $4) ON CONFLICT (id) DO NOTHING",
+            "INSERT INTO plans (id, name, searches_per_month, voice_minutes, created_at) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING",
         )
         .bind(FREE_PLAN_ID)
         .bind("Free")
         .bind(20i64)
-        .bind(chrono::Utc::now().to_rfc3339())
+        .bind(10i64)
+        .bind(Utc::now().to_rfc3339())
         .execute(&self.pool)
         .await?;
 
         Ok(())
     }
 
-    /// Upserts plans from the plans catalog (id, name, price, searches_per_month).
+    /// Upserts plans from the plans catalog (id, name, price, searches_per_month, voice_minutes).
     pub async fn seed_plans(
         &self,
         plans: &[crate::services::plans::PlanCatalogEntry],
     ) -> Result<(), sqlx::Error> {
         for plan in plans {
             sqlx::query(
-                "INSERT INTO plans (id, name, price, searches_per_month, created_at) VALUES ($1, $2, $3, $4, $5)
-                 ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, price = EXCLUDED.price, searches_per_month = EXCLUDED.searches_per_month",
+                "INSERT INTO plans (id, name, price, searches_per_month, voice_minutes, created_at) VALUES ($1, $2, $3, $4, $5, $6)
+                 ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, price = EXCLUDED.price, searches_per_month = EXCLUDED.searches_per_month, voice_minutes = EXCLUDED.voice_minutes",
             )
             .bind(&plan.id)
             .bind(&plan.name)
             .bind(&plan.price)
             .bind(plan.searches_per_month)
-            .bind(chrono::Utc::now().to_rfc3339())
+            .bind(plan.voice_minutes)
+            .bind(Utc::now().to_rfc3339())
             .execute(&self.pool)
             .await?;
         }
@@ -199,21 +221,24 @@ impl AppDb {
 
     /// Returns all plans with their model allowlists.
     pub async fn list_plans(&self) -> Result<Vec<PlanView>, sqlx::Error> {
-        let rows = sqlx::query("SELECT id, name, price, searches_per_month FROM plans ORDER BY id")
-            .fetch_all(&self.pool)
-            .await?;
+        let rows =
+            sqlx::query("SELECT id, name, price, searches_per_month, voice_minutes FROM plans ORDER BY id")
+                .fetch_all(&self.pool)
+                .await?;
         let mut out = Vec::new();
         for row in rows {
             let id: String = row.get("id");
             let name: String = row.get("name");
             let price: String = row.try_get("price").unwrap_or_else(|_| "0".to_owned());
             let searches_per_month: i64 = row.try_get("searches_per_month").unwrap_or(0);
+            let voice_minutes: i64 = row.try_get("voice_minutes").unwrap_or(0);
             let models = self.allowlist_of(&id).await.unwrap_or_default();
             out.push(PlanView {
                 id,
                 name,
                 price,
                 searches_per_month,
+                voice_minutes,
                 models,
             });
         }
@@ -265,6 +290,63 @@ impl AppDb {
         }
     }
 
+    /// Atomically checks a user's monthly voice-minutes quota under a per-user
+    /// advisory transaction lock. DB errors are propagated (not treated as quota decisions).
+    pub async fn check_voice_quota(
+        &self,
+        user_id: &str,
+        plan_id: &str,
+    ) -> Result<SearchQuotaCheck, sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
+            .bind(format!("voice-quota:{user_id}"))
+            .execute(tx.as_mut())
+            .await?;
+
+        let quota_row = sqlx::query("SELECT voice_minutes FROM plans WHERE id = $1")
+            .bind(plan_id)
+            .fetch_optional(tx.as_mut())
+            .await?;
+        let quota = quota_row
+            .and_then(|r| r.try_get::<i64, _>("voice_minutes").ok())
+            .unwrap_or(0);
+        if quota <= 0 {
+            tx.commit().await?;
+            return Ok(SearchQuotaCheck::NotAvailable);
+        }
+
+        use chrono::Datelike;
+        let now = Utc::now();
+        let start_of_month = now
+            .date_naive()
+            .with_day(1)
+            .and_then(|d| d.and_hms_opt(0, 0, 0))
+            .map(|dt| chrono::DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc))
+            .unwrap_or(now);
+
+        let used_row = sqlx::query(
+            "SELECT COALESCE(SUM(CEIL(latency_ms::numeric / 60000.0)), 0)::bigint as used_minutes
+             FROM usage_logs
+             WHERE user_id = $1
+               AND status IN (200, 429)
+               AND latency_ms > 0
+               AND provider = 'gemini-live'
+               AND created_at >= $2",
+        )
+        .bind(user_id)
+        .bind(start_of_month)
+        .fetch_one(tx.as_mut())
+        .await?;
+        let used = used_row.try_get::<i64, _>("used_minutes").unwrap_or(0);
+
+        tx.commit().await?;
+        if used >= quota {
+            Ok(SearchQuotaCheck::Exceeded { used, quota })
+        } else {
+            Ok(SearchQuotaCheck::Allowed { used, quota })
+        }
+    }
+
     pub async fn plan_of(&self, user_id: &str) -> Result<String, sqlx::Error> {
         let row = sqlx::query("SELECT plan_id FROM user_entitlements WHERE user_id = $1")
             .bind(user_id)
@@ -279,7 +361,7 @@ impl AppDb {
                 )
                 .bind(user_id)
                 .bind(FREE_PLAN_ID)
-                .bind(chrono::Utc::now().to_rfc3339())
+                .bind(Utc::now().to_rfc3339())
                 .execute(&self.pool)
                 .await?;
                 Ok(FREE_PLAN_ID.to_owned())
@@ -342,7 +424,7 @@ impl AppDb {
             )
             .bind(&entry.id)
             .bind(payload)
-            .bind(chrono::Utc::now().to_rfc3339())
+            .bind(Utc::now().to_rfc3339())
             .execute(&self.pool)
             .await?;
         }
@@ -384,7 +466,7 @@ impl AppDb {
             )
             .bind(&entry.id)
             .bind(payload)
-            .bind(chrono::Utc::now().to_rfc3339())
+            .bind(Utc::now().to_rfc3339())
             .execute(&self.pool)
             .await?;
         }

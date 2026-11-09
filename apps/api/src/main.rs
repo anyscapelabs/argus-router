@@ -118,6 +118,11 @@ fn router(auth: Arc<BetterAuth<AppAuthSchema>>) -> Router<AppState> {
             "/v1beta/models",
             axum::routing::get(api::ingress::gemini_models),
         )
+        // Gemini Live speech-to-speech WebSocket ingress
+        .route(
+            "/v1/live",
+            axum::routing::get(api::ingress::live::live_websocket_handler),
+        )
 }
 
 fn cors(settings: &Settings) -> CorsLayer {

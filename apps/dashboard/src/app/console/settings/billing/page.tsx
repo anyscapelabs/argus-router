@@ -56,6 +56,9 @@ export default function BillingPage() {
               <p className="mt-2 text-xs text-white/60">
                 {plan.models.length} models included
               </p>
+              <p className="mt-1 text-xs text-emerald-400">
+                Live Voice is available for plan
+              </p>
             </div>
           );
         })}

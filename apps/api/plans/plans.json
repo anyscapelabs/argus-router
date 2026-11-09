@@ -4,6 +4,7 @@
     "name": "Free",
     "price": "0",
     "searches_per_month": 20,
+    "voice_minutes": 10,
     "models": [
       "nvidia/nemotron-3-ultra-550b-a55b:free",
       "nvidia/nemotron-3.5-super-vl:free",
@@ -15,6 +16,7 @@
     "name": "Student",
     "price": "5",
     "searches_per_month": 100,
+    "voice_minutes": 100,
     "models": [
       "nvidia/nemotron-3-ultra-550b-a55b:free",
       "nvidia/nemotron-3.5-super-vl:free",
@@ -31,6 +33,7 @@
     "name": "Starter",
     "price": "9",
     "searches_per_month": 300,
+    "voice_minutes": 150,
     "models": [
       "nvidia/nemotron-3-ultra-550b-a55b:free",
       "nvidia/nemotron-3.5-super-vl:free",
@@ -49,6 +52,7 @@
     "name": "Pro",
     "price": "29",
     "searches_per_month": 1000,
+    "voice_minutes": 200,
     "models": [
       "nvidia/nemotron-3-ultra-550b-a55b:free",
       "nvidia/nemotron-3.5-super-vl:free",
@@ -71,6 +75,7 @@
     "name": "Max",
     "price": "99",
     "searches_per_month": 5000,
+    "voice_minutes": 300,
     "models": [
       "anthropic/claude-haiku-5.5",
       "anthropic/claude-sonnet-5.5",

@@ -14,6 +14,7 @@ pub struct Settings {
     pub github_client_secret: Option<String>,
     pub resend_api_key: Option<String>,
     pub resend_from: String,
+    pub gemini_api_key: Option<String>,
 }
 
 impl Settings {
@@ -41,6 +42,7 @@ impl Settings {
             resend_api_key: env::var("RESEND_API_KEY").ok().filter(|v| !v.is_empty()),
             resend_from: env::var("RESEND_FROM")
                 .unwrap_or_else(|_| "Argus Agent <onboarding@resend.dev>".into()),
+            gemini_api_key: env::var("GEMINI_API_KEY").ok().filter(|v| !v.is_empty()),
         }
     }
 }

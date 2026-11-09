@@ -7,6 +7,8 @@ pub struct PlanCatalogEntry {
     pub price: String,
     #[serde(default)]
     pub searches_per_month: i64,
+    #[serde(default)]
+    pub voice_minutes: i64,
     pub models: Vec<String>,
 }
 
