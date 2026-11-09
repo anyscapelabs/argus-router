@@ -65,6 +65,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "Argus router API listening on 0.0.0.0:8080"
     );
 
+    let search_router = Arc::new(services::search::SearchRouter::new());
+
     let state = AppState {
         settings: settings.clone(),
         auth: auth.clone(),
@@ -73,6 +75,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         catalog,
         cache,
         usage,
+        search_router,
         db: database,
     };
 
@@ -101,6 +104,11 @@ fn router(auth: Arc<BetterAuth<AppAuthSchema>>) -> Router<AppState> {
             axum::routing::post(api::ingress::openai_chat_completions),
         )
         .route("/v1/models", axum::routing::get(api::ingress::openai_models))
+        // Web search router ingress for AI agents & models.
+        .route(
+            "/v1/search",
+            axum::routing::post(api::ingress::search_endpoint),
+        )
         // Gemini-compatible ingress (`gemini` adapter points here).
         .route(
             "/v1beta/models/{model_action}",
@@ -109,6 +117,11 @@ fn router(auth: Arc<BetterAuth<AppAuthSchema>>) -> Router<AppState> {
         .route(
             "/v1beta/models",
             axum::routing::get(api::ingress::gemini_models),
+        )
+        // Gemini Live speech-to-speech WebSocket ingress
+        .route(
+            "/v1/live",
+            axum::routing::get(api::ingress::live::live_websocket_handler),
         )
 }
 

@@ -5,6 +5,7 @@
 //! by echoing back the caller's dialect from the event stream adapter.
 
 pub mod gemini;
+pub mod live;
 pub mod openai;
 
 use axum::http::HeaderMap;
@@ -75,29 +76,25 @@ async fn authenticate(state: &AppState, headers: &HeaderMap) -> Result<Principal
                 "the API key is invalid or was revoked",
             )
         })?;
-    let user_id = view
-        .reference_id
-        .typed()
-        .ok()
-        .cloned()
-        .ok_or_else(|| {
-            Errx::new(
-                ErrCode::Upstream,
-                500,
-                "the API key lacks a user reference",
-            )
+    let user_id =
+        view.reference_id.typed().ok().cloned().ok_or_else(|| {
+            Errx::new(ErrCode::Upstream, 500, "the API key lacks a user reference")
         })?;
     let key_id = view
         .id
         .typed()
         .cloned()
         .map_err(|_| Errx::new(ErrCode::Upstream, 500, "the API key lacks an id"))?;
-    let plan = state.app_db.plan_of(&user_id).await.map_err(|_| {
-        Errx::new(ErrCode::Upstream, 500, "the plan lookup failed")
-    })?;
-    let allowlist = state.app_db.allowlist_of(&plan).await.map_err(|_| {
-        Errx::new(ErrCode::Upstream, 500, "the allowlist lookup failed")
-    })?;
+    let plan = state
+        .app_db
+        .plan_of(&user_id)
+        .await
+        .map_err(|_| Errx::new(ErrCode::Upstream, 500, "the plan lookup failed"))?;
+    let allowlist = state
+        .app_db
+        .allowlist_of(&plan)
+        .await
+        .map_err(|_| Errx::new(ErrCode::Upstream, 500, "the allowlist lookup failed"))?;
     Ok(Principal {
         key_id,
         user_id,
@@ -124,11 +121,11 @@ pub(crate) fn new_id(prefix: &str) -> String {
 
 use std::pin::Pin;
 
+use axum::Json as AxumJson;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::sse::{Event as SseFrame, KeepAlive, Sse};
-use axum::response::{Json, IntoResponse, Response};
-use axum::Json as AxumJson;
+use axum::response::{IntoResponse, Json, Response};
 use futures_util::{Stream, StreamExt};
 use serde_json::Value;
 
@@ -368,8 +365,7 @@ pub async fn openai_chat_completions(
                     latency_ms: Some(latency),
                     error_code: None,
                 });
-                (StatusCode::OK, Json(openai::completion(&turn_state, &turn)))
-                    .into_response()
+                (StatusCode::OK, Json(openai::completion(&turn_state, &turn))).into_response()
             }
             Err(item) => {
                 state.usage.record(UsageRow {
@@ -690,7 +686,12 @@ async fn openai_models_view(state: &AppState, headers: &HeaderMap) -> Result<Val
         .catalog
         .snapshot()
         .into_iter()
-        .filter(|entry| principal.allowlist.iter().any(|allowed| allowed == entry.id()))
+        .filter(|entry| {
+            principal
+                .allowlist
+                .iter()
+                .any(|allowed| allowed == entry.id())
+        })
         .map(|entry| {
             serde_json::json!({
                 "id": entry.id,
@@ -713,7 +714,12 @@ pub async fn gemini_models(State(state): State<AppState>, headers: HeaderMap) ->
                 .catalog
                 .snapshot()
                 .into_iter()
-                .filter(|entry| principal.allowlist.iter().any(|allowed| allowed == entry.id()))
+                .filter(|entry| {
+                    principal
+                        .allowlist
+                        .iter()
+                        .any(|allowed| allowed == entry.id())
+                })
                 .map(|entry| {
                     serde_json::json!({
                         "name": format!("models/{}", entry.id),
@@ -728,3 +734,168 @@ pub async fn gemini_models(State(state): State<AppState>, headers: HeaderMap) ->
     }
 }
 
+/// Web search router ingress (`POST /v1/search` and `POST /api/v1/search`).
+/// Authenticated via the same service-account API key.
+/// Enforces monthly quotas per plan and records billing/usage.
+pub async fn search_endpoint(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumJson(payload): AxumJson<crate::services::search::SearchRequest>,
+) -> Response {
+    let start = Instant::now();
+    let principal = match authenticate(&state, &headers).await {
+        Ok(principal) => principal,
+        Err(item) => {
+            state.usage.record(UsageRow {
+                key_id: None,
+                user_id: None,
+                plan_id: None,
+                model: "web-search".to_owned(),
+                provider: None,
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_read_tokens: 0,
+                cost_usd: 0.0,
+                status: item.status as i32,
+                latency_ms: Some(start.elapsed().as_millis() as i64),
+                error_code: Some(item.code.as_str().to_owned()),
+            });
+            return openai::error_response(item);
+        }
+    };
+
+    if payload.query.trim().is_empty() {
+        let item = Errx::new(
+            ErrCode::InvalidRequest,
+            400,
+            "query parameter cannot be empty",
+        );
+        return openai::error_response(item);
+    }
+
+    // Verify and reserve against the monthly search quota atomically (advisory lock).
+    // DB/read failures are surfaced as upstream errors, not as quota/plan decisions.
+    match state
+        .app_db
+        .check_search_quota(&principal.user_id, &principal.plan)
+        .await
+    {
+        Ok(crate::services::app_db::SearchQuotaCheck::NotAvailable) => {
+            let item = Errx::new(
+                ErrCode::Forbidden,
+                403,
+                format!(
+                    "web search is not available on your plan `{}`",
+                    principal.plan
+                ),
+            );
+            state.usage.record(UsageRow {
+                key_id: Some(principal.key_id.clone()),
+                user_id: Some(principal.user_id.clone()),
+                plan_id: Some(principal.plan.clone()),
+                model: "web-search".to_owned(),
+                provider: None,
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_read_tokens: 0,
+                cost_usd: 0.0,
+                status: item.status as i32,
+                latency_ms: Some(start.elapsed().as_millis() as i64),
+                error_code: Some(item.code.as_str().to_owned()),
+            });
+            return openai::error_response(item);
+        }
+        Ok(crate::services::app_db::SearchQuotaCheck::Exceeded { used, quota }) => {
+            let item = Errx::new(
+                ErrCode::RateLimited,
+                429,
+                format!(
+                    "monthly web search quota exceeded for your plan `{}` ({}/{} used this month)",
+                    principal.plan, used, quota
+                ),
+            );
+            state.usage.record(UsageRow {
+                key_id: Some(principal.key_id.clone()),
+                user_id: Some(principal.user_id.clone()),
+                plan_id: Some(principal.plan.clone()),
+                model: "web-search".to_owned(),
+                provider: None,
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_read_tokens: 0,
+                cost_usd: 0.0,
+                status: item.status as i32,
+                latency_ms: Some(start.elapsed().as_millis() as i64),
+                error_code: Some(item.code.as_str().to_owned()),
+            });
+            return openai::error_response(item);
+        }
+        Ok(crate::services::app_db::SearchQuotaCheck::Allowed { .. }) => {}
+        Err(err) => {
+            tracing::error!(error = %err, user_id = %principal.user_id, "search quota check failed");
+            let item = Errx::new(ErrCode::Upstream, 500, "the search quota lookup failed");
+            state.usage.record(UsageRow {
+                key_id: Some(principal.key_id.clone()),
+                user_id: Some(principal.user_id.clone()),
+                plan_id: Some(principal.plan.clone()),
+                model: "web-search".to_owned(),
+                provider: None,
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_read_tokens: 0,
+                cost_usd: 0.0,
+                status: item.status as i32,
+                latency_ms: Some(start.elapsed().as_millis() as i64),
+                error_code: Some(item.code.as_str().to_owned()),
+            });
+            return openai::error_response(item);
+        }
+    }
+
+    let client = shared_client();
+    let max_results = payload.clamped_max_results();
+    match state
+        .search_router
+        .search(&client, &payload.query, max_results)
+        .await
+    {
+        Ok(search_res) => {
+            let latency = start.elapsed().as_millis() as i64;
+            // Estimated cost per search call (~$0.003)
+            let cost = 0.003;
+            state.usage.record(UsageRow {
+                key_id: Some(principal.key_id.clone()),
+                user_id: Some(principal.user_id.clone()),
+                plan_id: Some(principal.plan.clone()),
+                model: "web-search".to_owned(),
+                provider: Some(search_res.provider.clone()),
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_read_tokens: 0,
+                cost_usd: cost,
+                status: 200,
+                latency_ms: Some(latency),
+                error_code: None,
+            });
+            (StatusCode::OK, Json(search_res)).into_response()
+        }
+        Err(err) => {
+            let latency = start.elapsed().as_millis() as i64;
+            state.usage.record(UsageRow {
+                key_id: Some(principal.key_id.clone()),
+                user_id: Some(principal.user_id.clone()),
+                plan_id: Some(principal.plan.clone()),
+                model: "web-search".to_owned(),
+                provider: None,
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_read_tokens: 0,
+                cost_usd: 0.0,
+                status: err.status as i32,
+                latency_ms: Some(latency),
+                error_code: Some(err.code.as_str().to_owned()),
+            });
+            openai::error_response(err)
+        }
+    }
+}
