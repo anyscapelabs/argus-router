@@ -66,6 +66,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let search_router = Arc::new(services::search::SearchRouter::new());
+    let live_sessions = Arc::new(crate::api::ingress::live::LiveSessionStore::default());
 
     let state = AppState {
         settings: settings.clone(),
@@ -76,6 +77,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cache,
         usage,
         search_router,
+        live_sessions,
         db: database,
     };
 
@@ -103,7 +105,10 @@ fn router(auth: Arc<BetterAuth<AppAuthSchema>>) -> Router<AppState> {
             "/v1/chat/completions",
             axum::routing::post(api::ingress::openai_chat_completions),
         )
-        .route("/v1/models", axum::routing::get(api::ingress::openai_models))
+        .route(
+            "/v1/models",
+            axum::routing::get(api::ingress::openai_models),
+        )
         // Web search router ingress for AI agents & models.
         .route(
             "/v1/search",
@@ -123,16 +128,28 @@ fn router(auth: Arc<BetterAuth<AppAuthSchema>>) -> Router<AppState> {
             "/v1/live",
             axum::routing::get(api::ingress::live::live_websocket_handler),
         )
+        // Returns the last model reply for a session that ended early.
+        // Desktop app polls this for voice→text fallback.
+        .route(
+            "/v1/live/last-reply",
+            axum::routing::get(api::ingress::live::last_reply_handler),
+        )
 }
 
 fn cors(settings: &Settings) -> CorsLayer {
+    // Build the allowed-origins list: the dashboard URL is always included;
+    // extra origins (e.g. tauri://localhost) come from the ALLOWED_ORIGINS env var.
+    let mut origins: Vec<axum::http::HeaderValue> = Vec::new();
+    if let Ok(v) = settings.dashboard_url.parse() {
+        origins.push(v);
+    }
+    for extra in &settings.extra_allowed_origins {
+        if let Ok(v) = extra.parse() {
+            origins.push(v);
+        }
+    }
     CorsLayer::new()
-        .allow_origin(AllowOrigin::exact(
-            settings
-                .dashboard_url
-                .parse()
-                .expect("DASHBOARD_URL must be an origin"),
-        ))
+        .allow_origin(AllowOrigin::list(origins))
         .allow_methods([
             axum::http::Method::GET,
             axum::http::Method::POST,

@@ -21,7 +21,9 @@ impl Framer {
             let line = {
                 let bytes: Vec<u8> = self.buffer[..pos].to_vec();
                 self.buffer.drain(..=pos);
-                String::from_utf8_lossy(&bytes).trim_end_matches('\r').to_owned()
+                String::from_utf8_lossy(&bytes)
+                    .trim_end_matches('\r')
+                    .to_owned()
             };
             if line.is_empty() {
                 if !self.data_lines.is_empty() {

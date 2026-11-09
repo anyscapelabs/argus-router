@@ -18,9 +18,7 @@ use crate::proxy::ir::{
 
 /// Splits the `{model}:{action}` path segment; action decides streaming.
 pub fn split_path(raw: &str) -> Result<(String, bool), Errx> {
-    let invalid = |message: &str| {
-        Errx::new(ErrCode::NotFound, 404, message.to_owned())
-    };
+    let invalid = |message: &str| Errx::new(ErrCode::NotFound, 404, message.to_owned());
     let (model, action) = raw
         .rsplit_once(':')
         .ok_or_else(|| invalid("path must be models/<model>:generateContent"))?;
@@ -39,9 +37,7 @@ pub fn split_path(raw: &str) -> Result<(String, bool), Errx> {
 }
 
 pub fn parse(payload: &Value) -> Result<Chat, Errx> {
-    let invalid = |message: &str| {
-        Errx::new(ErrCode::InvalidRequest, 400, message.to_owned())
-    };
+    let invalid = |message: &str| Errx::new(ErrCode::InvalidRequest, 400, message.to_owned());
     let contents = payload
         .get("contents")
         .and_then(|found| found.as_array())
@@ -75,9 +71,13 @@ pub fn parse(payload: &Value) -> Result<Chat, Errx> {
         {
             if let Some(text) = part.get("text").and_then(|found| found.as_str()) {
                 if part.get("thought").and_then(|found| found.as_bool()) == Some(true) {
-                    blocks.push(Block::Thinking { text: text.to_owned() });
+                    blocks.push(Block::Thinking {
+                        text: text.to_owned(),
+                    });
                 } else {
-                    blocks.push(Block::Text { text: text.to_owned() });
+                    blocks.push(Block::Text {
+                        text: text.to_owned(),
+                    });
                 }
                 continue;
             }
@@ -93,7 +93,10 @@ pub fn parse(payload: &Value) -> Result<Chat, Errx> {
                     .unwrap_or("")
                     .to_owned();
                 if !encoded.is_empty() {
-                    blocks.push(Block::Image { mime, data_b64: encoded });
+                    blocks.push(Block::Image {
+                        mime,
+                        data_b64: encoded,
+                    });
                 }
                 continue;
             }
@@ -129,7 +132,10 @@ pub fn parse(payload: &Value) -> Result<Chat, Errx> {
                     .get(name)
                     .cloned()
                     .unwrap_or_else(|| name.to_owned());
-                let output = response.get("response").cloned().unwrap_or_else(|| json!({}));
+                let output = response
+                    .get("response")
+                    .cloned()
+                    .unwrap_or_else(|| json!({}));
                 let content = match output.get("output") {
                     Some(Value::String(text)) => text.clone(),
                     _ => output.to_string(),
@@ -275,7 +281,11 @@ pub fn chunk(state: &mut StreamState, event: &Event) -> Option<Value> {
                 json!({"role": "model", "parts": [{"text": text, "thought": true}]}),
             );
         }
-        Event::ToolUseStart { index: _, id: _, name } => {
+        Event::ToolUseStart {
+            index: _,
+            id: _,
+            name,
+        } => {
             state.saw_tools = true;
             candidate.insert(
                 "content".to_owned(),
@@ -287,7 +297,11 @@ pub fn chunk(state: &mut StreamState, event: &Event) -> Option<Value> {
         // nothing and the end frame finalizes without a part.
         Event::ToolUseDelta { .. } => return None,
         Event::ToolUseEnd { .. } => return None,
-        Event::Usage { input_tokens, output_tokens, cache_read_tokens } => {
+        Event::Usage {
+            input_tokens,
+            output_tokens,
+            cache_read_tokens,
+        } => {
             base.insert(
                 "usageMetadata".to_owned(),
                 json!({
@@ -401,7 +415,6 @@ pub fn error_response(item: Errx) -> axum::response::Response {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
     use axum::Json;
-    let status = StatusCode::from_u16(item.status)
-        .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    let status = StatusCode::from_u16(item.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
     (status, Json(error_body(&item))).into_response()
 }

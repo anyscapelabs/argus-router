@@ -25,6 +25,8 @@ fn truncate_chars(s: &str, max_chars: usize) -> String {
 pub trait SearchProvider: Send + Sync {
     fn id(&self) -> &'static str;
     fn is_configured(&self) -> bool;
+    /// Estimated cost in USD per query for this provider.
+    fn cost_per_query(&self) -> f64;
     async fn search(
         &self,
         client: &reqwest::Client,
@@ -59,6 +61,10 @@ impl SearchProvider for BraveSearchProvider {
 
     fn is_configured(&self) -> bool {
         self.api_key.is_some()
+    }
+    fn cost_per_query(&self) -> f64 {
+        // Brave Data for Search: $3.00 per 1000 queries = $0.003 each.
+        0.003
     }
 
     async fn search(
@@ -190,6 +196,10 @@ impl SearchProvider for TavilySearchProvider {
     fn is_configured(&self) -> bool {
         self.api_key.is_some()
     }
+    fn cost_per_query(&self) -> f64 {
+        // Tavily Starter: $4.00 per 1000 queries = $0.004 each.
+        0.004
+    }
 
     async fn search(
         &self,
@@ -314,6 +324,10 @@ impl SearchProvider for ExaSearchProvider {
 
     fn is_configured(&self) -> bool {
         self.api_key.is_some()
+    }
+    fn cost_per_query(&self) -> f64 {
+        // Exa: $1.00 per 1000 queries = $0.001 each.
+        0.001
     }
 
     async fn search(

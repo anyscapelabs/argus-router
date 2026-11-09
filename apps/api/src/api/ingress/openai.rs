@@ -16,9 +16,7 @@ use crate::proxy::ir::{
 /// Parses the request body; returns the requested model id plus the
 /// normalized turn. Unknown roles are ignored so future clients don't break.
 pub fn parse(payload: &Value) -> Result<(String, Chat), Errx> {
-    let invalid = |message: &str| {
-        Errx::new(ErrCode::InvalidRequest, 400, message.to_owned())
-    };
+    let invalid = |message: &str| Errx::new(ErrCode::InvalidRequest, 400, message.to_owned());
     let model = payload
         .get("model")
         .and_then(|found| found.as_str())
@@ -42,7 +40,10 @@ pub fn parse(payload: &Value) -> Result<(String, Chat), Errx> {
     };
 
     for message in messages {
-        let role = message.get("role").and_then(|found| found.as_str()).unwrap_or("");
+        let role = message
+            .get("role")
+            .and_then(|found| found.as_str())
+            .unwrap_or("");
         let content = message.get("content");
         match role {
             "system" | "developer" => {
@@ -55,10 +56,17 @@ pub fn parse(payload: &Value) -> Result<(String, Chat), Errx> {
                 match content {
                     Some(Value::Array(parts)) => {
                         for part in parts {
-                            let kind = part.get("type").and_then(|found| found.as_str()).unwrap_or("");
+                            let kind = part
+                                .get("type")
+                                .and_then(|found| found.as_str())
+                                .unwrap_or("");
                             if kind == "text" || part.get("text").is_some() {
-                                if let Some(text) = part.get("text").and_then(|found| found.as_str()) {
-                                    blocks.push(Block::Text { text: text.to_owned() });
+                                if let Some(text) =
+                                    part.get("text").and_then(|found| found.as_str())
+                                {
+                                    blocks.push(Block::Text {
+                                        text: text.to_owned(),
+                                    });
                                 }
                             } else if kind == "image_url" {
                                 let url = part
@@ -71,7 +79,9 @@ pub fn parse(payload: &Value) -> Result<(String, Chat), Errx> {
                                         data_b64: image.1,
                                     });
                                 } else {
-                                    return Err(invalid("only inline base64 image data URLs are supported"));
+                                    return Err(invalid(
+                                        "only inline base64 image data URLs are supported",
+                                    ));
                                 }
                             }
                         }
@@ -265,7 +275,11 @@ fn string_of(content: Option<&Value>) -> Option<String> {
 fn data_uri_image(url: &str) -> Option<(String, String)> {
     let rest = url.strip_prefix("data:")?;
     let (mime, data) = rest.split_once(";base64,")?;
-    let mime = if mime.is_empty() { "image/png".to_owned() } else { mime.to_owned() };
+    let mime = if mime.is_empty() {
+        "image/png".to_owned()
+    } else {
+        mime.to_owned()
+    };
     Some((mime, data.to_owned()))
 }
 
@@ -337,14 +351,21 @@ pub fn chunk(state: &mut StreamState, event: &Event) -> Option<Value> {
         // OpenAI-compat has no per-call end marker; the finish chunk seals
         // the turn.
         Event::ToolUseEnd { .. } => return None,
-        Event::Usage { input_tokens, output_tokens, cache_read_tokens } => {
+        Event::Usage {
+            input_tokens,
+            output_tokens,
+            cache_read_tokens,
+        } => {
             base.insert("choices".to_owned(), json!([]));
-            base.insert("usage".to_owned(), json!({
-                "prompt_tokens": input_tokens,
-                "completion_tokens": output_tokens,
-                "cached_tokens": cache_read_tokens,
-                "total_tokens": input_tokens + output_tokens,
-            }));
+            base.insert(
+                "usage".to_owned(),
+                json!({
+                    "prompt_tokens": input_tokens,
+                    "completion_tokens": output_tokens,
+                    "cached_tokens": cache_read_tokens,
+                    "total_tokens": input_tokens + output_tokens,
+                }),
+            );
         }
     }
     Some(Value::Object(base))
@@ -378,7 +399,8 @@ pub fn completion(state: &StreamState, turn: &Turn) -> Value {
         message["content"] = json!(turn.text);
     }
     if !turn.tool_use.is_empty() {
-        message["tool_calls"] = json!(turn.tool_use.iter().enumerate().map(|(index, (id, name, arguments))| {
+        message["tool_calls"] =
+            json!(turn.tool_use.iter().enumerate().map(|(index, (id, name, arguments))| {
             json!({
                 "id": if id.is_empty() { format!("call_{index}_{name}") } else { id.clone() },
                 "type": "function",
@@ -443,7 +465,6 @@ pub fn error_response(item: Errx) -> axum::response::Response {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
     use axum::Json;
-    let status = StatusCode::from_u16(item.status)
-        .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    let status = StatusCode::from_u16(item.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
     (status, Json(error_body(&item))).into_response()
 }

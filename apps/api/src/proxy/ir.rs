@@ -187,14 +187,9 @@ pub enum Event {
         name: String,
     },
     /// A chunk of the serialized call arguments JSON.
-    ToolUseDelta {
-        index: usize,
-        value_json: String,
-    },
+    ToolUseDelta { index: usize, value_json: String },
     /// Call arguments are complete for this index.
-    ToolUseEnd {
-        index: usize,
-    },
+    ToolUseEnd { index: usize },
     Usage {
         input_tokens: i64,
         output_tokens: i64,

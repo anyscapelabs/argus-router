@@ -67,7 +67,8 @@ impl AppDb {
             .await?;
         let db = Self { pool };
         db.migrate().await?;
-        db.seed().await?;
+        // Note: seed_plans() is called from main() after AppDb::connect(),
+        // so there is no need for a redundant minimal seed() here.
         Ok(db)
     }
 
@@ -170,22 +171,18 @@ impl AppDb {
         )
         .execute(&self.pool)
         .await;
-
-        Ok(())
-    }
-
-    async fn seed(&self) -> Result<(), sqlx::Error> {
-        // Idempotent seeds — existing rows stay untouched.
-        sqlx::query(
-            "INSERT INTO plans (id, name, searches_per_month, voice_minutes, created_at) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING",
+        // Covering indexes for search and voice quota queries.
+        // Prevents full table scans on usage_logs as the table grows.
+        let _ = sqlx::query(
+            "CREATE INDEX IF NOT EXISTS usage_logs_search_quota              ON usage_logs (user_id, model, status, created_at)",
         )
-        .bind(FREE_PLAN_ID)
-        .bind("Free")
-        .bind(20i64)
-        .bind(10i64)
-        .bind(Utc::now().to_rfc3339())
         .execute(&self.pool)
-        .await?;
+        .await;
+        let _ = sqlx::query(
+            "CREATE INDEX IF NOT EXISTS usage_logs_voice_quota              ON usage_logs (user_id, provider, status, created_at)",
+        )
+        .execute(&self.pool)
+        .await;
 
         Ok(())
     }
@@ -392,15 +389,6 @@ impl AppDb {
             return Ok(QuotaCheck::NotAvailable);
         }
 
-        use chrono::Datelike;
-        let now = Utc::now();
-        let start_of_month = now
-            .date_naive()
-            .with_day(1)
-            .and_then(|d| d.and_hms_opt(0, 0, 0))
-            .map(|dt| chrono::DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc))
-            .unwrap_or(now);
-
         let used_row = sqlx::query(
             "SELECT COALESCE(SUM(CEIL(latency_ms::numeric / 60000.0)), 0)::bigint as used_minutes
              FROM usage_logs
@@ -408,10 +396,9 @@ impl AppDb {
                AND status IN (200, 429)
                AND latency_ms > 0
                AND provider = 'gemini-live'
-               AND created_at >= $2",
+               AND created_at >= date_trunc('month', CURRENT_TIMESTAMP)",
         )
         .bind(user_id)
-        .bind(start_of_month)
         .fetch_one(tx.as_mut())
         .await?;
         let used = used_row.try_get::<i64, _>("used_minutes").unwrap_or(0);

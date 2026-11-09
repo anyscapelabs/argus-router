@@ -20,7 +20,9 @@ async fn list_plans(
     let plans = state.app_db.list_plans().await.map_err(|error| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            AxumJson(serde_json::json!({"error": {"code": "PLAN_LIST", "message": error.to_string()}})),
+            AxumJson(
+                serde_json::json!({"error": {"code": "PLAN_LIST", "message": error.to_string()}}),
+            ),
         )
     })?;
     Ok(AxumJson(serde_json::json!({"plans": plans})))
@@ -34,14 +36,20 @@ async fn refresh_plans(
     if let Err(error) = state.app_db.seed_plans(&plans).await {
         return Err((
             StatusCode::INTERNAL_SERVER_ERROR,
-            AxumJson(serde_json::json!({"error": {"code": "PLAN_REFRESH", "message": error.to_string()}})),
+            AxumJson(
+                serde_json::json!({"error": {"code": "PLAN_REFRESH", "message": error.to_string()}}),
+            ),
         ));
     }
     if let Err(error) = state.app_db.seed_plan_allowlists(&plans).await {
         return Err((
             StatusCode::INTERNAL_SERVER_ERROR,
-            AxumJson(serde_json::json!({"error": {"code": "PLAN_REFRESH", "message": error.to_string()}})),
+            AxumJson(
+                serde_json::json!({"error": {"code": "PLAN_REFRESH", "message": error.to_string()}}),
+            ),
         ));
     }
-    Ok(AxumJson(serde_json::json!({"refreshed": true, "count": plans.len()})))
+    Ok(AxumJson(
+        serde_json::json!({"refreshed": true, "count": plans.len()}),
+    ))
 }

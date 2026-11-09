@@ -35,7 +35,8 @@ pub async fn connect_database(
     // One shared sqlx pool for the whole process. Neon (pgbouncer) caps the
     // total connections per compute, so keep the pool small; the acquisition
     // timeout covers cold-start latency on a pooled connection.
-    let mut options = better_auth::seaorm::sea_orm::ConnectOptions::new(settings.database_url.clone());
+    let mut options =
+        better_auth::seaorm::sea_orm::ConnectOptions::new(settings.database_url.clone());
     options
         .max_connections(5)
         .min_connections(1)
@@ -47,7 +48,9 @@ pub async fn connect_database(
     Ok(Database::connect(options).await?)
 }
 
-pub async fn run_migrations(database: &DatabaseConnection) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn run_migrations(
+    database: &DatabaseConnection,
+) -> Result<(), Box<dyn std::error::Error>> {
     let engine = better_auth::seaorm::sea_orm::Schema::new(database.get_database_backend());
     macro_rules! migrate_from {
         ($entity:ident) => {{
@@ -103,7 +106,9 @@ async fn migrate_from_organization(
 /// the slug uniqueness the bundled entity does not declare gets its index —
 /// that index is what makes two concurrent first reads of the same account's
 /// default workspace safe.
-async fn ensure_workspace_columns(database: &DatabaseConnection) -> Result<(), Box<dyn std::error::Error>> {
+async fn ensure_workspace_columns(
+    database: &DatabaseConnection,
+) -> Result<(), Box<dyn std::error::Error>> {
     for statement in [
         "ALTER TABLE IF EXISTS sessions ADD COLUMN IF NOT EXISTS active_organization_id TEXT",
         "ALTER TABLE IF EXISTS sessions ADD COLUMN IF NOT EXISTS active_team_id TEXT",
@@ -152,15 +157,11 @@ pub async fn build_auth(
         .build();
 
     let mut oauth = OAuthPlugin::new();
-    if let (Some(id), Some(secret)) =
-        (&settings.google_client_id, &settings.google_client_secret)
-    {
+    if let (Some(id), Some(secret)) = (&settings.google_client_id, &settings.google_client_secret) {
         oauth = oauth.add_provider("google", OAuthProvider::google(id, secret));
         tracing::info!("OAuth provider enabled: google");
     }
-    if let (Some(id), Some(secret)) =
-        (&settings.github_client_id, &settings.github_client_secret)
-    {
+    if let (Some(id), Some(secret)) = (&settings.github_client_id, &settings.github_client_secret) {
         oauth = oauth.add_provider("github", OAuthProvider::github(id, secret));
         tracing::info!("OAuth provider enabled: github");
     }
@@ -184,6 +185,9 @@ pub async fn build_auth(
 }
 
 /// Store assembly applying the SeaORM-side lifecycle hooks (initial avatars).
-pub fn make_store(config: better_auth::AuthConfig, database: DatabaseConnection) -> SeaOrmStore<AppAuthSchema> {
+pub fn make_store(
+    config: better_auth::AuthConfig,
+    database: DatabaseConnection,
+) -> SeaOrmStore<AppAuthSchema> {
     SeaOrmStore::<AppAuthSchema>::new(config, database).hook(hooks::InitialAvatarHook)
 }

@@ -1,4 +1,4 @@
-use axum::{Json as AxumJson, Router, extract::State, routing::get};
+use axum::{extract::State, routing::get, Json as AxumJson, Router};
 use better_auth::integrations::axum::CurrentSession;
 use serde::{Deserialize, Serialize};
 
@@ -35,11 +35,7 @@ async fn me(
     session: CurrentSession<AppAuthSchema>,
 ) -> AxumJson<Profile> {
     let user = &session.user;
-    let id = user
-        .id
-        .typed()
-        .map(|s| s.clone())
-        .unwrap_or_default();
+    let id = user.id.typed().map(|s| s.clone()).unwrap_or_default();
     let key = format!("argus:profile:{id}");
     if let Some(cached) = cache.get::<Profile>(&key).await {
         return AxumJson(cached);
@@ -49,12 +45,7 @@ async fn me(
         email: user.email.typed().ok().cloned().unwrap_or(None),
         name: user.name.typed().ok().cloned().unwrap_or(None),
         image: user.image.typed().ok().cloned().unwrap_or(None),
-        email_verified: user
-            .email_verified
-            .typed()
-            .ok()
-            .copied()
-            .unwrap_or(false),
+        email_verified: user.email_verified.typed().ok().copied().unwrap_or(false),
     };
     cache.set(&key, &profile, 60).await;
     AxumJson(profile)

@@ -20,13 +20,7 @@ struct UsageQuery {
 }
 
 fn user_id(session: &CurrentSession<AppAuthSchema>) -> String {
-    session
-        .user
-        .id
-        .typed()
-        .ok()
-        .cloned()
-        .unwrap_or_default()
+    session.user.id.typed().ok().cloned().unwrap_or_default()
 }
 
 pub fn router() -> Router<AppState> {
@@ -44,7 +38,9 @@ async fn list_usage(
     if user.is_empty() {
         return Err((
             StatusCode::UNAUTHORIZED,
-            AxumJson(serde_json::json!({"error": {"code": "SESSION", "message": "The session carries no user identifier."}})),
+            AxumJson(
+                serde_json::json!({"error": {"code": "SESSION", "message": "The session carries no user identifier."}}),
+            ),
         ));
     }
 
@@ -135,7 +131,6 @@ async fn list_usage(
     Ok(AxumJson(serde_json::json!({"rows": out})))
 }
 
-
 #[derive(Deserialize, Default)]
 struct SummaryQuery {
     #[serde(alias = "keyId")]
@@ -179,14 +174,28 @@ async fn usage_summary(
             DateTime::parse_from_rfc3339(raw)
                 .map(|dt| dt.with_timezone(&Utc))
                 .map_err(|e| {
-                    api_err(StatusCode::BAD_REQUEST, "USAGE_SINCE", format!("Invalid since: {e}"))
+                    api_err(
+                        StatusCode::BAD_REQUEST,
+                        "USAGE_SINCE",
+                        format!("Invalid since: {e}"),
+                    )
                 })?,
         ),
         None => None,
     };
-    let unit = if q.bucket.as_deref() == Some("hour") { "hour" } else { "day" };
+    let unit = if q.bucket.as_deref() == Some("hour") {
+        "hour"
+    } else {
+        "day"
+    };
     let pool = state.app_db.pool();
-    let db_err = |e: sqlx::Error| api_err(StatusCode::INTERNAL_SERVER_ERROR, "USAGE_SUMMARY", e.to_string());
+    let db_err = |e: sqlx::Error| {
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "USAGE_SUMMARY",
+            e.to_string(),
+        )
+    };
 
     // Only ever hand Postgres a zone name it knows.
     let tz = match q.tz.as_deref().filter(|name| !name.is_empty()) {
@@ -197,7 +206,11 @@ async fn usage_summary(
                 .await
                 .map_err(db_err)?
                 .is_some();
-            if known { name.to_owned() } else { "UTC".to_owned() }
+            if known {
+                name.to_owned()
+            } else {
+                "UTC".to_owned()
+            }
         }
         None => "UTC".to_owned(),
     };
@@ -228,16 +241,24 @@ async fn usage_summary(
 
     let key_id = q.key_id.as_deref();
 
-    let totals_row = sqlx::query(concat!("SELECT ", agg!(), " FROM usage_logs WHERE ", filter!()))
-        .bind(&user)
-        .bind(key_id)
-        .bind(since)
-        .fetch_one(&pool)
-        .await
-        .map_err(db_err)?;
+    let totals_row = sqlx::query(concat!(
+        "SELECT ",
+        agg!(),
+        " FROM usage_logs WHERE ",
+        filter!()
+    ))
+    .bind(&user)
+    .bind(key_id)
+    .bind(since)
+    .fetch_one(&pool)
+    .await
+    .map_err(db_err)?;
 
     let by_model_rows = sqlx::query(concat!(
-        "SELECT model, ", agg!(), " FROM usage_logs WHERE ", filter!(),
+        "SELECT model, ",
+        agg!(),
+        " FROM usage_logs WHERE ",
+        filter!(),
         " GROUP BY model ORDER BY SUM(cost_usd) DESC, COUNT(*) DESC"
     ))
     .bind(&user)
@@ -248,7 +269,10 @@ async fn usage_summary(
     .map_err(db_err)?;
 
     let by_key_rows = sqlx::query(concat!(
-        "SELECT key_id, ", agg!(), " FROM usage_logs WHERE ", filter!(),
+        "SELECT key_id, ",
+        agg!(),
+        " FROM usage_logs WHERE ",
+        filter!(),
         " GROUP BY key_id ORDER BY SUM(cost_usd) DESC, COUNT(*) DESC"
     ))
     .bind(&user)
@@ -288,7 +312,8 @@ async fn usage_summary(
         .iter()
         .map(|row| {
             let mut v = agg_json(row);
-            v["keyId"] = serde_json::json!(row.try_get::<Option<String>, _>("key_id").ok().flatten());
+            v["keyId"] =
+                serde_json::json!(row.try_get::<Option<String>, _>("key_id").ok().flatten());
             v
         })
         .collect();

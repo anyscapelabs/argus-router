@@ -1,23 +1,17 @@
 use axum::http::StatusCode;
 use axum::routing::{get, post};
-use axum::{Json as AxumJson, Router, extract::State};
+use axum::{extract::State, Json as AxumJson, Router};
 use better_auth::integrations::axum::CurrentSession;
 use serde::{Deserialize, Serialize};
 
 use crate::auth::AppAuthSchema;
-use crate::services::catalog::{ModelView};
+use crate::services::catalog::ModelView;
 use crate::state::AppState;
 
 /// Session-resolved user id (unauthenticated requests are rejected earlier
 /// by the `CurrentSession` extractor).
 fn user_id(session: &CurrentSession<AppAuthSchema>) -> String {
-    session
-        .user
-        .id
-        .typed()
-        .ok()
-        .cloned()
-        .unwrap_or_default()
+    session.user.id.typed().ok().cloned().unwrap_or_default()
 }
 
 pub fn router() -> Router<AppState> {
@@ -36,10 +30,18 @@ async fn list_models(
 ) -> Result<AxumJson<serde_json::Value>, ApiProblem> {
     let user = user_id(&session);
     let plan = state.app_db.plan_of(&user).await.map_err(|error| {
-        problem(StatusCode::INTERNAL_SERVER_ERROR, "PLAN_LOOKUP", &error.to_string())
+        problem(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "PLAN_LOOKUP",
+            &error.to_string(),
+        )
     })?;
     let allowlist = state.app_db.allowlist_of(&plan).await.map_err(|error| {
-        problem(StatusCode::INTERNAL_SERVER_ERROR, "ALLOWLIST_LOOKUP", &error.to_string())
+        problem(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "ALLOWLIST_LOOKUP",
+            &error.to_string(),
+        )
     })?;
     let models: Vec<ModelView> = state
         .catalog
@@ -76,7 +78,11 @@ async fn toggle_allowlist(
 ) -> Result<AxumJson<ToggleResponse>, ApiProblem> {
     let user = user_id(&session);
     let plan = state.app_db.plan_of(&user).await.map_err(|error| {
-        problem(StatusCode::INTERNAL_SERVER_ERROR, "PLAN_LOOKUP", &error.to_string())
+        problem(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "PLAN_LOOKUP",
+            &error.to_string(),
+        )
     })?;
     let known = state.catalog.find(&request.model_id).is_some();
     if !known {
@@ -90,9 +96,19 @@ async fn toggle_allowlist(
         .app_db
         .allowlist_set(&plan, &request.model_id, request.enabled)
         .await
-        .map_err(|error| problem(StatusCode::INTERNAL_SERVER_ERROR, "ALLOWLIST_UPDATE", &error.to_string()))?;
+        .map_err(|error| {
+            problem(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "ALLOWLIST_UPDATE",
+                &error.to_string(),
+            )
+        })?;
     let allowlist = state.app_db.allowlist_of(&plan).await.map_err(|error| {
-        problem(StatusCode::INTERNAL_SERVER_ERROR, "ALLOWLIST_LOOKUP", &error.to_string())
+        problem(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "ALLOWLIST_LOOKUP",
+            &error.to_string(),
+        )
     })?;
     Ok(AxumJson(ToggleResponse {
         model_id: request.model_id,
@@ -110,20 +126,18 @@ async fn refresh_models(
     _session: CurrentSession<AppAuthSchema>,
 ) -> Result<AxumJson<serde_json::Value>, ApiProblem> {
     let seed = crate::services::catalog::seed_entries();
-    let entries = state
-        .app_db
-        .load_catalog(&seed)
-        .await
-        .map_err(|error| {
-            problem(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "CATALOG_REFRESH",
-                &error.to_string(),
-            )
-        })?;
+    let entries = state.app_db.load_catalog(&seed).await.map_err(|error| {
+        problem(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "CATALOG_REFRESH",
+            &error.to_string(),
+        )
+    })?;
     state.catalog.replace(entries);
     let count = state.catalog.snapshot().len();
-    Ok(AxumJson(serde_json::json!({"refreshed": true, "count": count})))
+    Ok(AxumJson(
+        serde_json::json!({"refreshed": true, "count": count}),
+    ))
 }
 
 /// Error body rendered with the right HTTP status.

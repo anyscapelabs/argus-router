@@ -1,9 +1,10 @@
 use std::sync::Arc;
 
 use axum::extract::FromRef;
-use better_auth::BetterAuth;
 use better_auth::plugins::ApiKeyPlugin;
+use better_auth::BetterAuth;
 
+use crate::api::ingress::live::LiveSessionStore;
 use crate::auth::AppAuthSchema;
 use crate::config::Settings;
 use crate::services::app_db::AppDb;
@@ -29,6 +30,9 @@ pub struct AppState {
     /// Batched usage recorder (never stores prompt content).
     pub usage: UsageRecorder,
     pub search_router: Arc<SearchRouter>,
+    /// Short-lived in-memory store for voice-to-text fallback replies.
+    /// Populated when a live session ends with pending model text.
+    pub live_sessions: Arc<LiveSessionStore>,
     pub db: better_auth::seaorm::DatabaseConnection,
 }
 

@@ -45,7 +45,10 @@ pub fn resolve(cache: &CatalogCache, model_id: &str) -> Result<Resolved, Errx> {
         Errx::new(
             ErrCode::ProviderUnconfigured,
             503,
-            format!("the {} upstream is not configured on this router", provider.name),
+            format!(
+                "the {} upstream is not configured on this router",
+                provider.name
+            ),
         )
         .with_provider(provider.name)
     })?;
@@ -59,13 +62,19 @@ pub fn resolve(cache: &CatalogCache, model_id: &str) -> Result<Resolved, Errx> {
 /// Checks the resolved entry is entitled for the caller (plan allowlist of
 /// the service-account key).
 pub fn guard_entitlement(resolved: &Resolved, allowlist: &[String]) -> Result<(), Errx> {
-    if allowlist.iter().any(|allowed| allowed == resolved.entry.id()) {
+    if allowlist
+        .iter()
+        .any(|allowed| allowed == resolved.entry.id())
+    {
         Ok(())
     } else {
         Err(Errx::new(
             ErrCode::Forbidden,
             403,
-            format!("model `{}` is not enabled for your plan", resolved.entry.id()),
+            format!(
+                "model `{}` is not enabled for your plan",
+                resolved.entry.id()
+            ),
         ))
     }
 }

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use axum::http::StatusCode;
 use axum::routing::get;
-use axum::{Json as AxumJson, Router, extract::State};
+use axum::{extract::State, Json as AxumJson, Router};
 use better_auth::integrations::axum::CurrentSession;
 use better_auth::BetterAuth;
 use serde::{Deserialize, Serialize};
@@ -63,7 +63,11 @@ fn provisioning_failure(error: WorkspaceError) -> ApiFailure {
             "WORKSPACE_MISSING",
             "The default workspace could not be created for this account.",
         ),
-        error => failure(StatusCode::INTERNAL_SERVER_ERROR, "WORKSPACE", &error.to_string()),
+        error => failure(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "WORKSPACE",
+            &error.to_string(),
+        ),
     }
 }
 
@@ -156,9 +160,7 @@ async fn rename(
         return Err(failure(
             StatusCode::BAD_REQUEST,
             "WORKSPACE_NAME",
-            &format!(
-                "The workspace name must be {MAX_WORKSPACE_NAME_CHARS} characters or fewer."
-            ),
+            &format!("The workspace name must be {MAX_WORKSPACE_NAME_CHARS} characters or fewer."),
         ));
     }
 

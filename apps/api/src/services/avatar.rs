@@ -18,9 +18,9 @@ fn color_for(seed: &str) -> &'static str {
     // while building signup and avatar responses, and a debug build panics on
     // `u64` overflow (`attempt to multiply with overflow`), which kills the
     // connection mid-response instead of returning an error.
-    let hash: u64 = seed
-        .bytes()
-        .fold(5381u64, |acc, b| acc.wrapping_mul(33).wrapping_add(u64::from(b)));
+    let hash: u64 = seed.bytes().fold(5381u64, |acc, b| {
+        acc.wrapping_mul(33).wrapping_add(u64::from(b))
+    });
     PALETTE[(hash as usize) % PALETTE.len()]
 }
 

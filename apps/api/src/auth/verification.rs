@@ -61,4 +61,3 @@ impl SendVerificationEmail for ResendVerificationSender {
         Ok(())
     }
 }
-

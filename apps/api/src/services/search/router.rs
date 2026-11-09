@@ -105,12 +105,13 @@ impl SearchRouter {
     }
 
     /// Dispatches search to the best available provider with automatic fallback on failure.
+    /// Returns the response together with the provider's per-query cost in USD.
     pub async fn search(
         &self,
         client: &reqwest::Client,
         query: &str,
         max_results: usize,
-    ) -> Result<SearchResponse, Errx> {
+    ) -> Result<(SearchResponse, f64), Errx> {
         let chain = self.provider_chain(query);
         let mut last_err = None;
         let mut attempted_any = false;
@@ -121,7 +122,7 @@ impl SearchRouter {
             }
             attempted_any = true;
             match provider.search(client, query, max_results).await {
-                Ok(response) => return Ok(response),
+                Ok(response) => return Ok((response, provider.cost_per_query())),
                 Err(err) => {
                     tracing::warn!(
                         provider = provider.id(),

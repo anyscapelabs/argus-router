@@ -71,7 +71,11 @@ pub fn default_slug(user_id: &str) -> String {
 }
 
 fn text(value: SchemaValue<String>, fallback: &str) -> String {
-    value.typed().ok().cloned().unwrap_or_else(|| fallback.to_owned())
+    value
+        .typed()
+        .ok()
+        .cloned()
+        .unwrap_or_else(|| fallback.to_owned())
 }
 
 /// The caller's default workspace, created together with its owner membership
@@ -90,7 +94,10 @@ pub async fn resolve_default_workspace(
     {
         Some(found) => found,
         None => match store
-            .create_organization(CreateOrganization::new(DEFAULT_WORKSPACE_NAME, slug.clone()))
+            .create_organization(CreateOrganization::new(
+                DEFAULT_WORKSPACE_NAME,
+                slug.clone(),
+            ))
             .await
         {
             Ok(created) => created,
@@ -110,7 +117,11 @@ pub async fn resolve_default_workspace(
     // Membership is what puts the user *under* the workspace. A missing row
     // means the organization predates this feature (or was created by hand),
     // so re-attach the owner rather than reporting a phantom workspace.
-    let role = match store.get_member(&id, user_id).await.map_err(WorkspaceError::Store)? {
+    let role = match store
+        .get_member(&id, user_id)
+        .await
+        .map_err(WorkspaceError::Store)?
+    {
         Some(member) => text(member.role, DEFAULT_WORKSPACE_ROLE),
         None => {
             let member = store

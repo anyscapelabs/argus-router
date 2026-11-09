@@ -13,9 +13,9 @@ use better_auth::plugins::api_key::VerifyApiKey;
 
 use std::time::{Duration, Instant};
 
+use crate::proxy::ir::Event;
 use crate::proxy::ErrCode;
 use crate::proxy::Errx;
-use crate::proxy::ir::Event;
 use crate::services::catalog::ModelCatalogEntry;
 use crate::services::usage::UsageRow;
 use crate::state::AppState;
@@ -121,11 +121,11 @@ pub(crate) fn new_id(prefix: &str) -> String {
 
 use std::pin::Pin;
 
-use axum::Json as AxumJson;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::sse::{Event as SseFrame, KeepAlive, Sse};
 use axum::response::{IntoResponse, Json, Response};
+use axum::Json as AxumJson;
 use futures_util::{Stream, StreamExt};
 use serde_json::Value;
 
@@ -150,7 +150,14 @@ fn cost_usd(entry: &ModelCatalogEntry, input: i64, output: i64, cache_read: i64)
     let fresh_input = input.max(0) - cache_read;
     (fresh_input as f64 * parse(&entry.pricing.input)
         + output as f64 * parse(&entry.pricing.output)
-        + cache_read as f64 * parse(entry.pricing.cache_read.as_deref().unwrap_or(&entry.pricing.input)))
+        + cache_read as f64
+            * parse(
+                entry
+                    .pricing
+                    .cache_read
+                    .as_deref()
+                    .unwrap_or(&entry.pricing.input),
+            ))
         / 1_000_000.0
 }
 
@@ -278,7 +285,9 @@ pub async fn openai_chat_completions(
                         // bills the whole generation either way), bounded so an
                         // abandoned request cannot hang forever.
                         let next = if client_gone {
-                            match tokio::time::timeout(Duration::from_secs(120), stream.next()).await {
+                            match tokio::time::timeout(Duration::from_secs(120), stream.next())
+                                .await
+                            {
                                 Ok(next) => next,
                                 Err(_) => break,
                             }
@@ -508,7 +517,9 @@ pub async fn gemini_models_action(
                         // bills the whole generation either way), bounded so an
                         // abandoned request cannot hang forever.
                         let next = if client_gone {
-                            match tokio::time::timeout(Duration::from_secs(120), stream.next()).await {
+                            match tokio::time::timeout(Duration::from_secs(120), stream.next())
+                                .await
+                            {
                                 Ok(next) => next,
                                 Err(_) => break,
                             }
@@ -859,10 +870,9 @@ pub async fn search_endpoint(
         .search(&client, &payload.query, max_results)
         .await
     {
-        Ok(search_res) => {
+        Ok((search_res, cost)) => {
             let latency = start.elapsed().as_millis() as i64;
-            // Estimated cost per search call (~$0.003)
-            let cost = 0.003;
+            // Cost comes from the provider (Brave $0.003, Tavily $0.004, Exa $0.001).
             state.usage.record(UsageRow {
                 key_id: Some(principal.key_id.clone()),
                 user_id: Some(principal.user_id.clone()),

@@ -51,6 +51,10 @@ impl ResendEmail {
 
     #[instrument(skip_all)]
     fn log_dev(&self, to: &str, subject: &str) {
-        tracing::info!(to, subject, "[EMAIL][dev] email delivery skipped (no RESEND_API_KEY)");
+        tracing::info!(
+            to,
+            subject,
+            "[EMAIL][dev] email delivery skipped (no RESEND_API_KEY)"
+        );
     }
 }

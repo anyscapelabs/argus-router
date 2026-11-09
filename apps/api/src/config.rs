@@ -15,12 +15,23 @@ pub struct Settings {
     pub resend_api_key: Option<String>,
     pub resend_from: String,
     pub gemini_api_key: Option<String>,
+    /// Comma-separated list of additional allowed CORS origins.
+    /// The dashboard URL is always allowed; this adds the desktop app origin
+    /// (e.g. `tauri://localhost,http://localhost:1420`).
+    pub extra_allowed_origins: Vec<String>,
 }
 
 impl Settings {
     pub fn from_env() -> Self {
         let secret = env::var("BETTER_AUTH_SECRET")
             .expect("BETTER_AUTH_SECRET must be set (at least 32 chars)");
+        let extra_allowed_origins = env::var("ALLOWED_ORIGINS")
+            .unwrap_or_default()
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+            .collect();
         Self {
             secret,
             base_url: env::var("BETTER_AUTH_URL")
@@ -29,8 +40,12 @@ impl Settings {
                 .expect("DASHBOARD_URL must be set — see .env.example"),
             database_url: env::var("DATABASE_URL")
                 .expect("DATABASE_URL must be set (e.g. postgresql://...)"),
-            redis_url: env::var("UPSTASH_REDIS_REST_URL").ok().filter(|v| !v.is_empty()),
-            redis_token: env::var("UPSTASH_REDIS_REST_TOKEN").ok().filter(|v| !v.is_empty()),
+            redis_url: env::var("UPSTASH_REDIS_REST_URL")
+                .ok()
+                .filter(|v| !v.is_empty()),
+            redis_token: env::var("UPSTASH_REDIS_REST_TOKEN")
+                .ok()
+                .filter(|v| !v.is_empty()),
             google_client_id: env::var("GOOGLE_CLIENT_ID").ok().filter(|v| !v.is_empty()),
             google_client_secret: env::var("GOOGLE_CLIENT_SECRET")
                 .ok()
@@ -43,6 +58,7 @@ impl Settings {
             resend_from: env::var("RESEND_FROM")
                 .unwrap_or_else(|_| "Argus Agent <onboarding@resend.dev>".into()),
             gemini_api_key: env::var("GEMINI_API_KEY").ok().filter(|v| !v.is_empty()),
+            extra_allowed_origins,
         }
     }
 }

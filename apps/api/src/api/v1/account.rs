@@ -22,15 +22,16 @@ fn failure(status: StatusCode, code: &str, message: &str) -> ApiFailure {
 }
 
 fn unauthorized() -> ApiFailure {
-    failure(StatusCode::UNAUTHORIZED, "INVALID_KEY", "The agent key is invalid or was revoked.")
+    failure(
+        StatusCode::UNAUTHORIZED,
+        "INVALID_KEY",
+        "The agent key is invalid or was revoked.",
+    )
 }
 
 /// Verifies the presented agent key through the better-auth plugin (quota +
 /// rate limiting included) and resolves the owning user id.
-async fn user_id_from_key(
-    headers: &HeaderMap,
-    state: &AppState,
-) -> Result<String, ApiFailure> {
+async fn user_id_from_key(headers: &HeaderMap, state: &AppState) -> Result<String, ApiFailure> {
     let api_key = api_key_of(headers).ok_or_else(unauthorized)?;
 
     let view = state
@@ -47,14 +48,17 @@ async fn user_id_from_key(
         .map_err(|_| unauthorized())?;
 
     let user_id = view.reference_id.typed().cloned();
-    user_id.map_err(|_| failure(StatusCode::INTERNAL_SERVER_ERROR, "KEY_REFERENCE", "The agent key lacks a user reference."))
+    user_id.map_err(|_| {
+        failure(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "KEY_REFERENCE",
+            "The agent key lacks a user reference.",
+        )
+    })
 }
 
 pub fn router() -> Router<AppState> {
-    Router::new().nest(
-        "/entitlements",
-        Router::new().route("/", get(entitlements)),
-    )
+    Router::new().nest("/entitlements", Router::new().route("/", get(entitlements)))
 }
 
 fn db_error(error: sqlx::Error) -> ApiFailure {
@@ -89,8 +93,20 @@ async fn entitlements(
         .store()
         .get_user_by_id(&user_id)
         .await
-        .map_err(|_| failure(StatusCode::INTERNAL_SERVER_ERROR, "USER_LOOKUP", "The key's account could not be read."))?
-        .ok_or_else(|| failure(StatusCode::UNAUTHORIZED, "INVALID_KEY", "The agent key's account no longer exists."))?;
+        .map_err(|_| {
+            failure(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "USER_LOOKUP",
+                "The key's account could not be read.",
+            )
+        })?
+        .ok_or_else(|| {
+            failure(
+                StatusCode::UNAUTHORIZED,
+                "INVALID_KEY",
+                "The agent key's account no longer exists.",
+            )
+        })?;
 
     // Account verification is a pairing requirement: an unverified address
     // may create keys via the console session but cannot drive the desktop

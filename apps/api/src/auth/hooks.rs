@@ -42,7 +42,10 @@ impl<S: AuthSchema> SeaOrmHooks<S> for InitialAvatarHook {
             .filter(|name| !name.is_empty())
             .unwrap_or_else(|| email.clone());
 
-        user.insert("image".into(), FieldValue::String(initials_avatar_url(&seed)));
+        user.insert(
+            "image".into(),
+            FieldValue::String(initials_avatar_url(&seed)),
+        );
         Ok(DatabaseHookUpdate::Continue)
     }
 }

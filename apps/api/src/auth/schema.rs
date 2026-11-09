@@ -1,5 +1,5 @@
 use better_auth::seaorm::sea_orm::entity::prelude::*;
-use better_auth::seaorm::{AuthEntity, sea_orm};
+use better_auth::seaorm::{sea_orm, AuthEntity};
 
 pub mod user {
     use super::*;
@@ -117,4 +117,3 @@ impl better_auth::AuthSchema for AppAuthSchema {
     type Account = account::Model;
     type Verification = verification::Model;
 }
-

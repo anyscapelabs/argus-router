@@ -8,9 +8,7 @@ use std::collections::{HashMap, HashSet};
 use futures_util::Stream;
 use serde_json::{json, Value};
 
-use crate::proxy::ir::{
-    Block, Chat, ErrCode, Errx, Event, Quirks, Role, ToolChoice, Turn, Usage,
-};
+use crate::proxy::ir::{Block, Chat, ErrCode, Errx, Event, Quirks, Role, ToolChoice, Turn, Usage};
 use crate::proxy::sse::Framer;
 use crate::services::catalog::Compat;
 use crate::services::providers::Provider;
@@ -51,7 +49,11 @@ pub fn target_for(
     opts: TargetOptions,
 ) -> Result<Target, Errx> {
     if model.is_empty() {
-        return Err(Errx::new(ErrCode::InvalidRequest, 400, "a model id is required"));
+        return Err(Errx::new(
+            ErrCode::InvalidRequest,
+            400,
+            "a model id is required",
+        ));
     }
     let base = provider.base_url.trim_end_matches('/');
     if base.is_empty() {
@@ -114,10 +116,9 @@ fn build_request(target: &Target, chat: &Chat, streaming: bool) -> Value {
     if !chat.params.stop.is_empty() {
         payload["stop"] = json!(chat.params.stop);
     }
-    let provider_routing = target
-        .provider_routing
-        .clone()
-        .unwrap_or_else(|| json!({"data_collection": "deny", "sort": "throughput", "allow_fallbacks": true}));
+    let provider_routing = target.provider_routing.clone().unwrap_or_else(
+        || json!({"data_collection": "deny", "sort": "throughput", "allow_fallbacks": true}),
+    );
     payload["provider"] = provider_routing;
     if chat.has_tools() {
         payload["tools"] = json!(chat
@@ -209,8 +210,8 @@ fn build_messages(chat: &Chat) -> Vec<Value> {
                             "type": "function",
                             "function": {"name": name, "arguments": input_json},
                         })),
-                        Block::Thinking { .. } | Block::Image { .. }
-                        | Block::ToolResult { .. } => {}
+                        Block::Thinking { .. } | Block::Image { .. } | Block::ToolResult { .. } => {
+                        }
                     }
                 }
                 let mut entry = json!({"role": "assistant"});
@@ -252,7 +253,11 @@ async fn send_chat(
 
 fn network_errx(error: &reqwest::Error) -> Errx {
     if error.is_timeout() {
-        Errx::new(ErrCode::Timeout, 504, "the provider did not respond in time")
+        Errx::new(
+            ErrCode::Timeout,
+            504,
+            "the provider did not respond in time",
+        )
     } else {
         Errx::new(ErrCode::Network, 502, "reaching the provider failed")
     }
@@ -269,10 +274,12 @@ async fn errx_from_response(target: &Target, response: reqwest::Response) -> Err
                 .and_then(|value| value.to_str().ok())
                 .map(str::to_owned)
         });
-    let retry_after = response
-        .headers()
-        .get("retry-after")
-        .and_then(|value| value.to_str().ok().and_then(|raw| raw.trim().parse::<u64>().ok()));
+    let retry_after = response.headers().get("retry-after").and_then(|value| {
+        value
+            .to_str()
+            .ok()
+            .and_then(|raw| raw.trim().parse::<u64>().ok())
+    });
     let bytes = response.bytes().await.unwrap_or_default();
     let message = extract_error_message(&bytes);
     let mut errx = Errx::from_upstream_status(status, message).with_provider(target.model.as_str());
@@ -289,11 +296,10 @@ fn extract_error_message(bytes: &[u8]) -> String {
     let head = &bytes[..bytes.len().min(ERROR_BODY_CAP)];
     let text = String::from_utf8_lossy(head);
     if let Ok(value) = serde_json::from_str::<Value>(&text) {
-        let message =
-            value
-                .pointer("/error/message")
-                .and_then(|found| found.as_str())
-                .or_else(|| value.get("message").and_then(|found| found.as_str()));
+        let message = value
+            .pointer("/error/message")
+            .and_then(|found| found.as_str())
+            .or_else(|| value.get("message").and_then(|found| found.as_str()));
         if let Some(message) = message {
             return message.to_owned();
         }
