@@ -6,7 +6,7 @@ import Link from "next/link";
 import { GoTrash, GoKebabHorizontal } from "react-icons/go";
 import { MenuDropdown } from "@/components/menu-dropdown";
 import { useApiKeys, useRevokeApiKey } from "@/domains/keys/hooks";
-import { useUsage } from "@/domains/usage/hooks";
+import { useUsage, useUsageSummary } from "@/domains/usage/hooks";
 import uPlot from "uplot";
 import "uplot/dist/uPlot.min.css";
 
@@ -41,18 +41,16 @@ export default function ServiceAccountDetailPage() {
   const account = (keys.data?.apiKeys ?? []).find((k) => k.id === id);
 
   const rows = usage.data?.rows ?? [];
-  const totalCost = rows.reduce((sum, r) => sum + (r.costUsd ?? 0), 0);
-  const totalRequests = rows.length;
-  const totalTokens = rows.reduce((sum, r) => sum + (r.inputTokens ?? 0) + (r.outputTokens ?? 0), 0);
+  // Totals are aggregated server-side over every row; `rows` is capped and only feeds the log table/chart.
+  const summary = useUsageSummary({ keyId: id });
+  const totalCost = summary.data?.totals.costUsd ?? 0;
+  const totalRequests = summary.data?.totals.requests ?? 0;
+  const totalTokens = (summary.data?.totals.inputTokens ?? 0) + (summary.data?.totals.outputTokens ?? 0);
 
-  const modelCounts = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const r of rows) {
-      const model = r.model ?? "unknown";
-      counts.set(model, (counts.get(model) ?? 0) + 1);
-    }
-    return Array.from(counts.entries()).map(([model, count]) => ({ model, count }));
-  }, [rows]);
+  const modelCounts = useMemo(
+    () => (summary.data?.byModel ?? []).map((m) => ({ model: m.model || "unknown", count: m.requests })),
+    [summary.data],
+  );
 
   const chartRef = useRef<HTMLDivElement>(null);
   const plotRef = useRef<uPlot | null>(null);

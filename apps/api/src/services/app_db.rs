@@ -27,6 +27,14 @@ pub struct PlanView {
     pub id: String,
     pub name: String,
     pub price: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub tagline: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limits: Option<crate::services::plans::PlanLimits>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub model_names: Vec<String>,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub model_count: String,
     pub models: Vec<String>,
 }
 
@@ -57,6 +65,7 @@ impl AppDb {
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
                 price TEXT NOT NULL DEFAULT '0',
+                payload JSONB NOT NULL DEFAULT '{}',
                 created_at TEXT NOT NULL
             )",
         )
@@ -64,6 +73,12 @@ impl AppDb {
         .await?;
         // Backfill the price column on databases created before it existed.
         let _ = sqlx::query("ALTER TABLE plans ADD COLUMN IF NOT EXISTS price TEXT NOT NULL DEFAULT '0'")
+            .execute(&self.pool)
+            .await;
+        // Backfill the JSONB payload column for the full plan spec; the narrow
+        // columns stay populated so other consumers (plan_of, allowlists) keep
+        // working off the back-filled shape.
+        let _ = sqlx::query("ALTER TABLE plans ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'")
             .execute(&self.pool)
             .await;
 
@@ -144,16 +159,43 @@ impl AppDb {
         Ok(())
     }
 
-    /// Upserts plans from the plans catalog (id, name, price).
+    /// Upserts plans from the plans catalog: the narrow columns stay
+    /// populated, and the full spec is stored as a JSONB payload so it can be
+    /// edited without redeploying.
     pub async fn seed_plans(&self, plans: &[crate::services::plans::PlanCatalogEntry]) -> Result<(), sqlx::Error> {
+        // Drop plans that are no longer in the catalog so removed plans don't
+        // linger in the list shown to users.
+        let new_ids: Vec<String> = plans.iter().map(|p| p.id.clone()).collect();
+        if !new_ids.is_empty() {
+            sqlx::query("DELETE FROM model_allowlist WHERE NOT (plan_id = ANY($1::text[]))")
+                .bind(&new_ids)
+                .execute(&self.pool)
+                .await?;
+            sqlx::query("DELETE FROM plans WHERE NOT (id = ANY($1::text[]))")
+                .bind(&new_ids)
+                .execute(&self.pool)
+                .await?;
+            // Reassign users on removed plans to the free plan.
+            sqlx::query("UPDATE user_entitlements SET plan_id = $1 WHERE NOT (plan_id = ANY($2::text[]))")
+                .bind(FREE_PLAN_ID)
+                .bind(&new_ids)
+                .execute(&self.pool)
+                .await?;
+        }
         for plan in plans {
+            let payload = serde_json::to_string(plan)
+                .map_err(|error| sqlx::Error::ColumnDecode {
+                    index: "payload".into(),
+                    source: Box::new(error),
+                })?;
             sqlx::query(
-                "INSERT INTO plans (id, name, price, created_at) VALUES ($1, $2, $3, $4)
-                 ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, price = EXCLUDED.price",
+                "INSERT INTO plans (id, name, price, payload, created_at) VALUES ($1, $2, $3, $4::jsonb, $5)
+                 ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, price = EXCLUDED.price, payload = EXCLUDED.payload",
             )
             .bind(&plan.id)
             .bind(&plan.name)
             .bind(&plan.price)
+            .bind(payload)
             .bind(chrono::Utc::now().to_rfc3339())
             .execute(&self.pool)
             .await?;
@@ -181,9 +223,14 @@ impl AppDb {
         Ok(())
     }
 
-    /// Returns all plans with their model allowlists.
+    /// Returns all plans with their full specs. The JSONB payload (seeded from
+    /// plans.json) is parsed so limits/model names don't force a redeploy.
+    /// Plans are ordered by their position in the seed file (payload `order`
+    /// is not a thing, so fall back to entry order from the JSON `id` list).
+    /// We sort by price ascending as the authorative display order, which
+    /// matches the seed-file order for the shipped plans.
     pub async fn list_plans(&self) -> Result<Vec<PlanView>, sqlx::Error> {
-        let rows = sqlx::query("SELECT id, name, price FROM plans ORDER BY id")
+        let rows = sqlx::query("SELECT id, name, price, payload::text AS payload FROM plans")
             .fetch_all(&self.pool)
             .await?;
         let mut out = Vec::new();
@@ -191,9 +238,34 @@ impl AppDb {
             let id: String = row.get("id");
             let name: String = row.get("name");
             let price: String = row.try_get("price").unwrap_or_else(|_| "0".to_owned());
+            let payload: String = row.try_get("payload").unwrap_or_default();
+            let entry: Option<crate::services::plans::PlanCatalogEntry> =
+                serde_json::from_str(&payload).ok();
             let models = self.allowlist_of(&id).await.unwrap_or_default();
-            out.push(PlanView { id, name, price, models });
+            out.push(PlanView {
+                id,
+                name,
+                price,
+                tagline: entry.as_ref().map(|e| e.tagline.clone()).unwrap_or_default(),
+                limits: entry.as_ref().and_then(|e| e.limits.clone()),
+                model_names: entry
+                    .as_ref()
+                    .map(|e| e.model_names.clone())
+                    .unwrap_or_default(),
+                model_count: entry
+                    .as_ref()
+                    .map(|e| e.model_count.clone())
+                    .unwrap_or_default(),
+                models,
+            });
         }
+        // Sort by price ascending so plans show Free → Starter → … → Max
+        // regardless of insertion order in the table.
+        out.sort_by(|a, b| {
+            let pa = a.price.parse::<f64>().unwrap_or(f64::MAX);
+            let pb = b.price.parse::<f64>().unwrap_or(f64::MAX);
+            pa.partial_cmp(&pb).unwrap_or(std::cmp::Ordering::Equal)
+        });
         Ok(out)
     }
 

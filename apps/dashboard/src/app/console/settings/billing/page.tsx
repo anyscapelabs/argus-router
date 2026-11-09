@@ -28,7 +28,7 @@ export default function BillingPage() {
       <p className="mt-1 text-xs text-white/60">
         Choose the plan that fits your usage. Prices are per month.
       </p>
-      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="mt-4 grid grid-cols-[repeat(auto-fit,minmax(240px,1fr))] gap-3">
         {plans.isLoading && (
           <p className="text-xs text-white/60">Loading plans…</p>
         )}

@@ -1,11 +1,29 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanLimits {
+    pub monthly_tokens: String,
+    pub weekly_tokens: String,
+    pub daily_requests: String,
+    pub rate_per_min: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PlanCatalogEntry {
     pub id: String,
     pub name: String,
     pub price: String,
+    #[serde(default)]
+    pub tagline: String,
+    #[serde(default)]
+    pub limits: Option<PlanLimits>,
     pub models: Vec<String>,
+    #[serde(default)]
+    pub model_names: Vec<String>,
+    #[serde(default)]
+    pub model_count: String,
 }
 
 const EMBEDDED: &str = include_str!("../../plans/plans.json");

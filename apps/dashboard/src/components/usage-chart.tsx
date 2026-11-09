@@ -7,7 +7,7 @@ import { Chart as RendererChart } from "@tanstack/charts/react/core";
 import { motion } from "@tanstack/charts/motion";
 import { tooltip } from "@tanstack/charts/tooltip";
 import { scaleBand, scaleLinear } from "d3-scale";
-import type { UsageRange, UsageRow } from "@/domains/usage/api";
+import type { UsageRange, UsageSeriesPoint } from "@/domains/usage/api";
 
 type Bucket = {
   label: string;
@@ -27,59 +27,38 @@ function startOfDay(d: Date): Date {
   return out;
 }
 
-function bucketRows(rows: UsageRow[], metric: "cost" | "tokens", range: UsageRange): Bucket[] {
+function pad(n: number): string {
+  return String(n).padStart(2, "0");
+}
+
+/** Viewer-local `YYYY-MM-DDTHH:00` / `YYYY-MM-DDT00:00` key, matching the server's bucket strings. */
+function localKey(d: Date, unit: "hour" | "day"): string {
+  const date = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  return unit === "hour" ? `${date}T${pad(d.getHours())}:00` : `${date}T00:00`;
+}
+
+/**
+ * Lays the server-computed series (aggregated in SQL over every row in range,
+ * in the viewer's timezone) onto a fixed local-time axis, zero-filling gaps.
+ */
+function bucketSeries(series: UsageSeriesPoint[], metric: "cost" | "tokens", range: UsageRange): Bucket[] {
   const now = new Date();
+  const byKey = new Map(series.map((p) => [p.bucket, p]));
+  const unit = range === "24h" ? "hour" : "day";
+  const count = range === "24h" ? 24 : range === "7d" ? 7 : 30;
 
-  if (range === "24h") {
-    const buckets: Bucket[] = Array.from({ length: 24 }, (_, i) => {
-      const hour = (now.getHours() - 23 + i + 48) % 24;
-      return { label: `${hour}`, value: 0, requests: 0 };
-    });
-    const windowStart = new Date(now.getTime() - 23 * 60 * 60 * 1000);
-    windowStart.setMinutes(0, 0, 0);
-
-    for (const row of rows) {
-      if (!row.createdAt) continue;
-      const created = new Date(row.createdAt);
-      if (created < windowStart) continue;
-      const hourStart = startOfHour(created);
-      const idx = Math.floor((hourStart.getTime() - windowStart.getTime()) / (60 * 60 * 1000));
-      if (idx < 0 || idx >= 24) continue;
-      const bucket = buckets[idx];
-      if (!bucket) continue;
-      bucket.requests += 1;
-      bucket.value +=
-        metric === "cost"
-          ? (row.costUsd ?? 0)
-          : (row.inputTokens ?? 0) + (row.outputTokens ?? 0);
-    }
-    return buckets;
-  }
-
-  const days = range === "7d" ? 7 : 30;
-  const dayStart = startOfDay(now);
-  const windowStart = new Date(dayStart.getTime() - (days - 1) * 24 * 60 * 60 * 1000);
-  const buckets: Bucket[] = Array.from({ length: days }, (_, i) => {
-    const d = new Date(windowStart.getTime() + i * 24 * 60 * 60 * 1000);
-    const label = `${d.getMonth() + 1}/${d.getDate()}`;
-    return { label, value: 0, requests: 0 };
+  const first = unit === "hour" ? startOfHour(now) : startOfDay(now);
+  return Array.from({ length: count }, (_, i) => {
+    const d = new Date(first);
+    if (unit === "hour") d.setHours(d.getHours() - (count - 1 - i));
+    else d.setDate(d.getDate() - (count - 1 - i));
+    const point = byKey.get(localKey(d, unit));
+    return {
+      label: unit === "hour" ? `${d.getHours()}` : `${d.getMonth() + 1}/${d.getDate()}`,
+      value: point ? (metric === "cost" ? point.costUsd : point.tokens) : 0,
+      requests: point?.requests ?? 0,
+    };
   });
-
-  for (const row of rows) {
-    if (!row.createdAt) continue;
-    const created = new Date(row.createdAt);
-    if (created < windowStart) continue;
-    const idx = Math.floor((startOfDay(created).getTime() - windowStart.getTime()) / (24 * 60 * 60 * 1000));
-    if (idx < 0 || idx >= days) continue;
-    const bucket = buckets[idx];
-    if (!bucket) continue;
-    bucket.requests += 1;
-    bucket.value +=
-      metric === "cost"
-        ? (row.costUsd ?? 0)
-        : (row.inputTokens ?? 0) + (row.outputTokens ?? 0);
-  }
-  return buckets;
 }
 
 export function UsageEmptyState({ className = "" }: { className?: string }) {
@@ -92,16 +71,16 @@ export function UsageEmptyState({ className = "" }: { className?: string }) {
 }
 
 export function UsageChart({
-  rows,
+  series,
   metric = "cost",
   range = "24h",
 }: {
-  rows: UsageRow[];
+  series: UsageSeriesPoint[];
   metric?: "cost" | "tokens";
   range?: UsageRange;
 }) {
-  const buckets = useMemo(() => bucketRows(rows, metric, range), [rows, metric, range]);
-  const hasData = rows.length > 0;
+  const buckets = useMemo(() => bucketSeries(series, metric, range), [series, metric, range]);
+  const hasData = series.length > 0;
 
   const definition = useMemo(() => {
     if (!hasData) return null;

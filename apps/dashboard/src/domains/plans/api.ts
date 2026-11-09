@@ -1,9 +1,20 @@
 import { API_ROUTES } from "@/config/api";
 
+export type PlanLimits = {
+  monthlyTokens: string;
+  weeklyTokens: string;
+  dailyRequests: string;
+  ratePerMin: string;
+};
+
 export type Plan = {
   id: string;
   name: string;
   price: string;
+  tagline?: string;
+  limits?: PlanLimits;
+  modelNames?: string[];
+  modelCount?: string;
   models: string[];
 };
 

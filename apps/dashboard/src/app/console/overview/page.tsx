@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { GoChevronDown, GoDownload, GoChevronRight, GoClock, GoSync } from "react-icons/go";
-import { useUsage } from "@/domains/usage/hooks";
+import { useUsage, useUsageSummary } from "@/domains/usage/hooks";
 import type { UsageRange, UsageRow } from "@/domains/usage/api";
 import { chartAxisLabels, UsageChart, UsageEmptyState } from "@/components/usage-chart";
 
@@ -102,26 +102,29 @@ export default function OverviewPage() {
 
   const usage = useUsage({ range: logRange });
   const usageRows = usage.data?.rows ?? [];
+  // Totals/breakdowns/chart come from server-side aggregates over every row in
+  // range; `usageRows` is capped and is only the Logs list.
+  const summary = useUsageSummary({ range: logRange });
+  const totals = summary.data?.totals;
+  const series = summary.data?.series ?? [];
   const logs = useMemo(() => {
     return usageRows
       .slice()
       .reverse()
       .map(toActivityLog);
   }, [usageRows]);
-  const modelUsage = useMemo(() => {
-    const map = new Map<string, { model: string; requests: number; input: number; output: number; cacheRead: number; cacheWrite: number; cost: number }>();
-    for (const r of usageRows) {
-      const m = r.model ?? "unknown";
-      const e = map.get(m) ?? { model: m, requests: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
-      e.requests += 1;
-      e.input += r.inputTokens ?? 0;
-      e.output += r.outputTokens ?? 0;
-      e.cacheRead += r.cacheReadTokens ?? 0;
-      e.cost += r.costUsd ?? 0;
-      map.set(m, e);
-    }
-    return Array.from(map.values());
-  }, [usageRows]);
+  const modelUsage = useMemo(
+    () =>
+      (summary.data?.byModel ?? []).map((m) => ({
+        model: m.model || "unknown",
+        requests: m.requests,
+        input: m.inputTokens,
+        output: m.outputTokens,
+        cacheRead: m.cacheReadTokens,
+        cost: m.costUsd,
+      })),
+    [summary.data],
+  );
   useEffect(() => {
     const platform = navigator.platform.toLowerCase();
     if (platform.includes("mac")) setOs("macOS");
@@ -561,17 +564,17 @@ export default function OverviewPage() {
             <div className="min-w-0 overflow-hidden rounded-md border border-border-secondary bg-[#262626] p-2">
               <p className="text-xs text-white/60">Total cost</p>
               <p className="mt-1 text-2xl font-medium text-primary">
-                ${usageRows.reduce((s, r) => s + (r.costUsd ?? 0), 0).toFixed(4)}
+                ${(totals?.costUsd ?? 0).toFixed(4)}
               </p>
             </div>
             <div className="min-w-0 overflow-hidden rounded-md border border-border-secondary bg-[#262626] p-2">
               <p className="text-xs text-white/60">Total requests</p>
-              <p className="mt-1 text-2xl font-medium text-primary">{usageRows.length.toLocaleString()}</p>
+              <p className="mt-1 text-2xl font-medium text-primary">{(totals?.requests ?? 0).toLocaleString()}</p>
             </div>
             <div className="min-w-0 overflow-hidden rounded-md border border-border-secondary bg-[#262626] p-2">
               <p className="text-xs text-white/60">Total tokens</p>
               <p className="mt-1 text-2xl font-medium text-primary">
-                {usageRows.reduce((s, r) => s + (r.inputTokens ?? 0) + (r.outputTokens ?? 0), 0).toLocaleString()}
+                {((totals?.inputTokens ?? 0) + (totals?.outputTokens ?? 0)).toLocaleString()}
               </p>
             </div>
           </div>
@@ -612,8 +615,8 @@ export default function OverviewPage() {
             </div>
           </div>
           <div className="rounded-md border border-border-secondary bg-[#262626] p-2">
-            <UsageChart rows={usageRows} metric={usageMetric} range={logRange} />
-            {usageRows.length > 0 && (
+            <UsageChart series={series} metric={usageMetric} range={logRange} />
+            {series.length > 0 && (
               <div className="ml-[30px] -mt-2 flex w-[715px] gap-0 text-[10px] text-white/40">
                 {axisLabels.map((label, i) => (
                   <span key={i} className="flex-1 text-center">
@@ -658,7 +661,7 @@ export default function OverviewPage() {
                     <td className="px-2 py-2 text-right text-white/70">{m.output.toLocaleString()}</td>
                     <td className="px-2 py-2 text-right text-white/70">{m.cacheRead.toLocaleString()}</td>
                     <td className="px-2 py-2 text-right text-white/70">${m.cost.toFixed(4)}</td>
-                    <td className="px-2 py-2 text-right text-white/70">{m.cacheWrite.toLocaleString()}</td>
+                    <td className="px-2 py-2 text-right text-white/40" title="Cache-write tokens are not tracked yet">—</td>
                   </tr>
                 ))}
               </tbody>
@@ -683,17 +686,13 @@ export default function OverviewPage() {
               </thead>
               <tbody>
                 {(() => {
-                  const map = new Map<string, { key: string; requests: number; input: number; output: number; cost: number }>();
-                  for (const r of usageRows) {
-                    const k = r.keyId ?? "unknown";
-                    const e = map.get(k) ?? { key: k, requests: 0, input: 0, output: 0, cost: 0 };
-                    e.requests += 1;
-                    e.input += r.inputTokens ?? 0;
-                    e.output += r.outputTokens ?? 0;
-                    e.cost += r.costUsd ?? 0;
-                    map.set(k, e);
-                  }
-                  const rows = Array.from(map.values());
+                  const rows = (summary.data?.byKey ?? []).map((k) => ({
+                    key: k.keyId ?? "unknown",
+                    requests: k.requests,
+                    input: k.inputTokens,
+                    output: k.outputTokens,
+                    cost: k.costUsd,
+                  }));
                   if (rows.length === 0) {
                     return (
                       <tr>

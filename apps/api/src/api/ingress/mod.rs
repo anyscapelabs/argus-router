@@ -10,7 +10,7 @@ pub mod openai;
 use axum::http::HeaderMap;
 use better_auth::plugins::api_key::VerifyApiKey;
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::proxy::ErrCode;
 use crate::proxy::Errx;
@@ -146,9 +146,14 @@ fn payload_model(payload: &Value) -> String {
 
 fn cost_usd(entry: &ModelCatalogEntry, input: i64, output: i64, cache_read: i64) -> f64 {
     let parse = |s: &str| s.parse::<f64>().unwrap_or(0.0);
-    (input as f64 * parse(&entry.pricing.input)
+    // Upstream `prompt_tokens` already *includes* the cached tokens, so the
+    // cached portion is billed at the cache-read rate only; charging the full
+    // input at the input rate as well double-counts it.
+    let cache_read = cache_read.clamp(0, input.max(0));
+    let fresh_input = input.max(0) - cache_read;
+    (fresh_input as f64 * parse(&entry.pricing.input)
         + output as f64 * parse(&entry.pricing.output)
-        + cache_read as f64 * parse(entry.pricing.cache_read.as_deref().unwrap_or("0")))
+        + cache_read as f64 * parse(entry.pricing.cache_read.as_deref().unwrap_or(&entry.pricing.input)))
         / 1_000_000.0
 }
 
@@ -269,7 +274,21 @@ pub async fn openai_chat_completions(
             let mut error_code: Option<String> = None;
             match service::stream_chat(&client, &resolved_for_task, chat_for_task).await {
                 Ok(mut stream) => {
-                    while let Some(item) = stream.next().await {
+                    let mut client_gone = false;
+                    loop {
+                        // Once the client is gone we keep draining the upstream
+                        // purely to capture the final usage chunk (the provider
+                        // bills the whole generation either way), bounded so an
+                        // abandoned request cannot hang forever.
+                        let next = if client_gone {
+                            match tokio::time::timeout(Duration::from_secs(120), stream.next()).await {
+                                Ok(next) => next,
+                                Err(_) => break,
+                            }
+                        } else {
+                            stream.next().await
+                        };
+                        let Some(item) = next else { break };
                         match &item {
                             Ok(Event::Usage {
                                 input_tokens: i,
@@ -286,9 +305,13 @@ pub async fn openai_chat_completions(
                             }
                             _ => {}
                         }
-                        if tx.send(item).await.is_err() {
-                            break;
+                        if !client_gone && tx.send(item).await.is_err() {
+                            client_gone = true;
+                            error_code.get_or_insert_with(|| "client_disconnected".to_owned());
                         }
+                    }
+                    if status == 200 && input_tokens == 0 && output_tokens == 0 {
+                        tracing::warn!(model = %model_rec, "streamed response finished without a usage chunk; recording zero tokens");
                     }
                 }
                 Err(err) => {
@@ -482,7 +505,21 @@ pub async fn gemini_models_action(
             let mut error_code: Option<String> = None;
             match service::stream_chat(&client, &resolved_for_task, chat_for_task).await {
                 Ok(mut stream) => {
-                    while let Some(item) = stream.next().await {
+                    let mut client_gone = false;
+                    loop {
+                        // Once the client is gone we keep draining the upstream
+                        // purely to capture the final usage chunk (the provider
+                        // bills the whole generation either way), bounded so an
+                        // abandoned request cannot hang forever.
+                        let next = if client_gone {
+                            match tokio::time::timeout(Duration::from_secs(120), stream.next()).await {
+                                Ok(next) => next,
+                                Err(_) => break,
+                            }
+                        } else {
+                            stream.next().await
+                        };
+                        let Some(item) = next else { break };
                         match &item {
                             Ok(Event::Usage {
                                 input_tokens: i,
@@ -499,9 +536,13 @@ pub async fn gemini_models_action(
                             }
                             _ => {}
                         }
-                        if tx.send(item).await.is_err() {
-                            break;
+                        if !client_gone && tx.send(item).await.is_err() {
+                            client_gone = true;
+                            error_code.get_or_insert_with(|| "client_disconnected".to_owned());
                         }
+                    }
+                    if status == 200 && input_tokens == 0 && output_tokens == 0 {
+                        tracing::warn!(model = %model_rec, "streamed response finished without a usage chunk; recording zero tokens");
                     }
                 }
                 Err(err) => {
