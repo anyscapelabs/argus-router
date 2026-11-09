@@ -9,6 +9,7 @@ use crate::config::Settings;
 use crate::services::app_db::AppDb;
 use crate::services::cache::Cache;
 use crate::services::catalog::CatalogCache;
+use crate::services::search::SearchRouter;
 use crate::services::usage::UsageRecorder;
 
 /// Shared application state, resolved per-route via `FromRef`.
@@ -27,6 +28,7 @@ pub struct AppState {
     pub cache: Cache,
     /// Batched usage recorder (never stores prompt content).
     pub usage: UsageRecorder,
+    pub search_router: Arc<SearchRouter>,
     pub db: better_auth::seaorm::DatabaseConnection,
 }
 

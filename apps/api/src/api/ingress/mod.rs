@@ -687,3 +687,132 @@ pub async fn gemini_models(State(state): State<AppState>, headers: HeaderMap) ->
     }
 }
 
+/// Web search router ingress (`POST /v1/search` and `POST /api/v1/search`).
+/// Authenticated via the same service-account API key.
+/// Enforces monthly quotas per plan and records billing/usage.
+pub async fn search_endpoint(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumJson(payload): AxumJson<crate::services::search::SearchRequest>,
+) -> Response {
+    let start = Instant::now();
+    let principal = match authenticate(&state, &headers).await {
+        Ok(principal) => principal,
+        Err(item) => {
+            state.usage.record(UsageRow {
+                key_id: None,
+                user_id: None,
+                plan_id: None,
+                model: "web-search".to_owned(),
+                provider: None,
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_read_tokens: 0,
+                cost_usd: 0.0,
+                status: item.status as i32,
+                latency_ms: Some(start.elapsed().as_millis() as i64),
+                error_code: Some(item.code.as_str().to_owned()),
+            });
+            return openai::error_response(item);
+        }
+    };
+
+    if payload.query.trim().is_empty() {
+        let item = Errx::new(ErrCode::InvalidRequest, 400, "query parameter cannot be empty");
+        return openai::error_response(item);
+    }
+
+    // Verify search quota for the user's plan
+    let quota = state.app_db.search_quota_of(&principal.plan).await.unwrap_or(0);
+    if quota <= 0 {
+        let item = Errx::new(
+            ErrCode::Forbidden,
+            403,
+            format!("web search is not available on your plan `{}`", principal.plan),
+        );
+        state.usage.record(UsageRow {
+            key_id: Some(principal.key_id.clone()),
+            user_id: Some(principal.user_id.clone()),
+            plan_id: Some(principal.plan.clone()),
+            model: "web-search".to_owned(),
+            provider: None,
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_read_tokens: 0,
+            cost_usd: 0.0,
+            status: item.status as i32,
+            latency_ms: Some(start.elapsed().as_millis() as i64),
+            error_code: Some(item.code.as_str().to_owned()),
+        });
+        return openai::error_response(item);
+    }
+
+    let used = state.app_db.monthly_searches_used(&principal.user_id).await.unwrap_or(0);
+    if used >= quota {
+        let item = Errx::new(
+            ErrCode::RateLimited,
+            429,
+            format!(
+                "monthly web search quota exceeded for your plan `{}` ({}/{} used this month)",
+                principal.plan, used, quota
+            ),
+        );
+        state.usage.record(UsageRow {
+            key_id: Some(principal.key_id.clone()),
+            user_id: Some(principal.user_id.clone()),
+            plan_id: Some(principal.plan.clone()),
+            model: "web-search".to_owned(),
+            provider: None,
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_read_tokens: 0,
+            cost_usd: 0.0,
+            status: item.status as i32,
+            latency_ms: Some(start.elapsed().as_millis() as i64),
+            error_code: Some(item.code.as_str().to_owned()),
+        });
+        return openai::error_response(item);
+    }
+
+    let client = shared_client();
+    match state.search_router.search(&client, &payload.query, payload.max_results).await {
+        Ok(search_res) => {
+            let latency = start.elapsed().as_millis() as i64;
+            // Estimated cost per search call (~$0.003)
+            let cost = 0.003;
+            state.usage.record(UsageRow {
+                key_id: Some(principal.key_id.clone()),
+                user_id: Some(principal.user_id.clone()),
+                plan_id: Some(principal.plan.clone()),
+                model: "web-search".to_owned(),
+                provider: Some(search_res.provider.clone()),
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_read_tokens: 0,
+                cost_usd: cost,
+                status: 200,
+                latency_ms: Some(latency),
+                error_code: None,
+            });
+            (StatusCode::OK, Json(search_res)).into_response()
+        }
+        Err(err) => {
+            let latency = start.elapsed().as_millis() as i64;
+            state.usage.record(UsageRow {
+                key_id: Some(principal.key_id.clone()),
+                user_id: Some(principal.user_id.clone()),
+                plan_id: Some(principal.plan.clone()),
+                model: "web-search".to_owned(),
+                provider: None,
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_read_tokens: 0,
+                cost_usd: 0.0,
+                status: err.status as i32,
+                latency_ms: Some(latency),
+                error_code: Some(err.code.as_str().to_owned()),
+            });
+            openai::error_response(err)
+        }
+    }
+}
