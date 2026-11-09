@@ -23,6 +23,12 @@ pub struct SearchRequest {
     pub max_results: usize,
 }
 
+impl SearchRequest {
+    pub fn clamped_max_results(&self) -> usize {
+        self.max_results.clamp(1, 20)
+    }
+}
+
 fn default_max_results() -> usize {
     5
 }

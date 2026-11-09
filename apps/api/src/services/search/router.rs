@@ -1,8 +1,10 @@
 //! Search router: analyzes query complexity and routes with automatic fallback.
 
-use crate::proxy::ir::{ErrCode, Errx};
-use super::providers::{BraveSearchProvider, ExaSearchProvider, SearchProvider, TavilySearchProvider};
+use super::providers::{
+    BraveSearchProvider, ExaSearchProvider, SearchProvider, TavilySearchProvider,
+};
 use super::types::SearchResponse;
+use crate::proxy::ir::{ErrCode, Errx};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum QueryComplexity {
@@ -59,16 +61,29 @@ pub struct SearchRouter {
 
 impl Default for SearchRouter {
     fn default() -> Self {
-        Self::new()
+        Self::from_env()
     }
 }
 
 impl SearchRouter {
-    pub fn new() -> Self {
+    pub fn from_env() -> Self {
         Self {
-            brave: BraveSearchProvider,
-            tavily: TavilySearchProvider,
-            exa: ExaSearchProvider,
+            brave: BraveSearchProvider::from_env(),
+            tavily: TavilySearchProvider::from_env(),
+            exa: ExaSearchProvider::from_env(),
+        }
+    }
+
+    pub fn new() -> Self {
+        Self::from_env()
+    }
+
+    #[cfg(test)]
+    pub fn unconfigured() -> Self {
+        Self {
+            brave: BraveSearchProvider::disabled(),
+            tavily: TavilySearchProvider::disabled(),
+            exa: ExaSearchProvider::disabled(),
         }
     }
 
@@ -143,9 +158,18 @@ mod tests {
 
     #[test]
     fn test_complexity_simple() {
-        assert_eq!(evaluate_complexity("weather in Paris"), QueryComplexity::Simple);
-        assert_eq!(evaluate_complexity("apple stock price"), QueryComplexity::Simple);
-        assert_eq!(evaluate_complexity("rust 1.85 release date"), QueryComplexity::Simple);
+        assert_eq!(
+            evaluate_complexity("weather in Paris"),
+            QueryComplexity::Simple
+        );
+        assert_eq!(
+            evaluate_complexity("apple stock price"),
+            QueryComplexity::Simple
+        );
+        assert_eq!(
+            evaluate_complexity("rust 1.85 release date"),
+            QueryComplexity::Simple
+        );
     }
 
     #[test]
@@ -159,7 +183,9 @@ mod tests {
             QueryComplexity::Complex
         );
         assert_eq!(
-            evaluate_complexity("in-depth analysis of rust async runtime architectures and benchmarks"),
+            evaluate_complexity(
+                "in-depth analysis of rust async runtime architectures and benchmarks"
+            ),
             QueryComplexity::Complex
         );
     }
@@ -180,9 +206,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_search_unconfigured_error() {
-        let router = SearchRouter::new();
+        // Use an explicit unconfigured router so the test is deterministic
+        // regardless of ambient BRAVE/TAVILY/EXA env vars.
+        let router = SearchRouter::unconfigured();
         let client = reqwest::Client::new();
-        // Without env vars set, search returns ProviderUnconfigured 503
         let res = router.search(&client, "test query", 5).await;
         assert!(res.is_err());
         let err = res.err().unwrap();
