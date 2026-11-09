@@ -51,9 +51,9 @@ mod tests {
     #[test]
     fn splits_events_across_chunks() {
         let mut framer = Framer::default();
-        assert!(framer.push(b"data: {\"a\"").is_empty());
-        assert!(framer.push(b"\": 1}\n\n").is_empty());
-        assert_eq!(framer.push(b"data: [DONE]\n\n"), vec!["{\"a\": 1}", "[DONE]"]);
+        assert!(framer.push(b"data: {\"a").is_empty());
+        assert_eq!(framer.push(b"\": 1}\n\n"), vec!["{\"a\": 1}"]);
+        assert_eq!(framer.push(b"data: [DONE]\n\n"), vec!["[DONE]"]);
     }
 
     #[test]

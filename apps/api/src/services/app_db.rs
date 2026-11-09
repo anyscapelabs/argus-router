@@ -27,11 +27,11 @@ pub struct PlanView {
     pub id: String,
     pub name: String,
     pub price: String,
+    pub searches_per_month: i64,
     pub models: Vec<String>,
 }
 
 pub const FREE_PLAN_ID: &str = "free";
-
 
 impl AppDb {
     pub async fn connect(settings: &Settings) -> Result<Self, Box<dyn std::error::Error>> {
@@ -57,13 +57,19 @@ impl AppDb {
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
                 price TEXT NOT NULL DEFAULT '0',
+                searches_per_month BIGINT NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL
             )",
         )
         .execute(&self.pool)
         .await?;
-        // Backfill the price column on databases created before it existed.
-        let _ = sqlx::query("ALTER TABLE plans ADD COLUMN IF NOT EXISTS price TEXT NOT NULL DEFAULT '0'")
+        // Backfill columns on databases created before they existed.
+        let _ = sqlx::query(
+            "ALTER TABLE plans ADD COLUMN IF NOT EXISTS price TEXT NOT NULL DEFAULT '0'",
+        )
+        .execute(&self.pool)
+        .await;
+        let _ = sqlx::query("ALTER TABLE plans ADD COLUMN IF NOT EXISTS searches_per_month BIGINT NOT NULL DEFAULT 0")
             .execute(&self.pool)
             .await;
 
@@ -120,9 +126,11 @@ impl AppDb {
         )
         .execute(&self.pool)
         .await?;
-        let _ = sqlx::query("CREATE INDEX IF NOT EXISTS usage_logs_key_created ON usage_logs (key_id, created_at)")
-            .execute(&self.pool)
-            .await;
+        let _ = sqlx::query(
+            "CREATE INDEX IF NOT EXISTS usage_logs_key_created ON usage_logs (key_id, created_at)",
+        )
+        .execute(&self.pool)
+        .await;
         let _ = sqlx::query("CREATE INDEX IF NOT EXISTS usage_logs_user_created ON usage_logs (user_id, created_at)")
             .execute(&self.pool)
             .await;
@@ -133,10 +141,11 @@ impl AppDb {
     async fn seed(&self) -> Result<(), sqlx::Error> {
         // Idempotent seeds — existing rows stay untouched.
         sqlx::query(
-            "INSERT INTO plans (id, name, created_at) VALUES ($1, $2, $3) ON CONFLICT (id) DO NOTHING",
+            "INSERT INTO plans (id, name, searches_per_month, created_at) VALUES ($1, $2, $3, $4) ON CONFLICT (id) DO NOTHING",
         )
         .bind(FREE_PLAN_ID)
         .bind("Free")
+        .bind(20i64)
         .bind(chrono::Utc::now().to_rfc3339())
         .execute(&self.pool)
         .await?;
@@ -144,16 +153,20 @@ impl AppDb {
         Ok(())
     }
 
-    /// Upserts plans from the plans catalog (id, name, price).
-    pub async fn seed_plans(&self, plans: &[crate::services::plans::PlanCatalogEntry]) -> Result<(), sqlx::Error> {
+    /// Upserts plans from the plans catalog (id, name, price, searches_per_month).
+    pub async fn seed_plans(
+        &self,
+        plans: &[crate::services::plans::PlanCatalogEntry],
+    ) -> Result<(), sqlx::Error> {
         for plan in plans {
             sqlx::query(
-                "INSERT INTO plans (id, name, price, created_at) VALUES ($1, $2, $3, $4)
-                 ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, price = EXCLUDED.price",
+                "INSERT INTO plans (id, name, price, searches_per_month, created_at) VALUES ($1, $2, $3, $4, $5)
+                 ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, price = EXCLUDED.price, searches_per_month = EXCLUDED.searches_per_month",
             )
             .bind(&plan.id)
             .bind(&plan.name)
             .bind(&plan.price)
+            .bind(plan.searches_per_month)
             .bind(chrono::Utc::now().to_rfc3339())
             .execute(&self.pool)
             .await?;
@@ -162,7 +175,10 @@ impl AppDb {
     }
 
     /// Replaces each plan's allowlist with its configured models (fixed per plan).
-    pub async fn seed_plan_allowlists(&self, plans: &[crate::services::plans::PlanCatalogEntry]) -> Result<(), sqlx::Error> {
+    pub async fn seed_plan_allowlists(
+        &self,
+        plans: &[crate::services::plans::PlanCatalogEntry],
+    ) -> Result<(), sqlx::Error> {
         for plan in plans {
             sqlx::query("DELETE FROM model_allowlist WHERE plan_id = $1")
                 .bind(&plan.id)
@@ -183,7 +199,7 @@ impl AppDb {
 
     /// Returns all plans with their model allowlists.
     pub async fn list_plans(&self) -> Result<Vec<PlanView>, sqlx::Error> {
-        let rows = sqlx::query("SELECT id, name, price FROM plans ORDER BY id")
+        let rows = sqlx::query("SELECT id, name, price, searches_per_month FROM plans ORDER BY id")
             .fetch_all(&self.pool)
             .await?;
         let mut out = Vec::new();
@@ -191,10 +207,62 @@ impl AppDb {
             let id: String = row.get("id");
             let name: String = row.get("name");
             let price: String = row.try_get("price").unwrap_or_else(|_| "0".to_owned());
+            let searches_per_month: i64 = row.try_get("searches_per_month").unwrap_or(0);
             let models = self.allowlist_of(&id).await.unwrap_or_default();
-            out.push(PlanView { id, name, price, models });
+            out.push(PlanView {
+                id,
+                name,
+                price,
+                searches_per_month,
+                models,
+            });
         }
         Ok(out)
+    }
+
+    /// Atomically checks a user's monthly web-search quota under a per-user advisory
+    /// transaction lock, preventing TOCTOU quota bypass under concurrent requests.
+    pub async fn check_search_quota(
+        &self,
+        user_id: &str,
+        plan_id: &str,
+    ) -> Result<SearchQuotaCheck, sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
+            .bind(format!("search-quota:{user_id}"))
+            .execute(tx.as_mut())
+            .await?;
+
+        let quota_row = sqlx::query("SELECT searches_per_month FROM plans WHERE id = $1")
+            .bind(plan_id)
+            .fetch_optional(tx.as_mut())
+            .await?;
+        let quota = quota_row
+            .and_then(|r| r.try_get::<i64, _>("searches_per_month").ok())
+            .unwrap_or(0);
+        if quota <= 0 {
+            tx.commit().await?;
+            return Ok(SearchQuotaCheck::NotAvailable);
+        }
+
+        let used_row = sqlx::query(
+            "SELECT COUNT(*) AS total FROM usage_logs
+             WHERE user_id = $1
+               AND model = 'web-search'
+               AND status = 200
+               AND created_at >= date_trunc('month', CURRENT_TIMESTAMP)",
+        )
+        .bind(user_id)
+        .fetch_one(tx.as_mut())
+        .await?;
+        let used = used_row.try_get::<i64, _>("total").unwrap_or(0);
+
+        tx.commit().await?;
+        if used >= quota {
+            Ok(SearchQuotaCheck::Exceeded { used, quota })
+        } else {
+            Ok(SearchQuotaCheck::Allowed { used, quota })
+        }
     }
 
     pub async fn plan_of(&self, user_id: &str) -> Result<String, sqlx::Error> {
@@ -244,13 +312,11 @@ impl AppDb {
             .execute(&self.pool)
             .await?;
         } else {
-            sqlx::query(
-                "DELETE FROM model_allowlist WHERE plan_id = $1 AND model_id = $2",
-            )
-            .bind(plan_id)
-            .bind(model_id)
-            .execute(&self.pool)
-            .await?;
+            sqlx::query("DELETE FROM model_allowlist WHERE plan_id = $1 AND model_id = $2")
+                .bind(plan_id)
+                .bind(model_id)
+                .execute(&self.pool)
+                .await?;
         }
         Ok(())
     }
@@ -265,8 +331,8 @@ impl AppDb {
         seed: &[ModelCatalogEntry],
     ) -> Result<Vec<ModelCatalogEntry>, sqlx::Error> {
         for entry in seed {
-            let payload = serde_json::to_string(entry)
-                .map_err(|error| sqlx::Error::ColumnDecode {
+            let payload =
+                serde_json::to_string(entry).map_err(|error| sqlx::Error::ColumnDecode {
                     index: "payload".into(),
                     source: Box::new(error),
                 })?;
@@ -307,8 +373,8 @@ impl AppDb {
     pub async fn catalog_sync(&self, entries: &[ModelCatalogEntry]) -> Result<(), sqlx::Error> {
         let seen: Vec<&str> = entries.iter().map(|entry| entry.id.as_str()).collect();
         for entry in entries {
-            let payload = serde_json::to_string(entry)
-                .map_err(|error| sqlx::Error::ColumnDecode {
+            let payload =
+                serde_json::to_string(entry).map_err(|error| sqlx::Error::ColumnDecode {
                     index: "payload".into(),
                     source: Box::new(error),
                 })?;

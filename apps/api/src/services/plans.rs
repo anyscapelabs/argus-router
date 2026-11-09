@@ -5,6 +5,8 @@ pub struct PlanCatalogEntry {
     pub id: String,
     pub name: String,
     pub price: String,
+    #[serde(default)]
+    pub searches_per_month: i64,
     pub models: Vec<String>,
 }
 
