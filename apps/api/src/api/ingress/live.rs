@@ -86,7 +86,7 @@ pub async fn live_websocket_handler(
         .check_voice_quota(&principal.user_id, &principal.plan)
         .await
     {
-        Ok(crate::services::app_db::SearchQuotaCheck::NotAvailable) => {
+        Ok(crate::services::app_db::QuotaCheck::NotAvailable) => {
             state.usage.record(UsageRow {
                 key_id: Some(principal.key_id.clone()),
                 user_id: Some(principal.user_id.clone()),
@@ -112,7 +112,7 @@ pub async fn live_websocket_handler(
             )
                 .into_response();
         }
-        Ok(crate::services::app_db::SearchQuotaCheck::Exceeded { used, quota }) => {
+        Ok(crate::services::app_db::QuotaCheck::Exceeded { used, quota }) => {
             state.usage.record(UsageRow {
                 key_id: Some(principal.key_id.clone()),
                 user_id: Some(principal.user_id.clone()),
@@ -140,7 +140,7 @@ pub async fn live_websocket_handler(
             )
                 .into_response();
         }
-        Ok(crate::services::app_db::SearchQuotaCheck::Allowed { used, quota }) => (used, quota),
+        Ok(crate::services::app_db::QuotaCheck::Allowed { used, quota }) => (used, quota),
         Err(err) => {
             tracing::error!(%err, user_id = %principal.user_id, "voice quota check failed");
             state.usage.record(UsageRow {

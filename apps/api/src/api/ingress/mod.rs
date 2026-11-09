@@ -780,7 +780,7 @@ pub async fn search_endpoint(
         .check_search_quota(&principal.user_id, &principal.plan)
         .await
     {
-        Ok(crate::services::app_db::SearchQuotaCheck::NotAvailable) => {
+        Ok(crate::services::app_db::QuotaCheck::NotAvailable) => {
             let item = Errx::new(
                 ErrCode::Forbidden,
                 403,
@@ -805,7 +805,7 @@ pub async fn search_endpoint(
             });
             return openai::error_response(item);
         }
-        Ok(crate::services::app_db::SearchQuotaCheck::Exceeded { used, quota }) => {
+        Ok(crate::services::app_db::QuotaCheck::Exceeded { used, quota }) => {
             let item = Errx::new(
                 ErrCode::RateLimited,
                 429,
@@ -830,7 +830,7 @@ pub async fn search_endpoint(
             });
             return openai::error_response(item);
         }
-        Ok(crate::services::app_db::SearchQuotaCheck::Allowed { .. }) => {}
+        Ok(crate::services::app_db::QuotaCheck::Allowed { .. }) => {}
         Err(err) => {
             tracing::error!(error = %err, user_id = %principal.user_id, "search quota check failed");
             let item = Errx::new(ErrCode::Upstream, 500, "the search quota lookup failed");

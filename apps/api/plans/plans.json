@@ -3,20 +3,15 @@
     "id": "free",
     "name": "Free",
     "price": "0",
-    "searches_per_month": 20,
-    "voice_minutes": 10,
-    "models": [
-      "nvidia/nemotron-3-ultra-550b-a55b:free",
-      "nvidia/nemotron-3.5-super-vl:free",
-      "nvidia/nemotron-3.5-lightning:free"
-    ]
-  },
-  {
-    "id": "student",
-    "name": "Student",
-    "price": "5",
-    "searches_per_month": 100,
-    "voice_minutes": 100,
+    "tagline": "For Students",
+    "searchesPerMonth": 20,
+    "voiceMinutes": 10,
+    "limits": {
+      "monthlyTokens": "20M monthly tokens",
+      "weeklyTokens": "5M weekly tokens",
+      "dailyRequests": "50 requests/day",
+      "ratePerMin": "5 req/min"
+    },
     "models": [
       "nvidia/nemotron-3-ultra-550b-a55b:free",
       "nvidia/nemotron-3.5-super-vl:free",
@@ -40,9 +35,16 @@
   {
     "id": "starter",
     "name": "Starter",
-    "price": "9",
-    "searches_per_month": 300,
-    "voice_minutes": 150,
+    "price": "4",
+    "tagline": "For Students",
+    "searchesPerMonth": 300,
+    "voiceMinutes": 150,
+    "limits": {
+      "monthlyTokens": "100M monthly tokens",
+      "weeklyTokens": "25M weekly tokens",
+      "dailyRequests": "700 requests/day",
+      "ratePerMin": "10 req/min"
+    },
     "models": [
       "nvidia/nemotron-3-ultra-550b-a55b:free",
       "nvidia/nemotron-3.5-super-vl:free",
@@ -80,9 +82,16 @@
   {
     "id": "pro",
     "name": "Pro",
-    "price": "29",
-    "searches_per_month": 1000,
-    "voice_minutes": 200,
+    "price": "20",
+    "tagline": "For Developers",
+    "searchesPerMonth": 1000,
+    "voiceMinutes": 200,
+    "limits": {
+      "monthlyTokens": "500M monthly tokens",
+      "weeklyTokens": "125M weekly tokens",
+      "dailyRequests": "3,400 requests/day",
+      "ratePerMin": "30 req/min"
+    },
     "models": [
       "nvidia/nemotron-3-ultra-550b-a55b:free",
       "nvidia/nemotron-3.5-super-vl:free",
@@ -93,21 +102,6 @@
       "qwen/qwen3.8-flash",
       "anthropic/claude-haiku-5.5",
       "openai/gpt-5.6-luna",
-      "google/gemini-4-argon",
-      "minimax/minimax-m3"
-    ]
-  },
-  {
-    "id": "max",
-    "name": "Max",
-    "price": "99",
-    "searches_per_month": 5000,
-    "voice_minutes": 300,
-    "models": [
-      "anthropic/claude-haiku-5.5",
-      "anthropic/claude-sonnet-5.5",
-      "openai/gpt-5.6-luna",
-      "openai/gpt-6-luna",
       "z-ai/glm-5.3-flash",
       "moonshotai/kimi-k3.1-pro",
       "minimax/minimax-m3",
@@ -143,6 +137,8 @@
     "name": "Business",
     "price": "60",
     "tagline": "For Business",
+    "searchesPerMonth": 3000,
+    "voiceMinutes": 300,
     "limits": {
       "monthlyTokens": "500M monthly tokens",
       "weeklyTokens": "125M weekly tokens",
@@ -186,6 +182,94 @@
       "Gemini 3.8 Flash",
       "Claude Sonnet 5.5",
       "Gemini 4 Argon"
+    ],
+    "modelCount": "17 models"
+  },
+  {
+    "id": "student",
+    "name": "Student",
+    "price": "5",
+    "tagline": "For Students",
+    "searchesPerMonth": 100,
+    "voiceMinutes": 100,
+    "limits": {
+      "monthlyTokens": "100M monthly tokens",
+      "weeklyTokens": "25M weekly tokens",
+      "dailyRequests": "700 requests/day",
+      "ratePerMin": "10 req/min"
+    },
+    "models": [
+      "nvidia/nemotron-3-ultra-550b-a55b:free",
+      "nvidia/nemotron-3.5-super-vl:free",
+      "nvidia/nemotron-3.5-lightning:free",
+      "qwen/qwen3.7-flash",
+      "z-ai/glm-5.3-flash",
+      "deepseek/deepseek-v4.1-flash-1017",
+      "qwen/qwen3.8-flash",
+      "google/gemini-3.8-flash"
+    ],
+    "modelNames": [
+      "Nemotron 3 Ultra 550B (free)",
+      "Nemotron 3.5 Super VL (free)",
+      "Nemotron 3.5 Lightning (free)",
+      "Qwen3.7 Flash",
+      "GLM 5.3 Flash",
+      "DeepSeek V4.1 Flash (1017)",
+      "Qwen3.8 Flash",
+      "Gemini 3.8 Flash"
+    ],
+    "modelCount": "8 models"
+  },
+  {
+    "id": "max",
+    "name": "Max",
+    "price": "99",
+    "tagline": "For Power Users",
+    "searchesPerMonth": 5000,
+    "voiceMinutes": 300,
+    "limits": {
+      "monthlyTokens": "2B monthly tokens",
+      "weeklyTokens": "500M weekly tokens",
+      "dailyRequests": "10,000 requests/day",
+      "ratePerMin": "60 req/min"
+    },
+    "models": [
+      "anthropic/claude-haiku-5.5",
+      "anthropic/claude-sonnet-5.5",
+      "openai/gpt-5.6-luna",
+      "openai/gpt-6-luna",
+      "z-ai/glm-5.3-flash",
+      "moonshotai/kimi-k3.1-pro",
+      "minimax/minimax-m3.1-flash",
+      "minimax/minimax-m3",
+      "deepseek/deepseek-v4.1-flash-1017",
+      "deepseek/deepseek-v4-flash-0731",
+      "qwen/qwen3.8-flash",
+      "qwen/qwen3.7-flash",
+      "google/gemini-3.8-flash",
+      "google/gemini-4-argon",
+      "nvidia/nemotron-3-ultra-550b-a55b:free",
+      "nvidia/nemotron-3.5-super-vl:free",
+      "nvidia/nemotron-3.5-lightning:free"
+    ],
+    "modelNames": [
+      "Claude Haiku 5.5",
+      "Claude Sonnet 5.5",
+      "GPT-5.6 Luna",
+      "GPT-6 Luna",
+      "GLM 5.3 Flash",
+      "Kimi 3.1 Pro",
+      "MiniMax M3.1 Flash",
+      "MiniMax M3",
+      "DeepSeek V4.1 Flash (1017)",
+      "DeepSeek V4 Flash (0731)",
+      "Qwen3.8 Flash",
+      "Qwen3.7 Flash",
+      "Gemini 3.8 Flash",
+      "Gemini 4 Argon",
+      "Nemotron 3 Ultra 550B (free)",
+      "Nemotron 3.5 Super VL (free)",
+      "Nemotron 3.5 Lightning (free)"
     ],
     "modelCount": "17 models"
   }
