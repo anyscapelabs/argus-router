@@ -1,5 +1,5 @@
 use better_auth::seaorm::sea_orm::entity::prelude::*;
-use better_auth::seaorm::{sea_orm, AuthEntity};
+use better_auth::seaorm::{AuthEntity, sea_orm};
 
 pub mod user {
     use super::*;

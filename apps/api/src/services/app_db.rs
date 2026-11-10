@@ -1,7 +1,7 @@
 use std::str::FromStr;
 
 use chrono::Utc;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use sqlx::PgPool;
 use sqlx::Row;
 

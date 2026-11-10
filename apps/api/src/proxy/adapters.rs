@@ -6,7 +6,7 @@
 use std::collections::{HashMap, HashSet};
 
 use futures_util::Stream;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::proxy::ir::{Block, Chat, ErrCode, Errx, Event, Quirks, Role, ToolChoice, Turn, Usage};
 use crate::proxy::sse::Framer;
@@ -121,20 +121,21 @@ fn build_request(target: &Target, chat: &Chat, streaming: bool) -> Value {
     );
     payload["provider"] = provider_routing;
     if chat.has_tools() {
-        payload["tools"] = json!(chat
-            .tools
-            .iter()
-            .map(|tool| {
-                json!({
-                    "type": "function",
-                    "function": {
-                        "name": tool.name,
-                        "description": tool.description.clone().unwrap_or_default(),
-                        "parameters": crate::proxy::parse_json_lenient(&tool.schema_json),
-                    },
+        payload["tools"] = json!(
+            chat.tools
+                .iter()
+                .map(|tool| {
+                    json!({
+                        "type": "function",
+                        "function": {
+                            "name": tool.name,
+                            "description": tool.description.clone().unwrap_or_default(),
+                            "parameters": crate::proxy::parse_json_lenient(&tool.schema_json),
+                        },
+                    })
                 })
-            })
-            .collect::<Vec<_>>());
+                .collect::<Vec<_>>()
+        );
         payload["tool_choice"] = json!(match &chat.tool_choice {
             ToolChoice::Auto => json!("auto"),
             ToolChoice::None => json!("none"),

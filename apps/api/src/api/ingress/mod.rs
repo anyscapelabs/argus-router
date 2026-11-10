@@ -13,9 +13,9 @@ use better_auth::plugins::api_key::VerifyApiKey;
 
 use std::time::{Duration, Instant};
 
-use crate::proxy::ir::Event;
 use crate::proxy::ErrCode;
 use crate::proxy::Errx;
+use crate::proxy::ir::Event;
 use crate::services::catalog::ModelCatalogEntry;
 use crate::services::usage::UsageRow;
 use crate::state::AppState;
@@ -121,11 +121,11 @@ pub(crate) fn new_id(prefix: &str) -> String {
 
 use std::pin::Pin;
 
+use axum::Json as AxumJson;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::sse::{Event as SseFrame, KeepAlive, Sse};
 use axum::response::{IntoResponse, Json, Response};
-use axum::Json as AxumJson;
 use futures_util::{Stream, StreamExt};
 use serde_json::Value;
 

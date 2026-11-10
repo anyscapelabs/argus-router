@@ -9,7 +9,7 @@
 //! context coherent when the same conversation later switches to an
 //! OpenAI-compat (or Anthropic) model.
 
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use std::collections::HashMap;
 
 use crate::proxy::ir::{
@@ -412,9 +412,9 @@ pub fn models_list(entries: Vec<Value>) -> Value {
 
 /// HTTP response carrying the Gemini error envelope.
 pub fn error_response(item: Errx) -> axum::response::Response {
+    use axum::Json;
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
-    use axum::Json;
     let status = StatusCode::from_u16(item.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
     (status, Json(error_body(&item))).into_response()
 }

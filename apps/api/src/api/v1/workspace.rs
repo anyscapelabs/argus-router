@@ -2,16 +2,16 @@ use std::sync::Arc;
 
 use axum::http::StatusCode;
 use axum::routing::get;
-use axum::{extract::State, Json as AxumJson, Router};
-use better_auth::integrations::axum::CurrentSession;
+use axum::{Json as AxumJson, Router, extract::State};
 use better_auth::BetterAuth;
+use better_auth::integrations::axum::CurrentSession;
 use serde::{Deserialize, Serialize};
 
 use crate::auth::AppAuthSchema;
 use crate::services::avatar::{letter_avatar_url, letter_of};
 use crate::services::cache::Cache;
 use crate::services::workspace::{
-    self as workspaces, rename_default_workspace, resolve_default_workspace, WorkspaceError,
+    self as workspaces, WorkspaceError, rename_default_workspace, resolve_default_workspace,
 };
 use crate::state::AppState;
 

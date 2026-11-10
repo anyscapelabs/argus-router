@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use axum::extract::FromRef;
-use better_auth::plugins::ApiKeyPlugin;
 use better_auth::BetterAuth;
+use better_auth::plugins::ApiKeyPlugin;
 
 use crate::api::ingress::live::LiveSessionStore;
 use crate::auth::AppAuthSchema;

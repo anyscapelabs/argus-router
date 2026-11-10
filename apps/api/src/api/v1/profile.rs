@@ -1,4 +1,4 @@
-use axum::{extract::State, routing::get, Json as AxumJson, Router};
+use axum::{Json as AxumJson, Router, extract::State, routing::get};
 use better_auth::integrations::axum::CurrentSession;
 use serde::{Deserialize, Serialize};
 

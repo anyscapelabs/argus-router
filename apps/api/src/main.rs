@@ -8,8 +8,8 @@ mod state;
 use std::sync::Arc;
 
 use axum::Router;
-use better_auth::integrations::axum::AxumIntegration;
 use better_auth::BetterAuth;
+use better_auth::integrations::axum::AxumIntegration;
 use tower_http::cors::{AllowHeaders, AllowOrigin, CorsLayer};
 use tower_http::trace::TraceLayer;
 
@@ -82,7 +82,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let app = router(auth)
-        .layer(TraceLayer::new_for_http())
+        .layer(
+            // Same default span tower-http builds, except secret query params
+            // are redacted before they reach the logs: WebSocket clients pass
+            // their API key as `?key=`, and an unredacted URI would write every
+            // caller's key to the log in plaintext.
+            TraceLayer::new_for_http().make_span_with(redacted_span),
+        )
         .layer(cors(&settings))
         .with_state(state);
 
@@ -91,12 +97,50 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Query parameters whose values must never reach the logs.
+const REDACTED_QUERY_PARAMS: &[&str] = &["key", "api_key", "token", "access_token"];
+
+/// The request URI with secret query-param values replaced by `[redacted]`.
+/// WebSocket clients pass their API key as `?key=`, and the default tower-http
+/// span would otherwise log the full URI — every caller's key, in plaintext.
+fn redact_uri(uri: &axum::http::Uri) -> String {
+    let path = uri.path();
+    let Some(query) = uri.query() else {
+        return path.to_owned();
+    };
+    let mut redacted = false;
+    let cleaned: Vec<String> = query
+        .split('&')
+        .map(|pair| match pair.split_once('=') {
+            Some((name, _)) if REDACTED_QUERY_PARAMS.contains(&name) => {
+                redacted = true;
+                format!("{name}=[redacted]")
+            }
+            _ => pair.to_owned(),
+        })
+        .collect();
+    if !redacted {
+        return path.to_owned();
+    }
+    format!("{path}?{}", cleaned.join("&"))
+}
+
+/// The default tower-http request span (method, uri, version) with the URI
+/// passed through `redact_uri` first.
+fn redacted_span<B>(request: &axum::http::Request<B>) -> tracing::Span {
+    tracing::debug_span!(
+        "request",
+        method = %request.method(),
+        uri = %redact_uri(request.uri()),
+        version = ?request.version(),
+    )
+}
+
 /// Domain/version tree: `/api/v1/<domain>` plus the better-auth surface
 /// nested under `/api/v1/auth` (its base path is mirrored in `AuthConfig` so
 /// emails, callbacks and cookies agree), and the model-proxy ingress
 /// dialects mounted at their canonical SDK paths.
-fn router(auth: Arc<BetterAuth<AppAuthSchema>>) -> Router<AppState> {
-    Router::new()
+fn router(auth: Arc<BetterAuth<AppAuthSchema>>) -> Router<AppState> {    Router::new()
         .nest("/api/v1/auth", auth.axum_router_with_state::<AppState>())
         .nest("/api/v1", api::v1::router())
         // OpenAI-compatible ingress (the desktop agent's `openai_compat`

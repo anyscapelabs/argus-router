@@ -5,7 +5,7 @@
     "price": "0",
     "tagline": "For Students",
     "searchesPerMonth": 20,
-    "voiceMinutes": 10,
+    "voiceMinutes": 30,
     "limits": {
       "monthlyTokens": "20M monthly tokens",
       "weeklyTokens": "5M weekly tokens",

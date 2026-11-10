@@ -21,6 +21,8 @@ pub struct PlanCatalogEntry {
     pub searches_per_month: i64,
     #[serde(default)]
     pub voice_minutes: i64,
+    #[serde(default)]
+    pub limits: Option<PlanLimits>,
     pub models: Vec<String>,
     #[serde(default)]
     pub model_names: Vec<String>,

@@ -1,4 +1,4 @@
-use axum::{routing::get, Json as AxumJson, Router};
+use axum::{Json as AxumJson, Router, routing::get};
 
 use crate::state::AppState;
 

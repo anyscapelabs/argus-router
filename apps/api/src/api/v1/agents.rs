@@ -1,4 +1,4 @@
-use axum::{routing::get, Json as AxumJson, Router};
+use axum::{Json as AxumJson, Router, routing::get};
 use better_auth::integrations::axum::CurrentSession;
 
 use crate::auth::AppAuthSchema;

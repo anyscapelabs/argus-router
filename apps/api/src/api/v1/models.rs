@@ -1,6 +1,6 @@
 use axum::http::StatusCode;
 use axum::routing::{get, post};
-use axum::{extract::State, Json as AxumJson, Router};
+use axum::{Json as AxumJson, Router, extract::State};
 use better_auth::integrations::axum::CurrentSession;
 use serde::{Deserialize, Serialize};
 
