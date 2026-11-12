@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { FaSpinner } from "react-icons/fa";
 import { FaArrowRight } from "react-icons/fa6";
 import { IoCalendarOutline } from "react-icons/io5";
 import { CiClock2 } from "react-icons/ci";
@@ -63,10 +64,25 @@ export function PlanCardSkeleton() {
   );
 }
 
-export function PlanCard({ plan, isCurrent }: { plan: Plan; isCurrent: boolean }) {
+export function PlanCard({
+  plan,
+  isCurrent,
+  onAction,
+  actionLabel,
+  pending = false,
+  disabled = false,
+}: {
+  plan: Plan;
+  isCurrent: boolean;
+  onAction?: () => void;
+  actionLabel?: string;
+  pending?: boolean;
+  disabled?: boolean;
+}) {
   const [expanded, setExpanded] = useState(false);
   const modelNames = plan.modelNames ?? [];
   const visible = expanded ? modelNames : modelNames.slice(0, 8);
+  const label = actionLabel ?? (isCurrent ? "Manage" : "Upgrade");
 
   return (
     <div className="relative flex h-auto flex-col border border-border-secondary p-2">
@@ -80,10 +96,15 @@ export function PlanCard({ plan, isCurrent }: { plan: Plan; isCurrent: boolean }
       <p className="pt-1 text-xs font-medium text-white/60">{plan.tagline ?? ""}</p>
       <button
         type="button"
-        className="-mx-2 mt-2 flex w-[calc(100%+1rem)] cursor-pointer items-center justify-between border-y border-border-secondary px-3 py-2 text-xs font-medium text-primary transition-colors hover:bg-accent hover:text-background"
+        onClick={onAction}
+        disabled={disabled || pending || !onAction}
+        className="-mx-2 mt-2 flex w-[calc(100%+1rem)] cursor-pointer items-center justify-between border-y border-border-secondary px-3 py-2 text-xs font-medium text-primary transition-colors hover:bg-accent hover:text-background disabled:cursor-not-allowed disabled:opacity-50"
       >
-        {isCurrent ? "Manage" : "Upgrade"}
-        <FaArrowRight className="size-3" />
+        <span className="flex items-center gap-1.5">
+          {pending && <FaSpinner className="size-3 animate-spin" />}
+          {pending ? "Opening…" : label}
+        </span>
+        {!pending && <FaArrowRight className="size-3" />}
       </button>
       <h4 className="pt-2 text-xs font-medium text-white/60">Whats Included</h4>
       <div className="mt-2 space-y-1.5">

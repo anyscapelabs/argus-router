@@ -1,13 +1,11 @@
 "use client";
 
+import Link from "next/link";
+import { useEffect, useState } from "react";
 import { FaSpinner } from "react-icons/fa";
 
 import { Skeleton } from "@/components/skeleton";
-import {
-  useBilling,
-  useBillingPortal,
-  useCheckout,
-} from "@/domains/billing/hooks";
+import { useBilling, useBillingPortal, useCheckout } from "@/domains/billing/hooks";
 import { usePlans } from "@/domains/plans/hooks";
 
 const USD = new Intl.NumberFormat("en-US", {
@@ -48,10 +46,13 @@ function statusLabel(value: string) {
 export default function BillingPage() {
   const billing = useBilling();
   const plans = usePlans();
-  const checkout = useCheckout();
   const portal = useBillingPortal();
+  const checkout = useCheckout();
+  const [buyOpen, setBuyOpen] = useState(false);
+  const [selectedPackId, setSelectedPackId] = useState<string | null>(null);
+  const [customAmount, setCustomAmount] = useState("");
 
-  const currentPlanId = billing.data?.planId;
+  const currentPlanId = billing.data?.planId ?? "free";
   const currentPlan = plans.data?.plans.find((plan) => plan.id === currentPlanId);
   const subscription = billing.data?.subscription;
   const hasManagedSubscription = Boolean(
@@ -59,10 +60,32 @@ export default function BillingPage() {
   );
   const renewalDate = formatDate(subscription?.nextBillingDate);
   const graceDate = formatDate(subscription?.pastDueEndsAt);
-  const productsConfigured = Boolean(
-    billing.data?.availablePlanIds.length ||
-      billing.data?.creditPacks.some((pack) => pack.available),
-  );
+  const planActionLabel =
+    currentPlanId === "free" || currentPlanId === "starter" ? "Upgrade" : "View plans";
+  const creditPacks = billing.data?.creditPacks ?? [];
+  const selectedPack = creditPacks.find((pack) => pack.id === selectedPackId);
+  const canCheckout = Boolean(selectedPack?.available && !checkout.isPending);
+
+  useEffect(() => {
+    if (!buyOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !checkout.isPending) setBuyOpen(false);
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [buyOpen, checkout.isPending]);
+
+  const selectPack = (packId: string, priceUsd: number) => {
+    setSelectedPackId(packId);
+    setCustomAmount(String(priceUsd));
+  };
+
+  const onCustomAmountChange = (value: string) => {
+    setCustomAmount(value);
+    const amount = Number(value);
+    const match = creditPacks.find((pack) => pack.priceUsd === amount);
+    setSelectedPackId(match ? match.id : null);
+  };
 
   return (
     <div className="flex min-h-full flex-1 flex-col px-2 pb-8">
@@ -129,13 +152,12 @@ export default function BillingPage() {
               Manage plan
             </button>
           ) : (
-            <button
-              type="button"
-              onClick={() => document.getElementById("plans")?.scrollIntoView({ behavior: "smooth" })}
+            <Link
+              href="/console/subscription"
               className="cursor-pointer rounded-sm bg-accent px-2.5 py-1.5 text-xs font-medium text-black transition-colors hover:bg-[#d4d4d4]"
             >
-              View plans
-            </button>
+              {planActionLabel}
+            </Link>
           )}
         </div>
       </div>
@@ -146,93 +168,11 @@ export default function BillingPage() {
         </div>
       )}
 
-      {billing.data && (!billing.data.billingConfigured || !productsConfigured) && (
-        <div className="mt-3 rounded-md border border-amber-300/15 bg-amber-300/5 px-3 py-2 text-xs text-amber-100/70">
-          Checkout is not configured yet. Add the Dodo Payments API key and product IDs to
-          enable purchases.
-        </div>
-      )}
-
-      <section id="plans" className="mt-6 scroll-mt-6">
-        <div className="flex items-end justify-between gap-3">
-          <div>
-            <h2 className="text-sm font-medium text-primary">Plans</h2>
-            <p className="mt-1 text-xs text-white/50">
-              Choose the model access and included usage that fits your workload.
-            </p>
-          </div>
-        </div>
-
-        {hasManagedSubscription ? (
-          <div className="mt-2 flex flex-wrap items-center justify-between gap-3 rounded-md border border-border-secondary bg-[#262626] p-3">
-            <p className="text-xs text-white/60">
-              Upgrades, downgrades and cancellations are handled in the billing portal.
-            </p>
-            <button
-              type="button"
-              onClick={() => portal.mutate()}
-              disabled={portal.isPending}
-              className="cursor-pointer rounded-sm border border-border-secondary bg-tertiary px-2.5 py-1.5 text-xs font-medium text-white/80 transition-colors hover:bg-white/10 disabled:opacity-50"
-            >
-              Open portal
-            </button>
-          </div>
-        ) : (
-          <div className="mt-2 grid gap-2 md:grid-cols-3">
-            {plans.isLoading &&
-              Array.from({ length: 3 }, (_, index) => (
-                <Skeleton key={index} className="h-44 rounded-md" />
-              ))}
-            {plans.data?.plans
-              .filter((plan) => plan.id !== "free")
-              .map((plan) => {
-                const available = billing.data?.availablePlanIds.includes(plan.id) ?? false;
-                const pending =
-                  checkout.isPending && checkout.variables?.planId === plan.id;
-                return (
-                  <div
-                    key={plan.id}
-                    className="flex min-h-44 flex-col rounded-md border border-border-secondary bg-[#262626] p-3"
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <h3 className="text-sm font-medium text-primary">{plan.name}</h3>
-                        <p className="mt-0.5 text-xs text-white/45">{plan.tagline}</p>
-                      </div>
-                      <p className="text-sm font-medium text-primary">
-                        ${plan.price}
-                        <span className="text-[10px] font-normal text-white/45">/mo</span>
-                      </p>
-                    </div>
-                    <div className="mt-3 space-y-1 text-xs text-white/60">
-                      <p>{plan.limits?.weeklyTokens ?? "Weekly token allowance"}</p>
-                      <p>{plan.limits?.dailyRequests ?? "Daily request allowance"}</p>
-                      <p>{plan.modelCount ?? `${plan.models.length} models`}</p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => checkout.mutate({ planId: plan.id })}
-                      disabled={!available || checkout.isPending}
-                      className="mt-auto flex cursor-pointer items-center justify-center gap-1.5 rounded-sm bg-accent px-2.5 py-1.5 text-xs font-medium text-black transition-colors hover:bg-[#d4d4d4] disabled:cursor-not-allowed disabled:opacity-40"
-                    >
-                      {pending && <FaSpinner className="size-3 animate-spin" />}
-                      {pending ? "Opening…" : available ? `Choose ${plan.name}` : "Unavailable"}
-                    </button>
-                  </div>
-                );
-              })}
-          </div>
-        )}
-      </section>
-
       <section className="mt-6">
-        <h2 className="text-sm font-medium text-primary">Prepaid credits</h2>
-        <p className="mt-1 text-xs text-white/50">
-          Credits are used automatically after your weekly or daily included usage is
-          exhausted.
-        </p>
+        <h2 className="text-sm font-medium text-primary">Credits</h2>
+        <p className="mt-1 text-xs text-white/50">Used after included plan usage.</p>
         <div className="mt-2 rounded-md border border-border-secondary bg-[#262626] p-3 sm:p-4">
-          <div className="flex flex-wrap items-end justify-between gap-3 border-b border-border-secondary pb-3">
+          <div className="flex flex-wrap items-end justify-between gap-3">
             <div>
               <p className="text-xs font-medium uppercase tracking-wide text-white/45">
                 Available balance
@@ -245,41 +185,125 @@ export default function BillingPage() {
                 </p>
               )}
             </div>
-            <p className="max-w-xs text-right text-[11px] leading-4 text-white/40">
-              Charged from measured provider usage. Credits do not expire or reset.
-            </p>
-          </div>
-
-          <div className="mt-3 grid gap-2 sm:grid-cols-2">
-            {billing.isLoading &&
-              Array.from({ length: 2 }, (_, index) => (
-                <Skeleton key={index} className="h-16 rounded-md" />
-              ))}
-            {billing.data?.creditPacks.map((pack) => {
-              const pending =
-                checkout.isPending && checkout.variables?.creditPackId === pack.id;
-              return (
-                <button
-                  key={pack.id}
-                  type="button"
-                  onClick={() => checkout.mutate({ creditPackId: pack.id })}
-                  disabled={!pack.available || checkout.isPending}
-                  className="flex cursor-pointer items-center justify-between gap-3 rounded-md border border-border-secondary bg-tertiary p-3 text-left transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  <span>
-                    <span className="block text-sm font-medium text-primary">{pack.label}</span>
-                    <span className="mt-0.5 block text-[11px] text-white/45">One-time purchase</span>
-                  </span>
-                  <span className="flex items-center gap-1.5 text-xs font-medium text-white/80">
-                    {pending && <FaSpinner className="size-3 animate-spin" />}
-                    {pending ? "Opening…" : USD.format(pack.priceUsd)}
-                  </span>
-                </button>
-              );
-            })}
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedPackId(null);
+                setCustomAmount("");
+                setBuyOpen(true);
+              }}
+              className="cursor-pointer rounded-sm bg-accent px-2.5 py-1.5 text-xs font-medium text-black transition-colors hover:bg-[#d4d4d4]"
+            >
+              Buy credits
+            </button>
           </div>
         </div>
       </section>
+
+      {buyOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          onClick={() => {
+            if (!checkout.isPending) setBuyOpen(false);
+          }}
+          role="presentation"
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Buy credits"
+            className="w-full max-w-md rounded-md border border-border-secondary bg-[#262626] p-4 shadow-lg"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-sm font-medium text-primary">Buy credits</h2>
+            <p className="mt-1 text-xs text-white/50">Select an amount to add to your balance.</p>
+
+            <div className="mt-4">
+              <label className="text-xs font-medium uppercase tracking-wide text-white/45">
+                Custom amount
+              </label>
+              <div className="mt-1 flex items-center rounded-sm border border-border-secondary bg-tertiary px-2.5 py-1.5">
+                <span className="text-sm text-white/50">$</span>
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  inputMode="decimal"
+                  value={customAmount}
+                  onChange={(e) => onCustomAmountChange(e.target.value)}
+                  placeholder="0"
+                  className="ml-1 w-full bg-transparent text-sm text-primary outline-none placeholder:text-white/30"
+                />
+              </div>
+            </div>
+
+            <div className="mt-4">
+              <p className="text-xs font-medium uppercase tracking-wide text-white/45">Amounts</p>
+              <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                {billing.isLoading &&
+                  Array.from({ length: 2 }, (_, index) => (
+                    <Skeleton key={index} className="h-16 rounded-md" />
+                  ))}
+                {!billing.isLoading &&
+                  creditPacks.map((pack) => {
+                    const selected = selectedPackId === pack.id;
+                    return (
+                      <button
+                        key={pack.id}
+                        type="button"
+                        onClick={() => selectPack(pack.id, pack.priceUsd)}
+                        disabled={!pack.available}
+                        className={`flex cursor-pointer items-center justify-between gap-3 rounded-md border p-3 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                          selected
+                            ? "border-accent bg-accent/10"
+                            : "border-border-secondary bg-tertiary hover:bg-white/10"
+                        }`}
+                      >
+                        <span>
+                          <span className="block text-sm font-medium text-primary">{pack.label}</span>
+                          <span className="mt-0.5 block text-[11px] text-white/45">One-time purchase</span>
+                        </span>
+                        <span className="text-xs font-medium text-white/80">
+                          {USD.format(pack.priceUsd)}
+                        </span>
+                      </button>
+                    );
+                  })}
+                {!billing.isLoading && creditPacks.length === 0 && (
+                  <p className="text-xs text-white/50">No credit amounts available.</p>
+                )}
+              </div>
+              {customAmount && !selectedPackId && (
+                <p className="mt-2 text-[11px] text-white/45">
+                  Custom amounts are not available yet. Select an amount above.
+                </p>
+              )}
+            </div>
+
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  if (!checkout.isPending) setBuyOpen(false);
+                }}
+                disabled={checkout.isPending}
+                className="cursor-pointer rounded-sm px-2 py-1 text-xs text-white/60 transition-colors hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => selectedPackId && checkout.mutate({ creditPackId: selectedPackId })}
+                disabled={!canCheckout}
+                className="inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-sm bg-accent px-2.5 py-1.5 text-xs font-medium text-black transition-colors hover:bg-[#d4d4d4] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {checkout.isPending && <FaSpinner className="size-3 animate-spin" />}
+                {checkout.isPending ? "Opening…" : "Continue"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
