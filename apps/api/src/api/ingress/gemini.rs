@@ -1,22 +1,11 @@
-//! Ingress, Gemini dialect (`POST /v1beta/models/{model}:generateContent`
-//! and `:streamGenerateContent?alt=sse`).
-//!
-//! Parses the request body into IR, re-emits normalized events as
-//! `GenerateContentResponse` SSE frames, and maps errors to the Gemini
-//! error envelope. Because Gemini identifies tool results by function name
-//! rather than call id, parsing assigns synthetic call ids and keeps an
-//! id↔name map inside each conversation — which is what keeps tool-call
-//! context coherent when the same conversation later switches to an
-//! OpenAI-compat (or Anthropic) model.
-
 use serde_json::{Map, Value, json};
 use std::collections::HashMap;
 
 use crate::proxy::ir::{
-    Block, Chat, ErrCode, Errx, Event, Message, Params, Role, ToolChoice, ToolDef, Turn,
+    Block, Chat, ErrCode, Errx, Event, FinishReason, Message, Params, Role, ToolChoice, ToolDef,
+    Turn,
 };
 
-/// Splits the `{model}:{action}` path segment; action decides streaming.
 pub fn split_path(raw: &str) -> Result<(String, bool), Errx> {
     let invalid = |message: &str| Errx::new(ErrCode::NotFound, 404, message.to_owned());
     let (model, action) = raw
@@ -50,10 +39,7 @@ pub fn parse(payload: &Value) -> Result<Chat, Errx> {
         tool_choice: ToolChoice::Auto,
         params: Params::clamped(None, i64::MAX),
     };
-    // Mirrors the upstream adapter: Gemini never carries call ids, so the
-    // proxy mints stable ids and tracks function names until the response
-    // arrives.
-    let mut pending: HashMap<String, String> = HashMap::new(); // name → latest id
+    let mut pending: HashMap<String, String> = HashMap::new();
     let mut call_counter = 0usize;
 
     for entry in contents {
@@ -147,8 +133,6 @@ pub fn parse(payload: &Value) -> Result<Chat, Errx> {
                 });
                 continue;
             }
-            // Unknown parts (video metadata etc.) are skipped rather than
-            // failing the whole conversation.
         }
         if !blocks.is_empty() {
             chat.messages.push(Message { role, blocks });
@@ -234,7 +218,6 @@ pub fn parse(payload: &Value) -> Result<Chat, Errx> {
                 top_p: float("topP"),
                 stop,
             }),
-            // Real clamp happens in `clamp_params` after model resolution.
             i64::MAX,
         );
         chat.params = params;
@@ -253,6 +236,7 @@ pub fn clamp_params(chat: &mut Chat, max_output: i64) {
 pub struct StreamState {
     pub model: String,
     pub saw_tools: bool,
+    pub finish_reason: FinishReason,
 }
 
 impl StreamState {
@@ -260,11 +244,11 @@ impl StreamState {
         Self {
             model,
             saw_tools: false,
+            finish_reason: FinishReason::Stop,
         }
     }
 }
 
-/// One streamed `GenerateContentResponse` frame per event.
 pub fn chunk(state: &mut StreamState, event: &Event) -> Option<Value> {
     let mut base = Map::new();
     let mut candidate = Map::new();
@@ -292,11 +276,12 @@ pub fn chunk(state: &mut StreamState, event: &Event) -> Option<Value> {
                 json!({"role": "model", "parts": [{"functionCall": {"name": name}}]}),
             );
         }
-        // Gemini delivers function calls complete; the upstream adapter
-        // already folded args into the start frame, so deltas render as
-        // nothing and the end frame finalizes without a part.
         Event::ToolUseDelta { .. } => return None,
         Event::ToolUseEnd { .. } => return None,
+        Event::Finish(reason) => {
+            state.finish_reason = *reason;
+            return None;
+        }
         Event::Usage {
             input_tokens,
             output_tokens,
@@ -306,7 +291,7 @@ pub fn chunk(state: &mut StreamState, event: &Event) -> Option<Value> {
                 "usageMetadata".to_owned(),
                 json!({
                     "promptTokenCount": input_tokens,
-                    "candidatesTokenCount": output_tokens - *cache_read_tokens.max(&0),
+                    "candidatesTokenCount": output_tokens,
                     "cachedContentTokenCount": cache_read_tokens,
                     "totalTokenCount": input_tokens + output_tokens,
                 }),
@@ -326,11 +311,10 @@ pub fn chunk(state: &mut StreamState, event: &Event) -> Option<Value> {
     Some(Value::Object(base))
 }
 
-/// The wrapped-up final frame for streaming (mirrors Gemini's finish chunk).
 pub fn final_chunk(state: &StreamState, usage: Option<&Turn>) -> Value {
     let mut frame = json!({
         "modelVersion": state.model,
-        "candidates": [{"index": 0, "finishReason": "STOP", "content": {"role": "model", "parts": []}}],
+        "candidates": [{"index": 0, "finishReason": finish_reason(state.finish_reason), "content": {"role": "model", "parts": []}}],
     });
     if let Some(turn) = usage {
         frame["usageMetadata"] = json!({
@@ -342,7 +326,6 @@ pub fn final_chunk(state: &StreamState, usage: Option<&Turn>) -> Value {
     frame
 }
 
-/// A complete (non-streaming) `GenerateContentResponse`.
 pub fn completion(state: &StreamState, turn: &Turn) -> Value {
     let mut parts = Vec::<Value>::new();
     if !turn.thinking.is_empty() {
@@ -360,16 +343,11 @@ pub fn completion(state: &StreamState, turn: &Turn) -> Value {
             },
         }));
     }
-    let finish = if turn.tool_use.is_empty() {
-        "STOP"
-    } else {
-        "STOP"
-    };
     json!({
         "modelVersion": state.model,
         "candidates": [{
             "index": 0,
-            "finishReason": finish,
+            "finishReason": finish_reason(turn.finish_reason),
             "content": {"role": "model", "parts": parts},
         }],
         "usageMetadata": {
@@ -381,7 +359,14 @@ pub fn completion(state: &StreamState, turn: &Turn) -> Value {
     })
 }
 
-/// Gemini error envelope (`error.code` carries the HTTP status).
+fn finish_reason(reason: FinishReason) -> &'static str {
+    match reason {
+        FinishReason::Length => "MAX_TOKENS",
+        FinishReason::ContentFilter => "SAFETY",
+        FinishReason::Stop | FinishReason::ToolCalls => "STOP",
+    }
+}
+
 pub fn error_body(item: &Errx) -> Value {
     json!({
         "error": {
@@ -398,19 +383,17 @@ fn error_status(code: ErrCode) -> &'static str {
         ErrCode::Unauthorized => "UNAUTHENTICATED",
         ErrCode::Forbidden => "PERMISSION_DENIED",
         ErrCode::NotFound => "NOT_FOUND",
-        ErrCode::RateLimited => "RESOURCE_EXHAUSTED",
+        ErrCode::RateLimited | ErrCode::CreditsExhausted => "RESOURCE_EXHAUSTED",
         ErrCode::Overloaded | ErrCode::Upstream | ErrCode::Network => "UNAVAILABLE",
         ErrCode::ProviderUnconfigured => "UNAVAILABLE",
         ErrCode::Timeout => "DEADLINE_EXCEEDED",
     }
 }
 
-/// `GET /v1beta/models` shape for key-holders.
 pub fn models_list(entries: Vec<Value>) -> Value {
     json!({"models": entries})
 }
 
-/// HTTP response carrying the Gemini error envelope.
 pub fn error_response(item: Errx) -> axum::response::Response {
     use axum::Json;
     use axum::http::StatusCode;

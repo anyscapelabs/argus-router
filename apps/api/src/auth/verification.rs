@@ -4,8 +4,6 @@ use tracing::instrument;
 use crate::config::Settings;
 use crate::services::email::ResendEmail;
 
-/// Sends the better-auth email-verification message through Resend, with a
-/// link that opens the dashboard's verify-email page.
 pub struct ResendVerificationSender {
     email: ResendEmail,
     dashboard_url: String,

@@ -1,9 +1,5 @@
-mod api;
-mod auth;
-mod config;
-mod proxy;
-mod services;
-mod state;
+use api::api as gateway;
+use api::{auth, services};
 
 use std::sync::Arc;
 
@@ -13,10 +9,10 @@ use better_auth::integrations::axum::AxumIntegration;
 use tower_http::cors::{AllowHeaders, AllowOrigin, CorsLayer};
 use tower_http::trace::TraceLayer;
 
-use crate::auth::AppAuthSchema;
-use crate::config::Settings;
-use crate::services::cache::Cache;
-use crate::state::AppState;
+use api::auth::AppAuthSchema;
+use api::config::Settings;
+use api::services::cache::Cache;
+use api::state::AppState;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -31,20 +27,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let settings = Settings::from_env();
     let database = auth::connect_database(&settings).await?;
     auth::run_migrations(&database).await?;
-    let app_db = services::app_db::AppDb::connect(&settings).await?;
+    let app_db =
+        services::app_db::AppDb::from_pool(database.get_postgres_connection_pool().clone()).await?;
     let usage = services::usage::UsageRecorder::new(app_db.pool());
-    // The dynamic catalog: seeded from the embedded JSON into the
-    // `model_catalog` table, then loaded from Postgres into the live cache
-    // (`POST /api/v1/models/refresh` re-seeds it from our catalog without a
-    // redeploy). OpenRouter is used only as the upstream origin for model
-    // calls, never as the catalog source.
     let seeded = app_db
         .load_catalog(&services::catalog::seed_entries())
         .await?;
-    let catalog = services::catalog::CatalogCache::new(seeded);
+    let catalog = services::catalog::CatalogCache::new(seeded.clone());
     tracing::info!(entries = catalog.snapshot().len(), "model catalog loaded");
 
-    let plans = services::plans::seed_entries();
+    let billing_catalog = Arc::new(services::dodo::BillingCatalog::load()?);
+    let dodo = match (
+        settings.dodo_api_key.clone(),
+        settings.dodo_webhook_key.as_ref(),
+    ) {
+        (Some(key), Some(_)) => Some(Arc::new(services::dodo::DodoClient::new(
+            key,
+            settings.dodo_test_mode,
+        ))),
+        (Some(_), None) => {
+            tracing::warn!("Dodo Payments API key is set without a webhook key; checkout disabled");
+            None
+        }
+        _ => None,
+    };
+
+    let plans = services::plans::expand_tiers(services::plans::seed_entries(), &seeded);
     if let Err(error) = app_db.seed_plans(&plans).await {
         tracing::warn!(%error, "plan seeding failed");
     }
@@ -59,14 +67,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         settings.redis_url.as_deref(),
         settings.redis_token.as_deref(),
     );
+    auth::init_profile_cache(cache.clone());
 
     tracing::info!(
         base = %settings.base_url,
-        "Argus router API listening on 0.0.0.0:8080"
+        "Anyscape Gateway API listening on 0.0.0.0:8080"
     );
 
     let search_router = Arc::new(services::search::SearchRouter::new());
-    let live_sessions = Arc::new(crate::api::ingress::live::LiveSessionStore::default());
+    let live_sessions = Arc::new(gateway::ingress::live::LiveSessionStore::default());
+    let rate_window = Arc::new(services::rate::RateWindow::default());
 
     let state = AppState {
         settings: settings.clone(),
@@ -74,21 +84,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         api_keys,
         app_db,
         catalog,
+        billing_catalog,
+        dodo,
         cache,
         usage,
         search_router,
+        rate_window,
         live_sessions,
         db: database,
     };
 
+    let maintenance_state = state.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(60 * 60));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            interval.tick().await;
+            if let Err(error) = maintenance_state
+                .app_db
+                .reclaim_expired_generation_reservations()
+                .await
+            {
+                tracing::error!(%error, "expired generation reservation cleanup failed");
+            }
+            gateway::v1::billing::reconcile_subscriptions(&maintenance_state).await;
+        }
+    });
+
     let app = router(auth)
-        .layer(
-            // Same default span tower-http builds, except secret query params
-            // are redacted before they reach the logs: WebSocket clients pass
-            // their API key as `?key=`, and an unredacted URI would write every
-            // caller's key to the log in plaintext.
-            TraceLayer::new_for_http().make_span_with(redacted_span),
-        )
+        .layer(TraceLayer::new_for_http().make_span_with(api::observe::redacted_span))
         .layer(cors(&settings))
         .with_state(state);
 
@@ -97,92 +121,41 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Query parameters whose values must never reach the logs.
-const REDACTED_QUERY_PARAMS: &[&str] = &["key", "api_key", "token", "access_token"];
-
-/// The request URI with secret query-param values replaced by `[redacted]`.
-/// WebSocket clients pass their API key as `?key=`, and the default tower-http
-/// span would otherwise log the full URI — every caller's key, in plaintext.
-fn redact_uri(uri: &axum::http::Uri) -> String {
-    let path = uri.path();
-    let Some(query) = uri.query() else {
-        return path.to_owned();
-    };
-    let mut redacted = false;
-    let cleaned: Vec<String> = query
-        .split('&')
-        .map(|pair| match pair.split_once('=') {
-            Some((name, _)) if REDACTED_QUERY_PARAMS.contains(&name) => {
-                redacted = true;
-                format!("{name}=[redacted]")
-            }
-            _ => pair.to_owned(),
-        })
-        .collect();
-    if !redacted {
-        return path.to_owned();
-    }
-    format!("{path}?{}", cleaned.join("&"))
-}
-
-/// The default tower-http request span (method, uri, version) with the URI
-/// passed through `redact_uri` first.
-fn redacted_span<B>(request: &axum::http::Request<B>) -> tracing::Span {
-    tracing::debug_span!(
-        "request",
-        method = %request.method(),
-        uri = %redact_uri(request.uri()),
-        version = ?request.version(),
-    )
-}
-
-/// Domain/version tree: `/api/v1/<domain>` plus the better-auth surface
-/// nested under `/api/v1/auth` (its base path is mirrored in `AuthConfig` so
-/// emails, callbacks and cookies agree), and the model-proxy ingress
-/// dialects mounted at their canonical SDK paths.
-fn router(auth: Arc<BetterAuth<AppAuthSchema>>) -> Router<AppState> {    Router::new()
+fn router(auth: Arc<BetterAuth<AppAuthSchema>>) -> Router<AppState> {
+    Router::new()
         .nest("/api/v1/auth", auth.axum_router_with_state::<AppState>())
-        .nest("/api/v1", api::v1::router())
-        // OpenAI-compatible ingress (the desktop agent's `openai_compat`
-        // adapter points here with its service-account key).
+        .nest("/api/v1", gateway::v1::router())
         .route(
             "/v1/chat/completions",
-            axum::routing::post(api::ingress::openai_chat_completions),
+            axum::routing::post(gateway::ingress::openai_chat_completions),
         )
         .route(
             "/v1/models",
-            axum::routing::get(api::ingress::openai_models),
+            axum::routing::get(gateway::ingress::openai_models),
         )
-        // Web search router ingress for AI agents & models.
         .route(
             "/v1/search",
-            axum::routing::post(api::ingress::search_endpoint),
+            axum::routing::post(gateway::ingress::search_endpoint),
         )
-        // Gemini-compatible ingress (`gemini` adapter points here).
         .route(
             "/v1beta/models/{model_action}",
-            axum::routing::post(api::ingress::gemini_models_action),
+            axum::routing::post(gateway::ingress::gemini_models_action),
         )
         .route(
             "/v1beta/models",
-            axum::routing::get(api::ingress::gemini_models),
+            axum::routing::get(gateway::ingress::gemini_models),
         )
-        // Gemini Live speech-to-speech WebSocket ingress
         .route(
             "/v1/live",
-            axum::routing::get(api::ingress::live::live_websocket_handler),
+            axum::routing::get(gateway::ingress::live::live_websocket_handler),
         )
-        // Returns the last model reply for a session that ended early.
-        // Desktop app polls this for voice→text fallback.
         .route(
             "/v1/live/last-reply",
-            axum::routing::get(api::ingress::live::last_reply_handler),
+            axum::routing::get(gateway::ingress::live::last_reply_handler),
         )
 }
 
 fn cors(settings: &Settings) -> CorsLayer {
-    // Build the allowed-origins list: the dashboard URL is always included;
-    // extra origins (e.g. tauri://localhost) come from the ALLOWED_ORIGINS env var.
     let mut origins: Vec<axum::http::HeaderValue> = Vec::new();
     if let Ok(v) = settings.dashboard_url.parse() {
         origins.push(v);

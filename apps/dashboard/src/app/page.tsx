@@ -6,15 +6,6 @@ import { FaSpinner } from "react-icons/fa";
 
 import { useSession } from "@/domains/auth/hooks";
 
-/**
- * Root route — the dashboard entry point.
- *
- * - Signed-in users land on the console (`/console/overview`) immediately.
- * - Signed-out users land on the login page.
- *
- * Session lookup goes through the shared QueryClient, so this guard and the
- * console page both read from one cached `useSession()` request.
- */
 export default function Home() {
   const router = useRouter();
   const session = useSession();

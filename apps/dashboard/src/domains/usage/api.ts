@@ -41,9 +41,16 @@ export type UsageAggregate = {
 export type UsageByModel = UsageAggregate & { model: string };
 export type UsageByKey = UsageAggregate & { keyId: string | null };
 
-/** One chart bucket; `bucket` is a viewer-local `YYYY-MM-DDTHH:MM` string. */
 export type UsageSeriesPoint = {
   bucket: string;
+  requests: number;
+  tokens: number;
+  costUsd: number;
+};
+
+export type UsageByModelSeriesPoint = {
+  bucket: string;
+  model: string;
   requests: number;
   tokens: number;
   costUsd: number;
@@ -54,15 +61,11 @@ export type UsageSummary = {
   byModel: UsageByModel[];
   byKey: UsageByKey[];
   series: UsageSeriesPoint[];
+  byModelSeries: UsageByModelSeriesPoint[];
   bucket: "hour" | "day";
   tz: string;
 };
 
-/**
- * Start of the window for a range, snapped to the chart's bucket boundary
- * (hour for 24h, local midnight for 7d/30d) so the totals cards equal the
- * sum of the bars instead of including a partial bucket the chart omits.
- */
 export function sinceForRange(range: UsageRange, now = new Date()): string {
   const d = new Date(now);
   if (range === "24h") {
@@ -93,10 +96,6 @@ export type GetUsageSummaryParams = {
   bucket?: "hour" | "day";
 };
 
-/**
- * Server-side aggregates over every row in range. Totals shown in the UI must
- * come from here: the row list is capped, so summing it undercounts.
- */
 export async function getUsageSummary(params: GetUsageSummaryParams = {}): Promise<UsageSummary> {
   const search = new URLSearchParams();
   if (params.keyId) search.set("key_id", params.keyId);
@@ -105,7 +104,6 @@ export async function getUsageSummary(params: GetUsageSummaryParams = {}): Promi
   try {
     search.set("tz", Intl.DateTimeFormat().resolvedOptions().timeZone);
   } catch {
-    // no Intl zone available: the server falls back to UTC
   }
   const response = await fetch(`${API_ROUTES.usage}/summary?${search.toString()}`, {
     method: "GET",

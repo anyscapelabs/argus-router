@@ -1,12 +1,3 @@
-//! Minimal incremental `text/event-stream` framer.
-//!
-//! Upstream adapters feed raw bytes; complete SSE data payloads come out as
-//! strings. No dependency on external SSE crates — server-sent events only
-//! matter at the two inbound dialects and each outbound rewrite.
-
-/// Buffers raw bytes and emits complete SSE events (concatenated `data`
-/// lines). Events spanning chunk boundaries are held until the blank-line
-/// terminator arrives.
 #[derive(Default)]
 pub struct Framer {
     buffer: Vec<u8>,
@@ -36,7 +27,6 @@ impl Framer {
                 self.data_lines
                     .push(rest.strip_prefix(' ').unwrap_or(rest).to_owned());
             }
-            // `event:``/`id:`/`retry:`/comment lines carry nothing we need.
         }
         events
     }

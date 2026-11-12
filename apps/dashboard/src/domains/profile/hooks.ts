@@ -13,11 +13,6 @@ export type Profile = {
   emailVerified: boolean;
 };
 
-/**
- * `GET /api/v1/profile` — session-protected; a 401 rejects as `ApiError`
- * status 401 (no retry), which callers can watch for redirect decisions.
- * Pass `{ enabled: false }` to hold the request until a session is known.
- */
 export function useProfile({ enabled = true }: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: ["profile"] as const,

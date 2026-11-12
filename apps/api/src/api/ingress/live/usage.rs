@@ -1,11 +1,6 @@
-//! Usage-row recording for the Live endpoint. Every `usage_logs` row written
-//! by the Live handlers funnels through [`record`] so the provider tag and
-//! zero-token shape live in exactly one place.
-
 use crate::services::usage::UsageRow;
 use crate::state::AppState;
 
-/// Identity + outcome metadata for a single Live usage row.
 pub(super) struct LiveUsage<'a> {
     pub key_id: Option<&'a str>,
     pub user_id: Option<&'a str>,
@@ -17,9 +12,26 @@ pub(super) struct LiveUsage<'a> {
     pub cost_usd: f64,
 }
 
-/// Records a `usage_logs` row tagged with the `gemini-live` provider.
 pub(super) fn record(state: &AppState, info: LiveUsage<'_>) {
-    state.usage.record(UsageRow {
+    state.usage.record(row(info));
+}
+
+pub(super) async fn record_with_reservation(
+    state: &AppState,
+    info: LiveUsage<'_>,
+    reservation_id: Option<&str>,
+) -> Result<(), sqlx::Error> {
+    let row = row(info);
+    if let Some(reservation_id) = reservation_id {
+        crate::api::ingress::settle_generation_usage(&state.usage, reservation_id, row).await
+    } else {
+        state.usage.record(row);
+        Ok(())
+    }
+}
+
+fn row(info: LiveUsage<'_>) -> UsageRow {
+    UsageRow {
         key_id: info.key_id.map(str::to_owned),
         user_id: info.user_id.map(str::to_owned),
         plan_id: info.plan_id.map(str::to_owned),
@@ -32,5 +44,5 @@ pub(super) fn record(state: &AppState, info: LiveUsage<'_>) {
         status: info.status,
         latency_ms: Some(info.latency_ms),
         error_code: info.error_code.map(str::to_owned),
-    });
+    }
 }

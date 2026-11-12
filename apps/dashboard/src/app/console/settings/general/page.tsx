@@ -1,16 +1,14 @@
 "use client";
 
 import { useState } from "react";
+import { GoDownload } from "react-icons/go";
 import { toast } from "sonner";
 
+import { Skeleton } from "@/components/skeleton";
 import { useSession } from "@/domains/auth/hooks";
 import { useRenameWorkspace, useWorkspace } from "@/domains/workspace/hooks";
 
 export default function GeneralSettingsPage() {
-  // The workspace is read from the API; `draft` only exists while the field is
-  // being edited, so the value always resolves back to the stored name. The
-  // console layout renders its segment even while signed out, so the request
-  // waits for a session like the top bar does.
   const session = useSession();
   const workspace = useWorkspace({ enabled: Boolean(session.data) });
   const rename = useRenameWorkspace();
@@ -19,14 +17,8 @@ export default function GeneralSettingsPage() {
   const storedName = workspace.data?.name ?? "";
   const name = draft ?? storedName;
 
-  // Blur-save: an untouched or blank field never reaches the API, and the draft
-  // is cleared once the request settles so a rejected name reverts to what the
-  // server has instead of keeping the typo on screen.
   const saveName = () => {
     if (!workspace.data) {
-      // Nothing stored yet — keep the typing and say why instead of silently
-      // wiping it, because a failed workspace read otherwise looks like a
-      // field that simply refuses to save.
       if (name.trim()) {
         toast.error(
           workspace.error?.message ?? "The workspace is still loading",
@@ -56,14 +48,17 @@ export default function GeneralSettingsPage() {
               This name is used for display only
             </p>
           </div>
-          <input
-            type="text"
-            value={name}
-            onChange={(event) => setDraft(event.target.value)}
-            onBlur={saveName}
-            placeholder={workspace.data ? undefined : "Loading…"}
-            className="w-64 rounded-md border border-border-secondary bg-[#202020] px-3 py-1.5 text-sm text-primary outline-none focus:border-primary"
-          />
+          {workspace.data ? (
+            <input
+              type="text"
+              value={name}
+              onChange={(event) => setDraft(event.target.value)}
+              onBlur={saveName}
+              className="w-64 rounded-md border border-border-secondary bg-[#202020] px-3 py-1.5 text-sm text-primary outline-none focus:border-primary"
+            />
+          ) : (
+            <Skeleton className="h-9 w-64" />
+          )}
         </div>
         <div className="border-t border-border-secondary">
           <div className="flex items-center gap-4 p-4">
@@ -85,6 +80,42 @@ export default function GeneralSettingsPage() {
                 workspace.data?.initials ?? "?"
               )}
             </div>
+          </div>
+        </div>
+      </section>
+
+      <h2 className="mt-6 text-sm font-medium text-primary">Legal</h2>
+      <section className="mt-2 rounded-md border border-border-secondary bg-[#262626]">
+        <div className="flex items-center justify-between gap-4 p-4">
+          <div>
+            <h3 className="text-sm font-medium text-primary">Customer terms and conditions</h3>
+            <p className="mt-1 text-xs text-white/60">
+              Terms that apply to your use of Anyscape Gateway
+            </p>
+          </div>
+          <button
+            type="button"
+            className="inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-sm border border-border-secondary bg-tertiary px-2 py-1 text-xs font-medium text-primary transition-colors hover:bg-white/10"
+          >
+            <GoDownload className="size-3.5" />
+            Download
+          </button>
+        </div>
+        <div className="border-t border-border-secondary">
+          <div className="flex items-center justify-between gap-4 p-4">
+            <div>
+              <h3 className="text-sm font-medium text-primary">Data Processing Agreement</h3>
+              <p className="mt-1 text-xs text-white/60">
+                How we process personal data on your behalf
+              </p>
+            </div>
+            <button
+              type="button"
+              className="inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-sm border border-border-secondary bg-tertiary px-2 py-1 text-xs font-medium text-primary transition-colors hover:bg-white/10"
+            >
+              <GoDownload className="size-3.5" />
+              Download
+            </button>
           </div>
         </div>
       </section>

@@ -2,6 +2,8 @@ mod hooks;
 mod schema;
 mod verification;
 
+pub use hooks::init_profile_cache;
+
 use std::sync::Arc;
 
 use better_auth::plugins::oauth::{OAuthPlugin, OAuthProvider};
@@ -18,8 +20,6 @@ pub use schema::AppAuthSchema;
 use crate::config::Settings;
 use crate::services::workspace::DEFAULT_WORKSPACE_ROLE;
 
-/// Single source of truth for auth configuration; nested under the versioned
-/// API so links, callbacks and cookies agree with the router tree.
 pub fn auth_config(settings: &Settings) -> AuthConfig {
     AuthConfig::new(settings.secret.clone())
         .app_name("Argus Agent")
@@ -27,18 +27,16 @@ pub fn auth_config(settings: &Settings) -> AuthConfig {
         .base_path("/api/v1/auth")
         .trusted_origin(settings.dashboard_url.clone())
         .password_min_length(8)
+        .disabled_path("/organization/create")
 }
 
 pub async fn connect_database(
     settings: &Settings,
 ) -> Result<DatabaseConnection, Box<dyn std::error::Error>> {
-    // One shared sqlx pool for the whole process. Neon (pgbouncer) caps the
-    // total connections per compute, so keep the pool small; the acquisition
-    // timeout covers cold-start latency on a pooled connection.
     let mut options =
         better_auth::seaorm::sea_orm::ConnectOptions::new(settings.database_url.clone());
     options
-        .max_connections(5)
+        .max_connections(settings.db_max_connections)
         .min_connections(1)
         .connect_timeout(std::time::Duration::from_secs(30))
         .acquire_timeout(std::time::Duration::from_secs(30))
@@ -65,18 +63,31 @@ pub async fn run_migrations(
     migrate_from!(session);
     migrate_from!(account);
     migrate_from!(verification);
-    // The ApiKeyPlugin persists keys in its own canonical table.
     migrate_from_api_keys(&engine, database).await?;
-    // Workspaces are better-auth organizations; see `services::workspace`.
     migrate_from_organization(&engine, database).await?;
     ensure_workspace_columns(database).await?;
+    ensure_auth_indexes(database).await;
     Ok(())
 }
 
-/// Workspace tables, created from the organization plugin's own bundled
-/// entities so the store's column mapping always agrees with what it queries.
-/// Teams stay disabled and dynamic roles are off, so `team`/`team_member`/
-/// `organization_role` are deliberately not created.
+async fn ensure_auth_indexes(database: &DatabaseConnection) {
+    for statement in [
+        "CREATE INDEX IF NOT EXISTS sessions_token_idx ON sessions (token)",
+        "CREATE INDEX IF NOT EXISTS sessions_user_idx ON sessions (user_id)",
+        "CREATE INDEX IF NOT EXISTS accounts_user_provider_idx ON accounts (user_id, provider_id)",
+        "CREATE INDEX IF NOT EXISTS verifications_identifier_idx ON verifications (identifier)",
+        "CREATE INDEX IF NOT EXISTS member_user_idx ON member (user_id)",
+        "CREATE INDEX IF NOT EXISTS api_keys_reference_idx ON api_keys (reference_id)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS users_email_key ON users (lower(email))",
+        "CREATE UNIQUE INDEX IF NOT EXISTS sessions_token_key ON sessions (token)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS api_keys_key_key ON api_keys (key)",
+    ] {
+        if let Err(error) = database.execute_unprepared(statement).await {
+            tracing::warn!(%error, %statement, "auth index creation skipped");
+        }
+    }
+}
+
 async fn migrate_from_organization(
     engine: &better_auth::seaorm::sea_orm::Schema,
     database: &DatabaseConnection,
@@ -98,14 +109,6 @@ async fn migrate_from_organization(
     Ok(())
 }
 
-/// Postgres-only, idempotent DDL for databases created before workspaces
-/// existed (the deployment is Neon Postgres, matching `AppDb`).
-///
-/// `create_table_from_entity` skips a table that is already there, so the two
-/// organization columns the plugin needs on `sessions` are added in place, and
-/// the slug uniqueness the bundled entity does not declare gets its index —
-/// that index is what makes two concurrent first reads of the same account's
-/// default workspace safe.
 async fn ensure_workspace_columns(
     database: &DatabaseConnection,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -133,9 +136,6 @@ async fn migrate_from_api_keys(
     Ok(())
 }
 
-/// Builds the better-auth instance: email/password, signed-up verification via
-/// Resend, sessions, and the optional social providers enabled through the
-/// environment.
 pub async fn build_auth(
     settings: &Settings,
     store: SeaOrmStore<AppAuthSchema>,
@@ -143,15 +143,12 @@ pub async fn build_auth(
     let sender = verification::ResendVerificationSender::new(settings, ::reqwest::Client::new());
     let config = auth_config(settings);
 
-    // Agent/Desktop long-lived keys (`x-api-key` sessions) for the Argus app.
-    // The same instance is registered in the auth stack and shared through
-    // AppState for machine-facing domain routes.
     let api_keys = ApiKeyPlugin::builder()
         .prefix("argus_pk_".to_owned())
-        .enable_session_for_api_keys(true)
+        .enable_session_for_api_keys(false)
         .rate_limit(better_auth::plugins::api_key::RateLimitDefaults {
             enabled: true,
-            time_window: 86_400_000.0, // 24 hours
+            time_window: 86_400_000.0,
             max_requests: 1000.0,
         })
         .build();
@@ -168,14 +165,24 @@ pub async fn build_auth(
 
     let auth = BetterAuth::<AppAuthSchema>::new(config)
         .store(store)
-        .plugin(EmailPasswordPlugin::new().enable_signup(true))
-        .plugin(EmailVerificationPlugin::new().custom_send_verification_email(Arc::new(sender)))
+        .rate_limit(better_auth::middleware::RateLimitConfig {
+            enabled: Some(true),
+            window: Some(60.0),
+            max_requests: Some(20.0),
+            ..Default::default()
+        })
+        .plugin(
+            EmailPasswordPlugin::new()
+                .enable_signup(true)
+                .require_email_verification(true),
+        )
+        .plugin(
+            EmailVerificationPlugin::new()
+                .send_on_sign_in(true)
+                .custom_send_verification_email(Arc::new(sender)),
+        )
         .plugin(oauth)
         .plugin(SessionManagementPlugin::new())
-        // Workspaces: every account gets one "Default" organization, created
-        // lazily by `services::workspace` on first read — never seeded at boot.
-        // Registered ahead of the API key plugin so keys can resolve an
-        // organization actor once a workspace is shared.
         .plugin(OrganizationPlugin::new().creator_role(DEFAULT_WORKSPACE_ROLE))
         .plugin(api_keys.clone())
         .build()
@@ -184,7 +191,6 @@ pub async fn build_auth(
     Ok((Arc::new(auth), Arc::new(api_keys)))
 }
 
-/// Store assembly applying the SeaORM-side lifecycle hooks (initial avatars).
 pub fn make_store(
     config: better_auth::AuthConfig,
     database: DatabaseConnection,

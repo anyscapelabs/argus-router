@@ -1,9 +1,3 @@
-/**
- * The dynamic model catalog: served from the router's `model_catalog` table
- * (seeded from our embedded catalog). The signed-in owner's plan decides
- * which models are enabled; the toggle endpoint flips them on the plan
- * allowlist and `refresh` re-seeds our catalog.
- */
 import { API_ROUTES } from "@/config/api";
 import { ApiError } from "@/api/http-client";
 
@@ -13,7 +7,6 @@ export type ModelCapabilities = {
   reasoning: boolean;
 };
 
-/** Per-1M-token prices in USD as display strings ("0.10"). */
 export type ModelPricing = {
   input: string;
   output: string;
@@ -94,7 +87,6 @@ async function unwrap<T>(response: Response): Promise<T> {
     try {
       payload = text ? JSON.parse(text) : undefined;
     } catch {
-      // non-JSON error bodies fall back to the status text
     }
     const code = payload?.error?.code ?? payload?.code ?? `HTTP_${response.status}`;
     const message = payload?.error?.message ?? payload?.message ?? response.statusText;

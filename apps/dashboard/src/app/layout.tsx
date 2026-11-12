@@ -20,7 +20,7 @@ const geistPixel = Geist_Pixel({
 });
 
 export const metadata: Metadata = {
-  title: "Argus Router",
+  title: "Anyscape Gateway",
   description: "Model router dashboard",
   icons: {
     icon: [
@@ -33,18 +33,6 @@ export const metadata: Metadata = {
   manifest: "/manifest.webmanifest",
 };
 
-/**
- * Opt out of the static-shell check for the app: every page here renders from
- * a client-side React Query fetch, so there is no prerenderable shell to
- * validate, and `instant` can't be exported from the Client Component pages
- * themselves. With `false` as the highest config in the tree, the static-shell
- * validation is skipped app-wide (see docs/app/guides/instant-navigation).
- *
- * This does not silence per-segment navigation validation — `instant = false`
- * opts out only its own segment, and page segments below it are still validated
- * by default. Keep those segments rendering their children rather than
- * substituting a loader, or they're reported as dropped from rendering.
- */
 export const instant = false;
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

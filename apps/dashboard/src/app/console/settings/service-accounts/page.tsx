@@ -1,11 +1,17 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { GoCopy } from "react-icons/go";
+import { GoCopy, GoTrash, GoKebabHorizontal, GoCircleSlash } from "react-icons/go";
 
+import { ConfirmDialog } from "@/components/confirm-dialog";
+import { MenuDropdown } from "@/components/menu-dropdown";
+import { SelectDropdown } from "@/components/select-dropdown";
 import { useApiKeys, useCreateApiKey, useRevokeApiKey } from "@/domains/keys/hooks";
-import type { CreateKeyResult } from "@/domains/keys/api";
+import { useProfile } from "@/domains/profile/hooks";
+import { useResendVerification, useSession } from "@/domains/auth/hooks";
+import { useSettings } from "@/domains/settings/hooks";
+import type { ApiKeyRecord, CreateKeyResult } from "@/domains/keys/api";
 
 function formatDate(value: string): string {
   return new Date(value).toLocaleDateString(undefined, {
@@ -15,7 +21,15 @@ function formatDate(value: string): string {
   });
 }
 
-/** Placeholder rows while the key list is in flight — shimmering bars, no copy. */
+const EXPIRATION_OPTIONS = [
+  { label: "No expiration", value: "never" },
+  { label: "7 days", value: String(7 * 24 * 60 * 60) },
+  { label: "30 days", value: String(30 * 24 * 60 * 60) },
+  { label: "60 days", value: String(60 * 24 * 60 * 60) },
+  { label: "90 days", value: String(90 * 24 * 60 * 60) },
+  { label: "1 year", value: String(365 * 24 * 60 * 60) },
+] as const;
+
 function SkeletonRows() {
   const widths = ["w-40", "w-32", "w-20"];
   return (
@@ -25,13 +39,16 @@ function SkeletonRows() {
           <td className="px-2 py-2.5">
             <div className={`h-3 animate-pulse rounded-sm bg-white/10 ${widths[row] ?? "w-40"}`} />
           </td>
-          <td className="px-2 py-2.5">
+          <td className="whitespace-nowrap px-2 py-2.5">
             <div className="h-3 w-28 animate-pulse rounded-sm bg-white/10" />
           </td>
-          <td className="px-2 py-2.5">
+          <td className="whitespace-nowrap px-2 py-2.5">
             <div className="h-3 w-24 animate-pulse rounded-sm bg-white/10" />
           </td>
-          <td className="px-2 py-2.5">
+          <td className="whitespace-nowrap px-2 py-2.5">
+            <div className="h-3 w-24 animate-pulse rounded-sm bg-white/10" />
+          </td>
+          <td className="w-px whitespace-nowrap px-2 py-2.5">
             <div className="ml-auto h-3 w-14 animate-pulse rounded-sm bg-white/10" />
           </td>
         </tr>
@@ -45,24 +62,49 @@ export default function ServiceAccountsSettingsPage() {
   const create = useCreateApiKey();
   const revoke = useRevokeApiKey();
   const router = useRouter();
+  const profile = useProfile();
+  const resend = useResendVerification();
+  const session = useSession();
+  const settings = useSettings({ enabled: Boolean(session.data) });
+  const verified = profile.data?.emailVerified ?? false;
+
+  const maxLifetimeDays = settings.data?.maxKeyLifetimeDays ?? 0;
+  const expirationOptions = useMemo(() => {
+    if (!maxLifetimeDays) return [...EXPIRATION_OPTIONS];
+    const cap = maxLifetimeDays * 24 * 60 * 60;
+    return EXPIRATION_OPTIONS.filter(
+      (option) => option.value !== "never" && Number(option.value) <= cap,
+    );
+  }, [maxLifetimeDays]);
 
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
+  const [expiresIn, setExpiresIn] = useState<string>("never");
   const [fresh, setFresh] = useState<CreateKeyResult | null>(null);
   const [copied, setCopied] = useState(false);
+  const [confirm, setConfirm] = useState<{ key: ApiKeyRecord; action: "revoke" | "delete" } | null>(null);
+
+  const effectiveExpiresIn = expirationOptions.some(
+    (option) => option.value === expiresIn,
+  )
+    ? expiresIn
+    : (expirationOptions[expirationOptions.length - 1]?.value ?? "never");
 
   const openCreate = () => {
     setFresh(null);
     setName("");
+    setExpiresIn("never");
     setOpen(true);
   };
 
   const submit = async () => {
     const trimmed = name.trim();
     if (!trimmed) return;
-    const result = await create.mutateAsync(trimmed);
+    const exp = effectiveExpiresIn === "never" ? null : Number(effectiveExpiresIn);
+    const result = await create.mutateAsync({ name: trimmed, expiresIn: exp });
     setFresh(result);
     setName("");
+    setExpiresIn("never");
     setCopied(false);
   };
 
@@ -79,26 +121,48 @@ export default function ServiceAccountsSettingsPage() {
         <div>
           <h1 className="text-base font-medium text-primary">Service Accounts</h1>
           <p className="mt-1 text-sm text-white/60">
-            Keys the Argus desktop app pairs with — paste one into the app&apos;s sign-in screen.
+            Create and manage service accounts
           </p>
         </div>
         <button
           type="button"
           onClick={openCreate}
-          className="shrink-0 cursor-pointer rounded-sm bg-accent px-2 py-1 text-xs font-medium text-black transition-colors hover:bg-[#d4d4d4]"
+          disabled={!verified}
+          title={
+            verified
+              ? undefined
+              : "Verify your email address before creating a key — check your inbox."
+          }
+          className="shrink-0 cursor-pointer rounded-sm bg-accent px-2 py-1 text-xs font-medium text-black transition-colors hover:bg-[#d4d4d4] disabled:cursor-not-allowed disabled:opacity-50"
         >
           Create Secret Token
         </button>
       </div>
+
+      {profile.isSuccess && !verified && (
+        <p className="mt-3 rounded-md border border-yellow-400/30 bg-yellow-400/10 px-3 py-2 text-xs text-yellow-200">
+          Your email address is not verified yet, so the desktop agent will refuse
+          sign-in.{" "}
+          <button
+            type="button"
+            onClick={() => profile.data?.email && resend.mutate(profile.data.email)}
+            disabled={resend.isPending}
+            className="cursor-pointer underline underline-offset-2 hover:text-yellow-100 disabled:opacity-50"
+          >
+            {resend.isPending ? "Sending…" : "Resend verification email"}
+          </button>
+        </p>
+      )}
 
       <div className="mt-6 overflow-x-auto rounded-md border border-border-secondary">
         <table className="w-full text-left text-xs">
           <thead>
             <tr className="border-b border-border-secondary bg-tertiary text-white/40">
               <th className="px-2 py-2 font-medium rounded-tl-md">Name</th>
-              <th className="px-2 py-2 font-medium">Key</th>
-              <th className="px-2 py-2 font-medium">Created</th>
-              <th className="px-2 py-2 text-right font-medium rounded-tr-md">Actions</th>
+              <th className="whitespace-nowrap px-2 py-2 font-medium">Key</th>
+              <th className="whitespace-nowrap px-2 py-2 font-medium">Created</th>
+              <th className="whitespace-nowrap px-2 py-2 font-medium">Expiration</th>
+              <th className="w-px whitespace-nowrap px-2 py-2 text-right font-medium rounded-tr-md">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -106,7 +170,7 @@ export default function ServiceAccountsSettingsPage() {
               <SkeletonRows />
             ) : records.length === 0 ? (
               <tr className="border-b border-border-secondary/50 last:border-b-0">
-                <td colSpan={4} className="px-2 py-8 text-center text-white/40">
+                <td colSpan={5} className="px-2 py-8 text-center text-white/40">
                   No keys yet — create the first one above.
                 </td>
               </tr>
@@ -118,24 +182,40 @@ export default function ServiceAccountsSettingsPage() {
                   className="cursor-pointer border-b border-border-secondary/50 transition-colors hover:bg-[#202020]"
                 >
                   <td className="px-2 py-2 text-primary">{key.name ?? "Untitled"}</td>
-                  <td className="px-2 py-2 font-mono text-white/70">
-                    {key.prefix ?? ""}
+                  <td className="whitespace-nowrap px-2 py-2 font-mono text-white/70">
                     {key.start ?? "…"}…
                   </td>
-                  <td className="px-2 py-2 text-white/70">{formatDate(key.createdAt)}</td>
-                  <td className="px-2 py-2 text-right">
-                    <button
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        void revoke.mutateAsync(key.id);
-                      }}
-                      disabled={revoke.isPending && revoke.variables === key.id}
-                      title="Revoke key"
-                      className="cursor-pointer rounded-sm px-2 py-1 text-xs text-white/60 transition-colors hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      Revoke
-                    </button>
+                  <td className="whitespace-nowrap px-2 py-2 text-white/70">{formatDate(key.createdAt)}</td>
+                  <td className="whitespace-nowrap px-2 py-2 text-white/70">
+                    {key.expiresAt ? formatDate(key.expiresAt) : "No expiration"}
+                  </td>
+                  <td className="w-px whitespace-nowrap px-2 py-2 text-right">
+                    <div onClick={(e) => e.stopPropagation()}>
+                      <MenuDropdown
+                        label="Account actions"
+                        trigger={<GoKebabHorizontal className="size-3.5" />}
+                        items={[
+                          {
+                            label: "Revoke secret",
+                            icon: GoCircleSlash,
+                            tone: "warning",
+                            onSelect: () => {
+                              revoke.reset();
+                              setConfirm({ key, action: "revoke" });
+                            },
+                          },
+                          {
+                            label: "Delete service account",
+                            icon: GoTrash,
+                            tone: "danger",
+                            onSelect: () => {
+                              revoke.reset();
+                              setConfirm({ key, action: "delete" });
+                            },
+                          },
+                        ]}
+                      />
+                    </div>
                   </td>
                 </tr>
               ))
@@ -177,21 +257,37 @@ export default function ServiceAccountsSettingsPage() {
                     </span>
                   </button>
                 </div>
+                <p className="mt-2 text-xs text-white/60">
+                  Expires:{" "}
+                  <span className="text-white/80">
+                    {fresh.expiresAt ? formatDate(fresh.expiresAt) : "No expiration"}
+                  </span>
+                </p>
               </div>
             ) : (
-              <div className="mt-4">
-                <label className="block text-xs text-white/60">Name</label>
-                <input
-                  type="text"
-                  value={name}
-                  autoFocus
-                  onChange={(e) => setName(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") void submit();
-                  }}
-                  placeholder="Service account name"
-                  className="mt-1 w-full rounded-md border border-border-secondary bg-[#202020] px-3 py-1.5 text-sm text-primary outline-none focus:border-primary"
-                />
+              <div className="mt-4 space-y-3">
+                <div>
+                  <label className="block text-xs text-white/60">Name</label>
+                  <input
+                    type="text"
+                    value={name}
+                    autoFocus
+                    onChange={(e) => setName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") void submit();
+                    }}
+                    placeholder="Service account name"
+                    className="mt-1 w-full rounded-md border border-border-secondary bg-[#202020] px-3 py-1.5 text-sm text-primary outline-none focus:border-primary"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-white/60">Expiration</label>
+                  <SelectDropdown
+                    value={effectiveExpiresIn}
+                    options={expirationOptions}
+                    onChange={setExpiresIn}
+                  />
+                </div>
               </div>
             )}
             {create.isError && !fresh && (
@@ -220,6 +316,54 @@ export default function ServiceAccountsSettingsPage() {
           </div>
         </div>
       )}
+
+      <ConfirmDialog
+        open={confirm !== null}
+        title={confirm?.action === "delete" ? "Delete service account?" : "Revoke secret token?"}
+        description={
+          confirm?.action === "delete" ? (
+            <>
+              This will permanently delete{" "}
+              <span className="text-primary">{confirm.key.name ?? "this service account"}</span> and
+              revoke its secret token. The key will stop working immediately. This action cannot be
+              undone.
+            </>
+          ) : (
+            <>
+              This will revoke the secret token for{" "}
+              <span className="text-primary">{confirm?.key.name ?? "this service account"}</span>.
+              The key will stop working immediately. This action cannot be undone.
+            </>
+          )
+        }
+        confirmLabel={
+          revoke.isPending
+            ? confirm?.action === "delete"
+              ? "Deleting…"
+              : "Revoking…"
+            : confirm?.action === "delete"
+              ? "Delete service account"
+              : "Revoke secret"
+        }
+        tone={confirm?.action === "delete" ? "danger" : "warning"}
+        isPending={revoke.isPending}
+        error={revoke.isError ? revoke.error.message : null}
+        onCancel={() => {
+          if (!revoke.isPending) {
+            setConfirm(null);
+            revoke.reset();
+          }
+        }}
+        onConfirm={async () => {
+          if (!confirm) return;
+          try {
+            await revoke.mutateAsync(confirm.key.id);
+            setConfirm(null);
+            revoke.reset();
+          } catch {
+          }
+        }}
+      />
     </div>
   );
 }

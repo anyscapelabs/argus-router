@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "API Key Logs | Argus Router",
-  description: "API key usage logs and details.",
+  title: "Usage | Anyscape Gateway",
+  description: "Token usage, cost, and model breakdowns.",
 };
 
 export const instant = false;
@@ -10,4 +10,3 @@ export const instant = false;
 export default function Layout({ children }: { children: React.ReactNode }) {
   return children;
 }
-

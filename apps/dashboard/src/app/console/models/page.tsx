@@ -8,6 +8,7 @@ import { IoTerminalOutline } from "react-icons/io5";
 import { LuBrain } from "react-icons/lu";
 import { useQueryClient } from "@tanstack/react-query";
 
+import { Skeleton } from "@/components/skeleton";
 import {
   useModels,
   useRefreshModels,
@@ -116,6 +117,7 @@ export default function ModelsPage() {
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search"
+                aria-label="Search models"
                 className="w-48 rounded-sm border border-border-secondary bg-tertiary py-1 pr-2 pl-7 text-xs text-primary placeholder:text-white/40 outline-none focus:border-white/30"
               />
             </div>
@@ -153,11 +155,15 @@ export default function ModelsPage() {
               </thead>
               <tbody>
                 {models.isLoading && (
-                  <tr>
-                    <td colSpan={7} className="px-2 py-3 text-white/60">
-                      Loading models…
-                    </td>
-                  </tr>
+                  <>
+                    {[0, 1, 2, 3, 4].map((row) => (
+                      <tr key={row} className="border-b border-border-secondary/50">
+                        <td colSpan={7} className="px-2 py-2.5">
+                          <Skeleton className={["w-48", "w-40", "w-44", "w-36", "w-40"][row]} />
+                        </td>
+                      </tr>
+                    ))}
+                  </>
                 )}
                 {models.isError && (
                   <tr>
@@ -311,7 +317,6 @@ function Row({
        <Toggle
                      on={model.enabled}
                      busy={busy}
-                     disabled={!model.enabled}
                      label={`Toggle ${model.name}`}
                      onClick={onToggle}
                    />

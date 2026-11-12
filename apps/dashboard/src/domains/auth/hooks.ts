@@ -19,14 +19,12 @@ function toAuthError(
   return new Error(error?.message ?? fallback);
 }
 
-/** Session state for guards — one request, cached in the shared QueryClient. */
 export function useSession() {
   return useQuery({
     queryKey: SESSION_KEY,
     queryFn: async () => {
       const response = await authClient.getSession();
       if (response.error) {
-        // Session absence is a valid state; only transport/config failures error.
         if (response.error.status === 401 || response.error.status === 403) {
           return null;
         }
@@ -147,7 +145,7 @@ export function useSignOut() {
     },
     onSuccess: () => {
       queryClient.setQueryData(SESSION_KEY, null);
-      queryClient.invalidateQueries();
+      queryClient.clear();
       toast.success("Signed out");
       router.push("/auth/login");
     },

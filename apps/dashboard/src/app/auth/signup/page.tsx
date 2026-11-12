@@ -15,7 +15,6 @@ export default function SignupPage() {
   const github = useSocialSignIn("github");
   const isMutating = signUp.isPending || google.isPending || github.isPending;
 
-  // Already signed in — skip the signup form and land on the console.
   useEffect(() => {
     if (session.isSuccess && session.data) {
       router.replace("/console/overview");
@@ -27,7 +26,7 @@ export default function SignupPage() {
         <FaSpinner className="size-5 animate-spin text-white/60" />
       ) : (
         <>
-      <h1 className="font-pixel text-5xl">Argus Agent</h1>
+      <h1 className="font-pixel text-5xl">Anyscape Gateway</h1>
       {(google.isError || github.isError) && (
         <p className="w-80 text-center text-xs leading-relaxed text-red-400">
           {(google.error ?? github.error)?.message}
@@ -74,7 +73,7 @@ export default function SignupPage() {
           const data = new FormData(e.currentTarget);
           const email = String(data.get("email") ?? "");
           const password = String(data.get("password") ?? "");
-          const name = email.split("@")[0] || "Argus user";
+          const name = email.split("@")[0] || "Gateway user";
           signUp.mutate({ email, password, name });
         }}
       >
@@ -132,7 +131,7 @@ export default function SignupPage() {
         <a href="/privacy" className="underline hover:text-white/80">
           Privacy
         </a>{" "}
-        and to receive updates and emails from Argus Agent.
+        and to receive updates and emails from Anyscape.
       </p>
         </>
       )}

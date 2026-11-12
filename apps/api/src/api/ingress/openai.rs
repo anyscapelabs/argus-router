@@ -1,20 +1,11 @@
-//! Ingress, OpenAI dialect (`POST /v1/chat/completions`).
-//!
-//! Parses requests into IR, re-emits normalized events as
-//! `chat.completion.chunk` SSE frames, and maps errors to the OpenAI error
-//! envelope. Assistant tool-call history survives intact across model
-//! switches because extraction/assembly both go through the canonical IR.
-
 use serde_json::{Map, Value, json};
 
 use crate::api::ingress::new_id;
 use crate::proxy::ir::{
-    Block, Chat, ErrCode, Errx, Event, Message, OpenAiParams, Params, Role, ToolChoice, ToolDef,
-    Turn,
+    Block, Chat, ErrCode, Errx, Event, FinishReason, Message, OpenAiParams, Params, Role,
+    ToolChoice, ToolDef, Turn,
 };
 
-/// Parses the request body; returns the requested model id plus the
-/// normalized turn. Unknown roles are ignored so future clients don't break.
 pub fn parse(payload: &Value) -> Result<(String, Chat), Errx> {
     let invalid = |message: &str| Errx::new(ErrCode::InvalidRequest, 400, message.to_owned());
     let model = payload
@@ -33,9 +24,6 @@ pub fn parse(payload: &Value) -> Result<(String, Chat), Errx> {
         messages: Vec::new(),
         tools: Vec::new(),
         tool_choice: ToolChoice::Auto,
-        // Leave the client's cap untouched here; the endpoint clamps it to
-        // `entry.max_output` via `clamp_params` once the model is resolved.
-        // (Passing 0 here used to squash every cap down to 1 token.)
         params: Params::clamped(params_of(payload), i64::MAX),
     };
 
@@ -241,8 +229,6 @@ fn tool_choice(choice: &Value) -> Option<ToolChoice> {
     }
 }
 
-/// Joins text parts and leaves non-text parts out (those are handled in the
-/// content loops above).
 fn text_of(content: Option<&Value>) -> Option<String> {
     match content? {
         Value::String(text) => Some(text.clone()),
@@ -283,7 +269,6 @@ fn data_uri_image(url: &str) -> Option<(String, String)> {
     Some((mime, data.to_owned()))
 }
 
-/// Re-clamps generation parameters against the resolved entry.
 pub fn clamp_params(chat: &mut Chat, max_output: i64) {
     chat.params.max_tokens = chat
         .params
@@ -296,6 +281,7 @@ pub struct StreamState {
     pub created: i64,
     pub model: String,
     pub saw_tools: bool,
+    pub finish_reason: FinishReason,
 }
 
 impl StreamState {
@@ -305,12 +291,11 @@ impl StreamState {
             created: chrono::Utc::now().timestamp(),
             model,
             saw_tools: false,
+            finish_reason: FinishReason::Stop,
         }
     }
 }
 
-/// The TCP/SSE data payload for one event (`chat.completion.chunk` without
-/// the `data:` wrapper — axum's Sse adds that).
 pub fn chunk(state: &mut StreamState, event: &Event) -> Option<Value> {
     let mut base = Map::new();
     base.insert("id".to_owned(), json!(state.id));
@@ -348,9 +333,11 @@ pub fn chunk(state: &mut StreamState, event: &Event) -> Option<Value> {
                 }]}, "finish_reason": Value::Null}]),
             );
         }
-        // OpenAI-compat has no per-call end marker; the finish chunk seals
-        // the turn.
         Event::ToolUseEnd { .. } => return None,
+        Event::Finish(reason) => {
+            state.finish_reason = *reason;
+            return None;
+        }
         Event::Usage {
             input_tokens,
             output_tokens,
@@ -371,7 +358,6 @@ pub fn chunk(state: &mut StreamState, event: &Event) -> Option<Value> {
     Some(Value::Object(base))
 }
 
-/// The final chunk: finish_reason sealed, then the protocol terminator.
 pub fn final_chunk(state: &StreamState) -> Value {
     json!({
         "id": state.id,
@@ -383,14 +369,25 @@ pub fn final_chunk(state: &StreamState) -> Value {
 }
 
 fn final_reason(state: &StreamState) -> &'static str {
-    if state.saw_tools {
-        "tool_calls"
-    } else {
-        "stop"
+    match state.finish_reason {
+        FinishReason::Length => "length",
+        FinishReason::ToolCalls => "tool_calls",
+        FinishReason::ContentFilter => "content_filter",
+        FinishReason::Stop if state.saw_tools => "tool_calls",
+        FinishReason::Stop => "stop",
     }
 }
 
-/// A complete (non-streaming) `chat.completion` response.
+fn turn_reason(turn: &Turn) -> &'static str {
+    match turn.finish_reason {
+        FinishReason::Length => "length",
+        FinishReason::ToolCalls => "tool_calls",
+        FinishReason::ContentFilter => "content_filter",
+        FinishReason::Stop if !turn.tool_use.is_empty() => "tool_calls",
+        FinishReason::Stop => "stop",
+    }
+}
+
 pub fn completion(state: &StreamState, turn: &Turn) -> Value {
     let mut message = json!({"role": "assistant"});
     if turn.text.is_empty() {
@@ -416,7 +413,7 @@ pub fn completion(state: &StreamState, turn: &Turn) -> Value {
         "choices": [{
             "index": 0,
             "message": message,
-            "finish_reason": if turn.tool_use.is_empty() { "stop" } else { "tool_calls" },
+            "finish_reason": turn_reason(turn),
         }],
         "usage": {
             "prompt_tokens": turn.usage.input_tokens,
@@ -427,7 +424,6 @@ pub fn completion(state: &StreamState, turn: &Turn) -> Value {
     })
 }
 
-/// OpenAI error envelope.
 pub fn error_body(item: &Errx) -> Value {
     json!({
         "error": {
@@ -446,13 +442,13 @@ fn error_type(code: ErrCode) -> &'static str {
         ErrCode::Forbidden => "permission_error",
         ErrCode::NotFound => "invalid_request_error",
         ErrCode::RateLimited => "rate_limit_error",
+        ErrCode::CreditsExhausted => "insufficient_quota",
         ErrCode::Overloaded => "overloaded_error",
         ErrCode::Upstream | ErrCode::Network | ErrCode::Timeout => "api_error",
         ErrCode::ProviderUnconfigured => "api_error",
     }
 }
 
-/// `GET /v1/models` shape for key-holders.
 pub fn models_list(entries: Vec<Value>) -> Value {
     json!({
         "object": "list",
@@ -460,7 +456,6 @@ pub fn models_list(entries: Vec<Value>) -> Value {
     })
 }
 
-/// HTTP response carrying the OpenAI error envelope.
 pub fn error_response(item: Errx) -> axum::response::Response {
     use axum::Json;
     use axum::http::StatusCode;

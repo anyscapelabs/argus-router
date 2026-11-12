@@ -1,7 +1,3 @@
-//! The bidirectional Live proxy session: connects upstream to Google's
-//! BidiGenerateContent WebSocket, forwards frames both ways, enforces the
-//! plan-minute deadline, handles upstream 429 backoff, and records usage.
-
 use std::time::{Duration, Instant};
 
 use axum::extract::ws::Message;
@@ -12,18 +8,14 @@ use tokio_tungstenite::tungstenite::protocol::Message as TungsteniteMessage;
 
 use crate::state::AppState;
 
-use super::frames::{extract_model_text, extract_rate_limit_secs};
+use super::frames::{extract_error_code, extract_model_text, extract_rate_limit_secs};
 use super::models::{LiveModelSpec, find_live_model};
-use super::usage::{LiveUsage, record};
+use super::usage::{LiveUsage, record_with_reservation};
 
 const GOOGLE_LIVE_WS_BASE: &str = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent";
 
-/// Max consecutive upstream 429s before closing the session.
 const MAX_RATE_LIMIT_RETRIES: u32 = 3;
 
-/// Google's Live endpoint names models in their wire form (`models/<id>`);
-/// the catalog stores bare ids (`gemini-3.8-live`). The prefix is added here
-/// for the setup frame only — billing and quotas keep the catalog id.
 fn wire_model(id: &str) -> String {
     if id.starts_with("models/") {
         id.to_owned()
@@ -32,10 +24,6 @@ fn wire_model(id: &str) -> String {
     }
 }
 
-/// Injects the router's resolved model id into a client `setup` frame. The
-/// desktop opens `/v1/live` and sends a setup without naming a model; the
-/// router is the only place that knows the configured model, so it fills the
-/// gap before forwarding upstream. Non-setup frames pass through unchanged.
 fn inject_default_model(text: &str, model: &str) -> String {
     let Ok(mut value) = serde_json::from_str::<serde_json::Value>(text) else {
         return text.to_owned();
@@ -44,7 +32,10 @@ fn inject_default_model(text: &str, model: &str) -> String {
         return text.to_owned();
     }
     if let Some(setup) = value.get_mut("setup").and_then(|s| s.as_object_mut()) {
-        setup.insert("model".to_owned(), serde_json::Value::String(model.to_owned()));
+        setup.insert(
+            "model".to_owned(),
+            serde_json::Value::String(model.to_owned()),
+        );
     }
     value.to_string()
 }
@@ -59,11 +50,51 @@ pub(super) async fn handle_socket(
     model: String,
     remaining_minutes: i64,
     gemini_key: Option<String>,
-    session_id: String,
+    session_id: &str,
+    credit_reservation_id: Option<String>,
 ) {
     let start = Instant::now();
-    // Cap session duration to the user's remaining plan minutes (minimum 1 minute).
     let max_duration = Duration::from_secs((remaining_minutes.max(1) as u64) * 60);
+
+    if let Some(reservation_id) = credit_reservation_id.as_deref() {
+        if let Err(error) = state
+            .app_db
+            .mark_generation_dispatched(reservation_id)
+            .await
+        {
+            tracing::error!(%error, reservation_id, "live credit reservation dispatch failed");
+            let (mut sender, _) = client_ws.split();
+            let _ = sender
+                .send(Message::Text(
+                    serde_json::json!({
+                        "error": {
+                            "code": "UPSTREAM_ERROR",
+                            "message": "Live voice billing could not be started"
+                        }
+                    })
+                    .to_string()
+                    .into(),
+                ))
+                .await;
+            let _ = sender.close().await;
+            let _ = record_with_reservation(
+                &state,
+                LiveUsage {
+                    key_id: Some(&key_id),
+                    user_id: Some(&user_id),
+                    plan_id: Some(&plan_id),
+                    model: &model,
+                    status: 500,
+                    latency_ms: start.elapsed().as_millis() as i64,
+                    error_code: Some("credit_dispatch_failed"),
+                    cost_usd: 0.0,
+                },
+                credit_reservation_id.as_deref(),
+            )
+            .await;
+            return;
+        }
+    }
 
     let Some(api_key) = gemini_key else {
         tracing::error!("GEMINI_API_KEY is not configured on the router");
@@ -81,7 +112,7 @@ pub(super) async fn handle_socket(
             ))
             .await;
         let _ = sender.close().await;
-        record(
+        let _ = record_with_reservation(
             &state,
             LiveUsage {
                 key_id: Some(&key_id),
@@ -93,7 +124,9 @@ pub(super) async fn handle_socket(
                 error_code: Some("provider_unconfigured"),
                 cost_usd: 0.0,
             },
-        );
+            credit_reservation_id.as_deref(),
+        )
+        .await;
         return;
     };
 
@@ -108,7 +141,7 @@ pub(super) async fn handle_socket(
                     serde_json::json!({
                         "error": {
                             "code": "UPSTREAM_ERROR",
-                            "message": format!("Failed to connect to Google Live WebSocket: {err}")
+                            "message": "Failed to connect to the live voice provider"
                         }
                     })
                     .to_string()
@@ -116,7 +149,7 @@ pub(super) async fn handle_socket(
                 ))
                 .await;
             let _ = sender.close().await;
-            record(
+            let _ = record_with_reservation(
                 &state,
                 LiveUsage {
                     key_id: Some(&key_id),
@@ -128,7 +161,9 @@ pub(super) async fn handle_socket(
                     error_code: Some("upstream_error"),
                     cost_usd: 0.0,
                 },
-            );
+                credit_reservation_id.as_deref(),
+            )
+            .await;
             return;
         }
     };
@@ -140,19 +175,13 @@ pub(super) async fn handle_socket(
     tokio::pin!(deadline);
 
     let mut quota_exhausted = false;
-    // Tracks the most recent accumulated model text for voice→text fallback.
     let mut last_model_text = String::new();
-    // Set once the client sends at least one audio chunk.
     let mut has_sent_audio = false;
-    // First-frame diagnostics: the client either never sends audio (mic blocked
-    // in the webview) or Google never answers — each gets one log line.
     let mut logged_first_upstream_frame = false;
-    // Consecutive upstream 429 counter.
     let mut rate_limit_retries: u32 = 0;
 
     loop {
         tokio::select! {
-            // ── quota deadline ───────────────────────────────────────────────
             _ = &mut deadline => {
                 tracing::info!(%user_id, "live call exceeded remaining plan minutes");
                 quota_exhausted = true;
@@ -174,11 +203,9 @@ pub(super) async fn handle_socket(
                 break;
             }
 
-            // ── client → upstream ────────────────────────────────────────────
             from_client = client_receiver.next() => {
                 match from_client {
                     Some(Ok(msg)) => {
-                        // Detect audio input so we know to offer a text fallback later.
                         if let Message::Text(txt) = &msg {
                             if txt.contains("\"setup\"") {
                                 tracing::info!(
@@ -192,11 +219,6 @@ pub(super) async fn handle_socket(
                             }
                         }
                         let tung_msg = match msg {
-                            // The desktop sends a setup frame without naming a
-                            // model; the router resolves the configured model
-                            // (the `?model` param, defaulting to the JSON entry
-                            // flagged `default`) and injects it in Google's wire
-                            // form, so the client never has to know a model id.
                             Message::Text(txt) => {
                                 let text = inject_default_model(txt.as_str(), &wire_model(&model));
                                 TungsteniteMessage::Text(text.into())
@@ -223,20 +245,15 @@ pub(super) async fn handle_socket(
                         tracing::debug!(%err, "client WebSocket read error");
                         break;
                     }
-                    None => break, // client closed
+                    None => break,
                 }
             }
 
-            // ── upstream → client ────────────────────────────────────────────
             from_upstream = upstream_receiver.next() => {
                 match from_upstream {
                     Some(Ok(TungsteniteMessage::Text(ref txt))) => {
                         let raw = txt.to_string();
 
-                        // One line for the first thing Google ever sends back:
-                        // if this never appears, the silence is upstream, not
-                        // in the client. The snippet names the frame type
-                        // (setupComplete, an error, audio…).
                         if !logged_first_upstream_frame {
                             logged_first_upstream_frame = true;
                             let snippet: String = raw.chars().take(200).collect();
@@ -248,7 +265,6 @@ pub(super) async fn handle_socket(
                             );
                         }
 
-                        // ── rate-limit detection ─────────────────────────────
                         if let Some(retry_secs) = extract_rate_limit_secs(&raw) {
                             rate_limit_retries += 1;
                             tracing::warn!(
@@ -272,7 +288,6 @@ pub(super) async fn handle_socket(
                                 let _ = upstream_sender.close().await;
                                 break;
                             }
-                            // Notify client of the pause and sleep.
                             let _ = client_sender
                                 .send(Message::Text(
                                     serde_json::json!({
@@ -288,13 +303,28 @@ pub(super) async fn handle_socket(
                             continue;
                         }
 
-                        // ── accumulate model text for fallback ───────────────
-                        if let Some(text) = extract_model_text(&raw) {
-                            last_model_text = text;
-                            rate_limit_retries = 0; // successful reply resets retry counter
+                        if let Some(code) = extract_error_code(&raw) {
+                            tracing::warn!(%user_id, code, "Google Live returned an upstream error");
+                            let _ = client_sender
+                                .send(Message::Text(
+                                    serde_json::json!({
+                                        "error": {
+                                            "code": "UPSTREAM_ERROR",
+                                            "message": "The live voice provider request failed"
+                                        }
+                                    })
+                                    .to_string()
+                                    .into(),
+                                ))
+                                .await;
+                            break;
                         }
 
-                        // Forward to client.
+                        if let Some(text) = extract_model_text(&raw) {
+                            last_model_text = text;
+                            rate_limit_retries = 0;
+                        }
+
                         if let Err(e) = client_sender
                             .send(Message::Text(raw.into()))
                             .await
@@ -304,7 +334,6 @@ pub(super) async fn handle_socket(
                         }
                     }
                     Some(Ok(msg)) => {
-                        // Binary / Ping / Pong / Close frames — convert and forward.
                         if matches!(msg, TungsteniteMessage::Binary(_)) && !logged_first_upstream_frame {
                             logged_first_upstream_frame = true;
                             tracing::info!(%user_id, "first frame received from Google Live is BINARY");
@@ -314,8 +343,6 @@ pub(super) async fn handle_socket(
                             TungsteniteMessage::Ping(p) => Message::Ping(p),
                             TungsteniteMessage::Pong(p) => Message::Pong(p),
                             TungsteniteMessage::Close(c) => {
-                                // Google's own words for why it hung up — the
-                                // only place a bad model id or key shows itself.
                                 tracing::info!(
                                     %user_id,
                                     code = c.as_ref().map(|f| u16::from(f.code)),
@@ -341,22 +368,18 @@ pub(super) async fn handle_socket(
                         break;
                     }
                     None => {
-                        // No close frame — the socket just died (network, auth
-                        // teardown). Worth a line: this is the arm a rejected
-                        // session usually ends in.
                         tracing::info!(%user_id, "Google Live upstream closed without a close frame");
                         break;
-                    } // upstream closed
+                    }
                 }
             }
         }
     }
 
-    // ── voice→text fallback ──────────────────────────────────────────────────
-    // If the client sent audio and we have partial model text, store it so the
-    // desktop app can retrieve it via GET /v1/live/last-reply.
     if has_sent_audio && !last_model_text.is_empty() {
-        state.live_sessions.store(&session_id, last_model_text);
+        state
+            .live_sessions
+            .store(session_id, &user_id, last_model_text);
         tracing::debug!(%session_id, "stored last-reply for voice→text fallback");
     }
 
@@ -368,12 +391,12 @@ pub(super) async fn handle_socket(
         &model,
         start,
         quota_exhausted,
-    );
+        credit_reservation_id.as_deref(),
+    )
+    .await;
 }
 
-/// Records the terminal usage row for a completed session, estimating cost
-/// from the model's blended per-minute rate in `live_models.json`.
-fn record_final_usage(
+async fn record_final_usage(
     state: &AppState,
     key_id: &str,
     user_id: &str,
@@ -381,6 +404,7 @@ fn record_final_usage(
     model: &str,
     start: Instant,
     quota_exhausted: bool,
+    credit_reservation_id: Option<&str>,
 ) {
     let elapsed_ms = start.elapsed().as_millis() as i64;
     let cost_per_min = find_live_model(model)
@@ -393,7 +417,7 @@ fn record_final_usage(
         (200, None)
     };
 
-    record(
+    if let Err(error) = record_with_reservation(
         state,
         LiveUsage {
             key_id: Some(key_id),
@@ -405,5 +429,10 @@ fn record_final_usage(
             error_code,
             cost_usd: elapsed_minutes * cost_per_min,
         },
-    );
+        credit_reservation_id,
+    )
+    .await
+    {
+        tracing::error!(%error, ?credit_reservation_id, "live usage settlement failed");
+    }
 }

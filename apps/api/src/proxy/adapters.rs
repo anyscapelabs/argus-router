@@ -1,34 +1,24 @@
-//! Upstream adapters in the desktop app's conversion style: a resolved
-//! `Target` plus per-origin `Quirks`, dispatched per adapter family. Only
-//! the OpenAI-compatible family is wired upstream (OpenRouter fronts every
-//! provider); new direct-origin families plug into the same `Adapter` shape.
-
 use std::collections::{HashMap, HashSet};
 
 use futures_util::Stream;
 use serde_json::{Value, json};
 
-use crate::proxy::ir::{Block, Chat, ErrCode, Errx, Event, Quirks, Role, ToolChoice, Turn, Usage};
+use crate::proxy::ir::{
+    Block, Chat, ErrCode, Errx, Event, FinishReason, Quirks, Role, ToolChoice, Turn, Usage,
+};
 use crate::proxy::sse::Framer;
 use crate::services::catalog::Compat;
 use crate::services::providers::Provider;
 
-/// Boxed event streams produced by adapters (`async_stream` yields
-/// unnameable types, same trade-off the desktop's `iter.Seq` carries).
 pub type EventStream = std::pin::Pin<Box<dyn Stream<Item = Result<Event, Errx>> + Send>>;
 
-/// Extra knobs an adapter family may tune per call (desktop's
-/// `Router.TargetOptions`).
 #[derive(Clone, Debug, Default)]
 pub struct TargetOptions {
     pub quirks: Option<Quirks>,
 }
 
-/// A fully resolved upstream call target (desktop's `Protocol.Target`).
 #[derive(Clone, Debug)]
 pub struct Target {
-    /// Kept for the desktop parity surface (family dispatch happens at
-    /// call time; only the OpenAI-compat family is wired today).
     #[allow(dead_code)]
     pub family: Compat,
     pub base_url: String,
@@ -39,9 +29,6 @@ pub struct Target {
     pub provider_routing: Option<serde_json::Value>,
 }
 
-/// Desktop's `Router.TargetFor`: validates a model id + origin pair into a
-/// concrete target. The URL only ever derives from the registry — no client
-/// input reaches it.
 pub fn target_for(
     provider: &'static Provider,
     model: &str,
@@ -74,12 +61,39 @@ pub fn target_for(
     })
 }
 
-/// Adapter-wide cap so a malformed upstream error body cannot flood memory.
-const ERROR_BODY_CAP: usize = 1024 * 1024;
+const MAX_UPSTREAM_BYTES: usize = 32 * 1024 * 1024;
 
-/// The shared reqwest client: redirects forbidden (a redirect could leak
-/// the origin key), tight connect timeout, no total timeout — long
-/// generations must not die mid-stream.
+async fn capped_bytes(response: reqwest::Response) -> Result<Vec<u8>, Errx> {
+    if let Some(len) = response.content_length() {
+        if len > MAX_UPSTREAM_BYTES as u64 {
+            return Err(Errx::new(
+                ErrCode::Upstream,
+                502,
+                "the provider sent an oversized response",
+            ));
+        }
+    }
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|_| {
+            Errx::new(
+                ErrCode::Network,
+                502,
+                "reading the provider response failed",
+            )
+        })?
+        .to_vec();
+    if bytes.len() > MAX_UPSTREAM_BYTES {
+        return Err(Errx::new(
+            ErrCode::Upstream,
+            502,
+            "the provider sent an oversized response",
+        ));
+    }
+    Ok(bytes)
+}
+
 pub fn build_client() -> reqwest::Client {
     reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
@@ -96,8 +110,6 @@ fn apply_auth(request: reqwest::RequestBuilder, target: &Target) -> reqwest::Req
     keyed
 }
 
-/// Builds one upstream chat call. The mirror of the desktop's
-/// `ad.BuildRequest`.
 fn build_request(target: &Target, chat: &Chat, streaming: bool) -> Value {
     let mut payload = json!({
         "model": target.model,
@@ -171,9 +183,6 @@ fn build_messages(chat: &Chat) -> Vec<Value> {
                                 },
                             }));
                         }
-                        // Tool results become their own `tool` messages;
-                        // anything else in a user turn stays in the content
-                        // array.
                         Block::ToolResult { id, content, .. } => {
                             out.push(json!({
                                 "role": "tool",
@@ -217,8 +226,6 @@ fn build_messages(chat: &Chat) -> Vec<Value> {
                 }
                 let mut entry = json!({"role": "assistant"});
                 if text.is_empty() && tool_calls.is_empty() {
-                    // Neither text nor calls: a dropped no-op turn keeps the
-                    // upstream from ever seeing a malformed empty message.
                     continue;
                 }
                 entry["content"] = json!(text);
@@ -232,8 +239,6 @@ fn build_messages(chat: &Chat) -> Vec<Value> {
     out
 }
 
-/// Sends the request and maps non-2xx responses to normalized errors —
-/// the mirror of the desktop's `ad.MapError` plus `NetworkError`.
 async fn send_chat(
     client: &reqwest::Client,
     target: &Target,
@@ -281,9 +286,31 @@ async fn errx_from_response(target: &Target, response: reqwest::Response) -> Err
             .ok()
             .and_then(|raw| raw.trim().parse::<u64>().ok())
     });
-    let bytes = response.bytes().await.unwrap_or_default();
-    let message = extract_error_message(&bytes);
-    let mut errx = Errx::from_upstream_status(status, message).with_provider(target.model.as_str());
+    drop(response);
+    tracing::warn!(status, request_id = ?request_id, model = %target.model, "upstream provider rejected a request");
+    let (code, client_status, message) = match status {
+        400 | 404 | 422 => (
+            ErrCode::InvalidRequest,
+            status,
+            "the upstream provider rejected the request",
+        ),
+        408 => (
+            ErrCode::Timeout,
+            504,
+            "the upstream provider did not respond in time",
+        ),
+        429 => (
+            ErrCode::RateLimited,
+            429,
+            "the upstream provider is temporarily rate limited",
+        ),
+        _ => (
+            ErrCode::Upstream,
+            502,
+            "the upstream provider request failed",
+        ),
+    };
+    let mut errx = Errx::new(code, client_status, message).with_provider(target.model.as_str());
     if let Some(request_id) = request_id {
         errx.request_id = Some(request_id);
     }
@@ -293,31 +320,6 @@ async fn errx_from_response(target: &Target, response: reqwest::Response) -> Err
     errx
 }
 
-fn extract_error_message(bytes: &[u8]) -> String {
-    let head = &bytes[..bytes.len().min(ERROR_BODY_CAP)];
-    let text = String::from_utf8_lossy(head);
-    if let Ok(value) = serde_json::from_str::<Value>(&text) {
-        let message = value
-            .pointer("/error/message")
-            .and_then(|found| found.as_str())
-            .or_else(|| value.get("message").and_then(|found| found.as_str()));
-        if let Some(message) = message {
-            return message.to_owned();
-        }
-    }
-    let trimmed = text.trim();
-    if trimmed.is_empty() {
-        "the upstream provider request failed".to_owned()
-    } else {
-        trimmed.chars().take(300).collect()
-    }
-}
-
-/// Streams normalized events out of an upstream SSE response — the mirror
-/// of the desktop's `ad.ParseStream`. Tool-call deltas arrive as a
-/// raw-indexed array of fragments; the adapter assigns stable canonical
-/// indexes so every ingress dialect sees an identical shape regardless of
-/// which short session host spilled them.
 fn encode_stream(
     mut response: reqwest::Response,
     quirks: Quirks,
@@ -330,6 +332,7 @@ fn encode_stream(
         let mut id_map: HashMap<String, usize> = HashMap::new();
         let mut open: HashSet<usize> = HashSet::new();
         let mut usage: Option<Usage> = None;
+        let mut finish_reason: Option<FinishReason> = None;
 
         'outer: loop {
             let chunk = match response.chunk().await {
@@ -353,12 +356,13 @@ fn encode_stream(
                     Err(_) => continue,
                 };
                 if let Some(bad) = payload.get("error") {
-                    let message = bad
-                        .get("message")
-                        .and_then(|found| found.as_str())
-                        .unwrap_or("the provider reported a mid-stream error")
-                        .to_owned();
-                    yield Err(Errx::new(ErrCode::Upstream, 502, message));
+                    let code = bad.get("code").and_then(Value::as_i64);
+                    tracing::warn!(?code, "upstream provider reported a mid-stream error");
+                    yield Err(Errx::new(
+                        ErrCode::Upstream,
+                        502,
+                        "the upstream provider stream failed",
+                    ));
                     return;
                 }
                 if let Some(found) = payload.get("usage").filter(|found| !found.is_null()) {
@@ -371,6 +375,9 @@ fn encode_stream(
                     .filter(|found| !found.is_null())
                     .cloned()
                     .unwrap_or_else(|| json!(null));
+                if let Some(found) = choice.get("finish_reason").and_then(Value::as_str) {
+                    finish_reason = Some(parse_finish_reason(found));
+                }
                 let delta = choice.get("delta").cloned().unwrap_or_else(|| json!(null));
 
                 if let Some(fragment) = delta.get("reasoning_content").and_then(|v| v.as_str()) {
@@ -385,9 +392,6 @@ fn encode_stream(
                 }
                 if let Some(calls) = delta.get("tool_calls").and_then(|v| v.as_array()) {
                     for call in calls {
-                        // OpenAI-compat providers carry a raw array index;
-                        // a few omit it, in which case calls are keyed by
-                        // their `id` (or simply assigned in order).
                         let canonical = if let Some(raw_index) =
                             call.get("index").and_then(|v| v.as_u64())
                         {
@@ -434,10 +438,10 @@ fn encode_stream(
             }
         }
 
-        // Close any call still streaming argument fragments.
         for index in open.drain() {
             yield Ok(Event::ToolUseEnd { index });
         }
+        yield Ok(Event::Finish(finish_reason.unwrap_or(FinishReason::Stop)));
         if let Some(usage) = usage {
             yield Ok(Event::Usage {
                 input_tokens: usage.input_tokens,
@@ -445,6 +449,15 @@ fn encode_stream(
                 cache_read_tokens: usage.cache_read_tokens,
             });
         }
+    }
+}
+
+fn parse_finish_reason(value: &str) -> FinishReason {
+    match value {
+        "length" => FinishReason::Length,
+        "tool_calls" | "function_call" => FinishReason::ToolCalls,
+        "content_filter" => FinishReason::ContentFilter,
+        _ => FinishReason::Stop,
     }
 }
 
@@ -473,9 +486,16 @@ fn usage_of(value: &Value) -> Option<Usage> {
 
 fn decode_nonstream(payload: &Value) -> Turn {
     let mut turn = Turn::default();
+    if let Some(reason) = payload
+        .pointer("/choices/0/finish_reason")
+        .and_then(Value::as_str)
+    {
+        turn.finish_reason = parse_finish_reason(reason);
+    }
     if let Some(usage) = payload.get("usage").filter(|found| !found.is_null()) {
         if let Some(usage) = usage_of(usage) {
             turn.usage = usage;
+            turn.usage_reported = true;
         }
     }
     let message = payload.pointer("/choices/0/message");
@@ -517,8 +537,6 @@ fn decode_nonstream(payload: &Value) -> Turn {
     turn
 }
 
-/// Streaming chat through a resolved target. The desktop's `Router.Run`
-/// mirror.
 pub async fn chat_stream(
     client: &reqwest::Client,
     target: &Target,
@@ -534,7 +552,6 @@ pub async fn chat_stream(
     Ok(Box::pin(encode_stream(response, target.quirks)))
 }
 
-/// Non-streaming chat through a resolved target.
 pub async fn chat_once(
     client: &reqwest::Client,
     target: &Target,
@@ -542,10 +559,7 @@ pub async fn chat_once(
 ) -> Result<Turn, Errx> {
     let body = build_request(target, &chat, false);
     let response = send_chat(client, target, body).await?;
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|_| Errx::new(ErrCode::Network, 502, "reaching the provider failed"))?;
+    let bytes = capped_bytes(response).await?;
     let payload: Value = serde_json::from_slice(&bytes).map_err(|_| {
         Errx::new(
             ErrCode::Upstream,
@@ -553,5 +567,44 @@ pub async fn chat_once(
             "the model returned an unreadable response",
         )
     })?;
+    if payload.get("error").is_some()
+        || payload
+            .get("choices")
+            .and_then(Value::as_array)
+            .is_none_or(Vec::is_empty)
+    {
+        tracing::warn!("upstream provider returned an invalid success envelope");
+        return Err(Errx::new(
+            ErrCode::Upstream,
+            502,
+            "the upstream provider returned an invalid response",
+        ));
+    }
     Ok(decode_nonstream(&payload))
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{decode_nonstream, parse_finish_reason};
+    use crate::proxy::ir::FinishReason;
+
+    #[test]
+    fn keeps_nonstream_length_finish_reason() {
+        let turn = decode_nonstream(&json!({
+            "choices": [{
+                "finish_reason": "length",
+                "message": {"content": "partial"}
+            }],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5}
+        }));
+        assert_eq!(turn.finish_reason, FinishReason::Length);
+        assert_eq!(turn.text, "partial");
+    }
+
+    #[test]
+    fn maps_stream_length_finish_reason() {
+        assert_eq!(parse_finish_reason("length"), FinishReason::Length);
+    }
 }

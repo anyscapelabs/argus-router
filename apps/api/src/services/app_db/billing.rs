@@ -1,0 +1,346 @@
+use serde::Serialize;
+use sqlx::Row;
+
+use super::{AppDb, CheckoutClaim};
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubscriptionView {
+    pub plan_id: String,
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_billing_date: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub past_due_ends_at: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct SubscriptionRow {
+    pub subscription_id: String,
+    pub user_id: String,
+    pub plan_id: String,
+    pub status: String,
+}
+
+impl AppDb {
+    pub async fn claim_billing_checkout(
+        &self,
+        checkout_key: &str,
+        user_id: &str,
+    ) -> Result<CheckoutClaim, sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
+            .bind(format!("billing-checkout:{checkout_key}"))
+            .execute(tx.as_mut())
+            .await?;
+        sqlx::query(
+            "DELETE FROM billing_checkout_sessions
+             WHERE checkout_key = $1 AND expires_at <= NOW()",
+        )
+        .bind(checkout_key)
+        .execute(tx.as_mut())
+        .await?;
+        let existing = sqlx::query_scalar::<_, Option<String>>(
+            "SELECT checkout_url FROM billing_checkout_sessions WHERE checkout_key = $1",
+        )
+        .bind(checkout_key)
+        .fetch_optional(tx.as_mut())
+        .await?;
+        let claim = match existing {
+            Some(Some(url)) => CheckoutClaim::Existing(url),
+            Some(None) => CheckoutClaim::InProgress,
+            None => {
+                sqlx::query(
+                    "INSERT INTO billing_checkout_sessions
+                       (checkout_key, user_id, expires_at)
+                     VALUES ($1, $2, NOW() + INTERVAL '24 hours')",
+                )
+                .bind(checkout_key)
+                .bind(user_id)
+                .execute(tx.as_mut())
+                .await?;
+                CheckoutClaim::Claimed
+            }
+        };
+        tx.commit().await?;
+        Ok(claim)
+    }
+
+    pub async fn finish_billing_checkout(
+        &self,
+        checkout_key: &str,
+        checkout_url: &str,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "UPDATE billing_checkout_sessions
+             SET checkout_url = $2
+             WHERE checkout_key = $1",
+        )
+        .bind(checkout_key)
+        .bind(checkout_url)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn clear_billing_checkout(&self, checkout_key: &str) -> Result<(), sqlx::Error> {
+        sqlx::query("DELETE FROM billing_checkout_sessions WHERE checkout_key = $1")
+            .bind(checkout_key)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn billing_customer_id(&self, user_id: &str) -> Result<Option<String>, sqlx::Error> {
+        sqlx::query_scalar("SELECT customer_id FROM billing_customers WHERE user_id = $1")
+            .bind(user_id)
+            .fetch_optional(&self.pool)
+            .await
+    }
+
+    pub async fn billing_user_of_customer(
+        &self,
+        customer_id: &str,
+    ) -> Result<Option<String>, sqlx::Error> {
+        sqlx::query_scalar("SELECT user_id FROM billing_customers WHERE customer_id = $1")
+            .bind(customer_id)
+            .fetch_optional(&self.pool)
+            .await
+    }
+
+    pub async fn upsert_billing_customer(
+        &self,
+        user_id: &str,
+        customer_id: &str,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "INSERT INTO billing_customers (user_id, customer_id, updated_at)
+             VALUES ($1, $2, NOW())
+             ON CONFLICT (user_id) DO UPDATE
+               SET customer_id = EXCLUDED.customer_id, updated_at = NOW()",
+        )
+        .bind(user_id)
+        .bind(customer_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn upsert_subscription(
+        &self,
+        subscription_id: &str,
+        user_id: &str,
+        plan_id: &str,
+        status: &str,
+        next_billing_date: Option<&str>,
+        past_due_ends_at: Option<&str>,
+        event_at: Option<&str>,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "INSERT INTO billing_subscriptions
+                 (subscription_id, user_id, plan_id, status, next_billing_date, past_due_ends_at, event_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7::text::timestamptz, NOW()), NOW())
+             ON CONFLICT (subscription_id) DO UPDATE
+               SET plan_id = EXCLUDED.plan_id,
+                   status = EXCLUDED.status,
+                   next_billing_date = COALESCE(EXCLUDED.next_billing_date, billing_subscriptions.next_billing_date),
+                   past_due_ends_at = CASE
+                     WHEN EXCLUDED.status = 'past_due' THEN COALESCE(EXCLUDED.past_due_ends_at, billing_subscriptions.past_due_ends_at)
+                     ELSE NULL
+                   END,
+                   event_at = EXCLUDED.event_at,
+                   updated_at = NOW()
+             WHERE billing_subscriptions.event_at <= EXCLUDED.event_at",
+        )
+        .bind(subscription_id)
+        .bind(user_id)
+        .bind(plan_id)
+        .bind(status)
+        .bind(next_billing_date)
+        .bind(past_due_ends_at)
+        .bind(event_at)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn set_subscription_status(
+        &self,
+        subscription_id: &str,
+        status: &str,
+        past_due_ends_at: Option<&str>,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "UPDATE billing_subscriptions
+             SET status = $2, past_due_ends_at = $3, updated_at = NOW()
+             WHERE subscription_id = $1",
+        )
+        .bind(subscription_id)
+        .bind(status)
+        .bind(past_due_ends_at)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn subscription_of(
+        &self,
+        user_id: &str,
+    ) -> Result<Option<SubscriptionView>, sqlx::Error> {
+        let row = sqlx::query(
+            "SELECT plan_id, status, next_billing_date, past_due_ends_at
+             FROM billing_subscriptions
+             WHERE user_id = $1
+             ORDER BY CASE WHEN status IN ('active', 'past_due') THEN 0 ELSE 1 END,
+                      updated_at DESC
+             LIMIT 1",
+        )
+        .bind(user_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(|row| SubscriptionView {
+            plan_id: row.get("plan_id"),
+            status: row.get("status"),
+            next_billing_date: row.get("next_billing_date"),
+            past_due_ends_at: row.get("past_due_ends_at"),
+        }))
+    }
+
+    pub async fn subscription_owner(
+        &self,
+        subscription_id: &str,
+    ) -> Result<Option<(String, String)>, sqlx::Error> {
+        let row = sqlx::query(
+            "SELECT user_id, plan_id FROM billing_subscriptions WHERE subscription_id = $1",
+        )
+        .bind(subscription_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(|row| (row.get("user_id"), row.get("plan_id"))))
+    }
+
+    pub async fn entitled_subscription_plan(
+        &self,
+        user_id: &str,
+    ) -> Result<Option<String>, sqlx::Error> {
+        sqlx::query_scalar(
+            "SELECT plan_id
+             FROM billing_subscriptions
+             WHERE user_id = $1
+               AND (
+                 status = 'active'
+                 OR (
+                   status = 'past_due'
+                   AND past_due_ends_at IS NOT NULL
+                   AND past_due_ends_at::timestamptz > NOW()
+                 )
+               )
+             ORDER BY updated_at DESC
+             LIMIT 1",
+        )
+        .bind(user_id)
+        .fetch_optional(&self.pool)
+        .await
+    }
+
+    pub async fn active_subscriptions(&self) -> Result<Vec<SubscriptionRow>, sqlx::Error> {
+        let rows = sqlx::query(
+            "SELECT subscription_id, user_id, plan_id, status
+             FROM billing_subscriptions
+             WHERE status IN ('pending', 'active', 'past_due', 'on_hold', 'paused')",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|row| SubscriptionRow {
+                subscription_id: row.get("subscription_id"),
+                user_id: row.get("user_id"),
+                plan_id: row.get("plan_id"),
+                status: row.get("status"),
+            })
+            .collect())
+    }
+
+    pub async fn set_user_plan(&self, user_id: &str, plan_id: &str) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "INSERT INTO user_entitlements (user_id, plan_id, updated_at)
+             VALUES ($1, $2, NOW())
+             ON CONFLICT (user_id) DO UPDATE
+               SET plan_id = EXCLUDED.plan_id, updated_at = NOW()",
+        )
+        .bind(user_id)
+        .bind(plan_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn credit_balance(&self, user_id: &str) -> Result<i64, sqlx::Error> {
+        sqlx::query_scalar(
+            "SELECT COALESCE(balance_micros, 0) FROM credit_wallet WHERE user_id = $1",
+        )
+        .bind(user_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map(|found: Option<i64>| found.unwrap_or(0))
+    }
+
+    pub async fn add_credits(
+        &self,
+        user_id: &str,
+        delta_micros: i64,
+        reason: &str,
+        reference: &str,
+    ) -> Result<(), sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+        let inserted = sqlx::query(
+            "INSERT INTO credit_transactions (user_id, delta_micros, reason, reference)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT (reason, reference) DO NOTHING",
+        )
+        .bind(user_id)
+        .bind(delta_micros)
+        .bind(reason)
+        .bind(reference)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+        if inserted > 0 {
+            sqlx::query(
+                "INSERT INTO credit_wallet (user_id, balance_micros, updated_at)
+                 VALUES ($1, GREATEST($2, 0), NOW())
+                 ON CONFLICT (user_id) DO UPDATE
+                   SET balance_micros = GREATEST(credit_wallet.balance_micros + $2, 0),
+                       updated_at = NOW()",
+            )
+            .bind(user_id)
+            .bind(delta_micros)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    pub async fn mark_webhook_seen(&self, webhook_id: &str) -> Result<bool, sqlx::Error> {
+        let inserted = sqlx::query(
+            "INSERT INTO webhook_events (webhook_id) VALUES ($1)
+             ON CONFLICT (webhook_id) DO NOTHING",
+        )
+        .bind(webhook_id)
+        .execute(&self.pool)
+        .await?
+        .rows_affected();
+        Ok(inserted > 0)
+    }
+
+    pub async fn webhook_seen(&self, webhook_id: &str) -> Result<bool, sqlx::Error> {
+        sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS (SELECT 1 FROM webhook_events WHERE webhook_id = $1)",
+        )
+        .bind(webhook_id)
+        .fetch_one(&self.pool)
+        .await
+    }
+}

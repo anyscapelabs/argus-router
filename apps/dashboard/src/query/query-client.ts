@@ -1,10 +1,6 @@
 import { QueryClient } from "@tanstack/react-query";
 import { ApiError } from "@/api/http-client";
 
-/**
- * Default staleness keeps the versioned API calls predictable:
- * session/profile stay fresh per navigation window, agents revalidate on focus.
- */
 export function makeQueryClient() {
   return new QueryClient({
     defaultOptions: {

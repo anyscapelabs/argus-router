@@ -41,13 +41,7 @@ pub mod session {
         pub ip_address: Option<String>,
         pub user_agent: Option<String>,
         pub user_id: String,
-        /// Workspace the session is currently acting in. Written by the
-        /// better-auth organization plugin, which refuses to start unless the
-        /// bound session model declares it (`require_plugin_fields`).
         pub active_organization_id: Option<String>,
-        /// Reserved for organization teams; declared so the table matches the
-        /// plugin's own session model and teams can be enabled later without a
-        /// schema change.
         pub active_team_id: Option<String>,
         pub active: bool,
     }

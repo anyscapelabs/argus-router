@@ -17,20 +17,14 @@ function Skeleton({ className = "" }: { className?: string }) {
 export function PlanCardSkeleton() {
   return (
     <div className="relative flex h-auto flex-col border border-border-secondary p-2" aria-label="Loading plan">
-      {/* pill */}
       <Skeleton className="absolute top-2 left-2 h-[26px] w-16" />
-      {/* price */}
       <div className="mt-20 flex items-end gap-1">
         <Skeleton className="h-[60px] w-24" />
         <Skeleton className="mb-2 h-3 w-8" />
       </div>
-      {/* tagline */}
       <Skeleton className="mt-1 h-3 w-20" />
-      {/* upgrade button */}
       <Skeleton className="-mx-2 mt-2 h-9 w-[calc(100%+1rem)]" />
-      {/* whats included title */}
       <Skeleton className="mt-2 h-3 w-24" />
-      {/* limit rows */}
       <div className="mt-2 space-y-1.5">
         <div className="flex items-center gap-1.5">
           <Skeleton className="size-3 shrink-0" />
@@ -53,7 +47,6 @@ export function PlanCardSkeleton() {
           <Skeleton className="h-3 w-1/2" />
         </div>
       </div>
-      {/* model list */}
       <div className="mt-2 border-t border-border-secondary pt-2">
         <div className="space-y-0.5">
           <Skeleton className="h-[11px] w-full" />

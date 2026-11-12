@@ -29,8 +29,6 @@ fn unauthorized() -> ApiFailure {
     )
 }
 
-/// Verifies the presented agent key through the better-auth plugin (quota +
-/// rate limiting included) and resolves the owning user id.
 async fn user_id_from_key(headers: &HeaderMap, state: &AppState) -> Result<String, ApiFailure> {
     let api_key = api_key_of(headers).ok_or_else(unauthorized)?;
 
@@ -70,24 +68,12 @@ fn db_error(error: sqlx::Error) -> ApiFailure {
     )
 }
 
-/// The identity + entitlements the desktop agent is allowed to use:
-/// `GET /api/v1/account/entitlements` with `x-api-key`.
-///
-/// ```json
-/// {
-///   "user": {"id": "...", "name": "...", "email": "...", "image": "..."},
-///   "plan": {"id": "free"},
-///   "allowlist": [{"id": "openai/gpt-5.6-luna", "display_name": "GPT-5.6 Luna", "name": "GPT-5.6 Luna"}]
-/// }
-/// ```
 async fn entitlements(
     axum::extract::State(state): axum::extract::State<AppState>,
     headers: HeaderMap,
 ) -> Result<AxumJson<serde_json::Value>, ApiFailure> {
     let user_id = user_id_from_key(&headers, &state).await?;
 
-    // The store hands back an Option: a stale key could point at an erased
-    // account, so a missing user is a hard pairing error, not a panic.
     let user_record = state
         .auth
         .store()
@@ -108,9 +94,6 @@ async fn entitlements(
             )
         })?;
 
-    // Account verification is a pairing requirement: an unverified address
-    // may create keys via the console session but cannot drive the desktop
-    // agent until the dashboard confirms it.
     let email_verified = user_record
         .email_verified
         .typed()
@@ -126,9 +109,11 @@ async fn entitlements(
     }
 
     let plan = state.app_db.plan_of(&user_id).await.map_err(db_error)?;
-    let allowlist_ids = state.app_db.allowlist_of(&plan).await.map_err(db_error)?;
-    // The desktop picker shows display names straight from the router:
-    // resolve each allowlisted id to its catalog name here.
+    let allowlist_ids = state
+        .app_db
+        .effective_allowlist_of(&user_id, &plan)
+        .await
+        .map_err(db_error)?;
     let catalog = state.catalog.snapshot();
     let allowlist: Vec<serde_json::Value> = allowlist_ids
         .iter()

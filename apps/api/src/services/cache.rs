@@ -1,18 +1,8 @@
-//! Upstash Redis cache client.
-//!
-//! Speaks the Upstash REST API directly (`POST <url>` with `["COMMAND",
-//! args...]` and an `Authorization: Bearer <token>` header) via the shared
-//! `reqwest` client — no extra dependency. Every operation is best-effort:
-//! cache failures log a warning and fall back to the origin, never failing
-//! the request. Keys use the `argus:<domain>:<id>` namespace.
-
 use std::sync::Arc;
 use std::time::Duration;
 
 use reqwest::{Client as HttpClient, Url};
 
-/// Cache backend — `Some(client)` when Upstash credentials are configured,
-/// `None` in local dev without them (all operations become no-ops).
 #[derive(Clone, Default)]
 pub struct Cache {
     client: Option<Arc<Inner>>,
@@ -61,7 +51,6 @@ impl Cache {
         Self { client }
     }
 
-    /// Fetch a JSON value from the cache. `None` on miss or error.
     pub async fn get<T: serde::de::DeserializeOwned>(&self, key: &str) -> Option<T> {
         let inner = self.client.as_ref()?;
         let raw = run::<Option<String>>(inner, &["GET", key]).await?;
@@ -75,7 +64,6 @@ impl Cache {
         }
     }
 
-    /// Store a JSON value with a TTL. Best-effort — errors are logged, never raised.
     pub async fn set(&self, key: &str, value: &impl serde::Serialize, ttl_secs: u64) {
         let Some(inner) = self.client.as_ref() else {
             return;
@@ -90,7 +78,6 @@ impl Cache {
         };
     }
 
-    /// Remove a key. Best-effort.
     pub async fn delete(&self, key: &str) {
         let Some(inner) = self.client.as_ref() else {
             return;
@@ -99,8 +86,6 @@ impl Cache {
     }
 }
 
-/// Run one Upstash REST command. `None` on any error (logged by the caller
-/// context — deliberately quiet here so `get`/`set` stay one-liners).
 async fn run<T: serde::de::DeserializeOwned>(inner: &Inner, args: &[&str]) -> Option<T> {
     let body = serde_json::to_value(args).ok()?;
     let response = inner

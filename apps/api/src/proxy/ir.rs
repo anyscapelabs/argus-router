@@ -1,27 +1,11 @@
-//! Canonical internal representation (CIR) for chat proxying.
-//!
-//! Every ingress format (OpenAI compat, Gemini compat) parses into this
-//! form; the upstream adapter family is rebuilt from it. Tools and tool-call
-//! history only ever exist here in normalized form, so a client can switch
-//! models at any point of a conversation without tool-calling context being
-//! mangled or lost.
-//!
-//! The IR mirrors the desktop app's surface one-for-one; members the router
-//! has not yet wired through are kept for that parity rather than trimmed.
 #![allow(dead_code)]
 
 use serde::{Deserialize, Serialize};
 
-/// Per-origin conversion quirks, mirroring the desktop app's `Quirks` struct
-/// so a future direct-origin family (native Anthropic/Gemini) ports into the
-/// same pipeline without a redesign.
 #[derive(Clone, Copy, Debug)]
 pub struct Quirks {
-    /// Chat-completions path appended to the upstream base URL.
     pub chat_path: &'static str,
-    /// Field upstream expects the output cap in.
     pub max_tokens_field: &'static str,
-    /// Whether `stream_options.include_usage` is safe to request.
     pub stream_options: bool,
 }
 
@@ -32,7 +16,6 @@ pub enum Role {
     Assistant,
 }
 
-/// One message turn: a role and its normalized blocks.
 #[derive(Clone, Debug)]
 pub struct Message {
     pub role: Role,
@@ -53,27 +36,18 @@ pub enum Block {
     Text {
         text: String,
     },
-    /// Vision input, already base64-decoded inline (`mime`, `data_b64`).
     Image {
         mime: String,
         data_b64: String,
     },
-    /// Model reasoning surfaced upstream (Anthropic thinking; OpenAI
-    /// reasoning_content for reasoning flavors). Round-tripped so a
-    /// mid-conversation switch keeps reasoning context where supported,
-    /// silently dropped upstream where not.
     Thinking {
         text: String,
     },
-    /// A call the assistant emitted. `input_json` is a serialized JSON value
-    /// (object); kept as a string so round-trips never re-parse or re-flatten
-    /// large tool payloads needlessly.
     ToolUse {
         id: String,
         name: String,
         input_json: String,
     },
-    /// A result fed back to the model, `is_error` marks failed tool calls.
     ToolResult {
         id: String,
         content: String,
@@ -85,8 +59,6 @@ pub enum Block {
 pub struct ToolDef {
     pub name: String,
     pub description: Option<String>,
-    /// Parameters JSON schema (serialized object), normalized from the
-    /// ingress dialect.
     pub schema_json: String,
 }
 
@@ -107,7 +79,6 @@ impl ToolChoice {
 
 #[derive(Clone, Debug)]
 pub struct Params {
-    /// Already clamped to the entry's `max_output`.
     pub max_tokens: Option<u64>,
     pub temperature: Option<f64>,
     pub top_p: Option<f64>,
@@ -116,12 +87,14 @@ pub struct Params {
 
 impl Params {
     pub fn clamped(params: Option<OpenAiParams>, entry_max_output: i64) -> Params {
+        let catalog_limit = entry_max_output.max(1) as u64;
         let max_tokens = params
             .as_ref()
             .and_then(|p| p.max_tokens.or(p.max_completion_tokens))
-            .map(|tokens| tokens.min(entry_max_output.max(1) as u64));
+            .unwrap_or(catalog_limit)
+            .clamp(1, catalog_limit);
         Params {
-            max_tokens,
+            max_tokens: Some(max_tokens),
             temperature: params.as_ref().and_then(|p| p.temperature),
             top_p: params.as_ref().and_then(|p| p.top_p),
             stop: params
@@ -132,8 +105,6 @@ impl Params {
     }
 }
 
-/// Mid-conversation model switches are common, so every field stays
-/// optional/loosely typed — no upstream-specific fields escape here.
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct OpenAiParams {
     pub max_tokens: Option<u64>,
@@ -143,10 +114,8 @@ pub struct OpenAiParams {
     pub stop: Option<Vec<String>>,
 }
 
-/// A normalized model call.
 #[derive(Clone, Debug)]
 pub struct Chat {
-    /// Concatenated system turns.
     pub system: Vec<String>,
     pub messages: Vec<Message>,
     pub tools: Vec<ToolDef>,
@@ -168,28 +137,32 @@ impl Chat {
     }
 }
 
-/// Streamed / collected model output, normalized across adapters.
-///
-/// Ingress re-serialization sits on top: a stream of these events (SSE
-/// endpoint) or a finished `Turn` (non-streaming) maps back into the caller's
-/// chosen wire dialect.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FinishReason {
+    #[default]
+    Stop,
+    Length,
+    ToolCalls,
+    ContentFilter,
+}
+
 #[derive(Clone, Debug)]
 pub enum Event {
-    /// Model-visible output text.
     TextDelta(String),
-    /// Reasoning tokens (Anthropic thinking / OpenAI reasoning_content).
     ThinkingDelta(String),
-    /// First fragment of one tool call. `index` is the order of the call
-    /// within one assistant turn — not upstream's raw array index.
     ToolUseStart {
         index: usize,
         id: String,
         name: String,
     },
-    /// A chunk of the serialized call arguments JSON.
-    ToolUseDelta { index: usize, value_json: String },
-    /// Call arguments are complete for this index.
-    ToolUseEnd { index: usize },
+    ToolUseDelta {
+        index: usize,
+        value_json: String,
+    },
+    ToolUseEnd {
+        index: usize,
+    },
+    Finish(FinishReason),
     Usage {
         input_tokens: i64,
         output_tokens: i64,
@@ -197,13 +170,16 @@ pub enum Event {
     },
 }
 
-/// A finished model turn (non-streaming path), again normalized.
 #[derive(Clone, Debug, Serialize)]
 pub struct Turn {
     pub text: String,
     pub thinking: String,
     #[serde(skip)]
     pub tool_use: Vec<(String, String, String)>,
+    #[serde(skip)]
+    pub finish_reason: FinishReason,
+    #[serde(skip)]
+    pub usage_reported: bool,
     pub usage: Usage,
 }
 
@@ -213,6 +189,8 @@ impl Default for Turn {
             text: String::new(),
             thinking: String::new(),
             tool_use: Vec::new(),
+            finish_reason: FinishReason::Stop,
+            usage_reported: false,
             usage: Usage::default(),
         }
     }
@@ -232,8 +210,6 @@ impl Usage {
     }
 }
 
-/// Terminal error of a stream (ingress turns these into dialect-shaped
-/// error envelopes).
 #[derive(Clone, Debug)]
 pub enum StreamEnd {
     Done(Usage),
@@ -247,6 +223,7 @@ pub enum ErrCode {
     Forbidden,
     NotFound,
     RateLimited,
+    CreditsExhausted,
     Overloaded,
     Upstream,
     Network,
@@ -262,6 +239,7 @@ impl ErrCode {
             ErrCode::Forbidden => "forbidden",
             ErrCode::NotFound => "not_found",
             ErrCode::RateLimited => "rate_limit_error",
+            ErrCode::CreditsExhausted => "credits_exhausted",
             ErrCode::Overloaded => "overloaded_error",
             ErrCode::Upstream => "upstream_error",
             ErrCode::Network => "network_error",
@@ -274,14 +252,10 @@ impl ErrCode {
 #[derive(Clone, Debug)]
 pub struct Errx {
     pub code: ErrCode,
-    /// HTTP status for the ingress response.
     pub status: u16,
     pub message: String,
-    /// Human provider name for attribution ("OpenAI", "Anthropic", ...).
     pub provider: Option<String>,
-    /// Upstream request id (`x-request-id`-style) so support can trace.
     pub request_id: Option<String>,
-    /// Retry hint in seconds, from `Retry-After` upstream.
     pub retry_after: Option<u64>,
 }
 
@@ -302,6 +276,11 @@ impl Errx {
         self
     }
 
+    pub fn with_retry_after(mut self, seconds: u64) -> Self {
+        self.retry_after = Some(seconds);
+        self
+    }
+
     pub fn from_upstream_status(status: u16, message: impl Into<String>) -> Self {
         let code = match status {
             400 | 404 | 422 => ErrCode::InvalidRequest,
@@ -317,9 +296,25 @@ impl Errx {
     }
 }
 
-/// Tool args are accumulated as strings but must be presented as JSON when
-/// re-serialized; a parse failure on an upstream's malformed argument string
-/// degrades to a plain JSON string (call integrity beats pretty shape).
 pub fn parse_json_lenient(raw: &str) -> serde_json::Value {
     serde_json::from_str(raw).unwrap_or_else(|_| serde_json::Value::String(raw.to_owned()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{OpenAiParams, Params};
+
+    #[test]
+    fn materializes_catalog_output_limit() {
+        assert_eq!(Params::clamped(None, 4096).max_tokens, Some(4096));
+    }
+
+    #[test]
+    fn clamps_requested_output_limit() {
+        let params = OpenAiParams {
+            max_tokens: Some(8192),
+            ..OpenAiParams::default()
+        };
+        assert_eq!(Params::clamped(Some(params), 4096).max_tokens, Some(4096));
+    }
 }

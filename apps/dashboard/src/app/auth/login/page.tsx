@@ -15,7 +15,6 @@ export default function LoginPage() {
   const github = useSocialSignIn("github");
   const isMutating = signIn.isPending || google.isPending || github.isPending;
 
-  // Already signed in — skip the login form and land on the console.
   useEffect(() => {
     if (session.isSuccess && session.data) {
       router.replace("/console/overview");
@@ -27,7 +26,7 @@ export default function LoginPage() {
         <FaSpinner className="size-5 animate-spin text-white/60" />
       ) : (
         <>
-      <h1 className="font-pixel text-5xl">Argus Agent</h1>
+      <h1 className="font-pixel text-5xl">Anyscape Gateway</h1>
       {(google.isError || github.isError) && (
         <p className="w-80 text-center text-xs leading-relaxed text-red-400">
           {(google.error ?? github.error)?.message}
@@ -136,7 +135,7 @@ export default function LoginPage() {
         <a href="/privacy" className="underline hover:text-white/80">
           Privacy
         </a>{" "}
-        and to receive updates and emails from Argus Agent.
+        and to receive updates and emails from Anyscape.
       </p>
         </>
       )}

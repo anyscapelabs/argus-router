@@ -8,8 +8,6 @@ use crate::auth::AppAuthSchema;
 use crate::services::catalog::ModelView;
 use crate::state::AppState;
 
-/// Session-resolved user id (unauthenticated requests are rejected earlier
-/// by the `CurrentSession` extractor).
 fn user_id(session: &CurrentSession<AppAuthSchema>) -> String {
     session.user.id.typed().ok().cloned().unwrap_or_default()
 }
@@ -21,9 +19,6 @@ pub fn router() -> Router<AppState> {
         .route("/refresh", post(refresh_models))
 }
 
-/// `GET /api/v1/models` — the dynamic catalog (model_catalog table), merged
-/// with the signed-in owner's plan allowlist so the dashboard renders real
-/// enablement, never a static list.
 async fn list_models(
     State(state): State<AppState>,
     session: CurrentSession<AppAuthSchema>,
@@ -36,13 +31,17 @@ async fn list_models(
             &error.to_string(),
         )
     })?;
-    let allowlist = state.app_db.allowlist_of(&plan).await.map_err(|error| {
-        problem(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "ALLOWLIST_LOOKUP",
-            &error.to_string(),
-        )
-    })?;
+    let allowlist = state
+        .app_db
+        .effective_allowlist_of(&user, &plan)
+        .await
+        .map_err(|error| {
+            problem(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "ALLOWLIST_LOOKUP",
+                &error.to_string(),
+            )
+        })?;
     let models: Vec<ModelView> = state
         .catalog
         .snapshot()
@@ -69,8 +68,6 @@ struct ToggleResponse {
     allowlist: Vec<String>,
 }
 
-/// `POST /api/v1/models/allowlist` — flips one model on the signed-in
-/// owner's plan allowlist (dashboard models page toggle).
 async fn toggle_allowlist(
     State(state): State<AppState>,
     session: CurrentSession<AppAuthSchema>,
@@ -92,9 +89,49 @@ async fn toggle_allowlist(
             &format!("no catalog model named `{}`", request.model_id),
         ));
     }
+    if request.enabled {
+        let in_plan = state
+            .app_db
+            .allowlist_of(&plan)
+            .await
+            .map_err(|error| {
+                problem(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "ALLOWLIST_LOOKUP",
+                    &error.to_string(),
+                )
+            })?
+            .iter()
+            .any(|allowed| allowed == &request.model_id);
+        let admin_email = session.user.email.typed().ok().cloned().flatten();
+        let admin = state.settings.is_admin(&user, admin_email.as_deref());
+        if !in_plan && !admin {
+            return Err(problem(
+                StatusCode::FORBIDDEN,
+                "NOT_IN_PLAN",
+                &format!(
+                    "model `{}` is not part of your current plan",
+                    request.model_id
+                ),
+            ));
+        }
+        if !in_plan && admin {
+            state
+                .app_db
+                .allowlist_set(&plan, &request.model_id, true)
+                .await
+                .map_err(|error| {
+                    problem(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "ALLOWLIST_UPDATE",
+                        &error.to_string(),
+                    )
+                })?;
+        }
+    }
     state
         .app_db
-        .allowlist_set(&plan, &request.model_id, request.enabled)
+        .set_model_preference(&user, &request.model_id, request.enabled)
         .await
         .map_err(|error| {
             problem(
@@ -103,13 +140,17 @@ async fn toggle_allowlist(
                 &error.to_string(),
             )
         })?;
-    let allowlist = state.app_db.allowlist_of(&plan).await.map_err(|error| {
-        problem(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "ALLOWLIST_LOOKUP",
-            &error.to_string(),
-        )
-    })?;
+    let allowlist = state
+        .app_db
+        .effective_allowlist_of(&user, &plan)
+        .await
+        .map_err(|error| {
+            problem(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "ALLOWLIST_LOOKUP",
+                &error.to_string(),
+            )
+        })?;
     Ok(AxumJson(ToggleResponse {
         model_id: request.model_id,
         enabled: request.enabled,
@@ -117,14 +158,11 @@ async fn toggle_allowlist(
     }))
 }
 
-/// `POST /api/v1/models/refresh` — re-seeds the dynamic catalog from our
-/// embedded catalog into the table and the live cache, keeping the
-/// dashboard's models page truthful without a redeploy. OpenRouter is never
-/// used as a catalog source.
 async fn refresh_models(
     State(state): State<AppState>,
-    _session: CurrentSession<AppAuthSchema>,
+    session: CurrentSession<AppAuthSchema>,
 ) -> Result<AxumJson<serde_json::Value>, ApiProblem> {
+    require_admin(&state, &session)?;
     let seed = crate::services::catalog::seed_entries();
     let entries = state.app_db.load_catalog(&seed).await.map_err(|error| {
         problem(
@@ -140,7 +178,22 @@ async fn refresh_models(
     ))
 }
 
-/// Error body rendered with the right HTTP status.
+fn require_admin(
+    state: &AppState,
+    session: &CurrentSession<AppAuthSchema>,
+) -> Result<(), ApiProblem> {
+    let email = session.user.email.typed().ok().cloned().flatten();
+    if state.settings.is_admin(&user_id(session), email.as_deref()) {
+        Ok(())
+    } else {
+        Err(problem(
+            StatusCode::FORBIDDEN,
+            "ADMIN_ONLY",
+            "this action requires an operator account",
+        ))
+    }
+}
+
 type ApiProblem = (StatusCode, AxumJson<serde_json::Value>);
 
 fn problem(status: StatusCode, code: &str, message: &str) -> ApiProblem {

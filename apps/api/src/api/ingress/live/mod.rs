@@ -1,29 +1,3 @@
-//! Ingress: Live Speech-to-Speech WebSocket endpoint (`GET /v1/live`).
-//!
-//! Authenticates via Bearer / x-api-key / `?key=` query param, checks monthly
-//! voice_minutes quota, then bidirectionally proxies to Google's Gemini
-//! Multimodal Live API (BidiGenerateContent).
-//!
-//! # Supported Live models
-//! The allowlist and billing rates live in `catalog/live_models.json`
-//! (embedded at build time; see [`models`]). Requests with an unknown
-//! `?model=` are rejected with 400; omitting `?model=` selects the registry's
-//! default entry. Live models never appear in the chat model catalogs.
-//!
-//! # Rate-limit handling (65 k TPM)
-//! Google Live enforces 65,000 tokens-per-minute. When an upstream text frame
-//! contains a 429 error envelope, the proxy:
-//!   1. Pauses forwarding for `Retry-After` seconds (capped at 60 s).
-//!   2. Sends the client a `{"type":"rate_limited","retry_after":<n>}` notice.
-//!   3. Resumes after the backoff. After `MAX_RATE_LIMIT_RETRIES` consecutive
-//!      429s the session is closed gracefully.
-//!
-//! # Voice→text fallback
-//! When the client disconnects after sending audio (but before receiving a
-//! complete reply), the last partial model text is stored in `LiveSessionStore`
-//! for two minutes. The desktop app polls `GET /v1/live/last-reply?session_id=`
-//! and injects the reply as a normal chat message.
-
 mod frames;
 mod models;
 mod session;
@@ -46,8 +20,6 @@ use frames::new_session_id;
 use models::{all_model_ids, default_live_model, find_live_model};
 use usage::{LiveUsage, record};
 
-// ─── query structs ───────────────────────────────────────────────────────────
-
 #[derive(Debug, Deserialize)]
 pub struct LiveQuery {
     pub key: Option<String>,
@@ -60,11 +32,6 @@ pub struct LastReplyQuery {
     pub key: Option<String>,
 }
 
-// ─── helpers ─────────────────────────────────────────────────────────────────
-
-/// Allows the API key via `?key=` query param (WS clients can't set custom
-/// headers): injects it as an `Authorization: Bearer` header when the request
-/// carries no auth header of its own.
 fn inject_query_key(headers: &mut HeaderMap, key: &Option<String>) {
     if headers.contains_key("authorization") || headers.contains_key("x-api-key") {
         return;
@@ -75,27 +42,25 @@ fn inject_query_key(headers: &mut HeaderMap, key: &Option<String>) {
     }
 }
 
-// ─── GET /v1/live/last-reply ─────────────────────────────────────────────────
-
-/// Returns the last model text reply stored for a session that ended early.
-/// Used by the desktop app for voice→text fallback.
 pub async fn last_reply_handler(
     State(state): State<AppState>,
     mut headers: HeaderMap,
     Query(query): Query<LastReplyQuery>,
 ) -> Response {
-    // Mirror the same key injection as the live handler.
     inject_query_key(&mut headers, &query.key);
-    if authenticate(&state, &headers).await.is_err() {
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(serde_json::json!({
-                "error": {"code": "unauthorized", "message": "invalid API key"}
-            })),
-        )
-            .into_response();
-    }
-    match state.live_sessions.take(&query.session_id) {
+    let principal = match authenticate(&state, &headers).await {
+        Ok(principal) => principal,
+        Err(_) => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({
+                    "error": {"code": "unauthorized", "message": "invalid API key"}
+                })),
+            )
+                .into_response();
+        }
+    };
+    match state.live_sessions.take(&query.session_id, &principal.user_id) {
         Some(text) => (
             StatusCode::OK,
             Json(serde_json::json!({
@@ -117,24 +82,19 @@ pub async fn last_reply_handler(
     }
 }
 
-// ─── GET /v1/live (WebSocket upgrade) ───────────────────────────────────────
-
-/// Upgrades the HTTP connection to a WebSocket after authenticating the caller
-/// and verifying their monthly voice-minutes quota.
 pub async fn live_websocket_handler(
     State(state): State<AppState>,
     ws: WebSocketUpgrade,
     mut headers: HeaderMap,
     Query(query): Query<LiveQuery>,
 ) -> Response {
+    let ws = ws.max_message_size(1 << 20).max_frame_size(256 << 10);
     let start = Instant::now();
     let model = query
         .model
         .clone()
         .unwrap_or_else(|| default_live_model().id.clone());
 
-    // Reject unknown live models instead of blindly proxying them upstream:
-    // keeps cost accounting correct and the upstream allowlist tight.
     if find_live_model(&model).is_none() {
         let allowed = all_model_ids();
         record(
@@ -166,7 +126,6 @@ pub async fn live_websocket_handler(
             .into_response();
     }
 
-    // Allow API key via ?key= query param (WS clients can't set custom headers).
     inject_query_key(&mut headers, &query.key);
 
     let principal = match authenticate(&state, &headers).await {
@@ -195,11 +154,39 @@ pub async fn live_websocket_handler(
         }
     };
 
-    // Check voice quota atomically (advisory lock). DB errors bubble up as
-    // 500s rather than being silently treated as quota exhaustion.
+    let credits_paid =
+        match crate::api::ingress::enforce_plan_quotas(&state, &principal.user_id, &principal.plan)
+            .await
+        {
+            Ok(credits_paid) => credits_paid,
+            Err(err) => {
+                record(
+                    &state,
+                    LiveUsage {
+                        key_id: Some(&principal.key_id),
+                        user_id: Some(&principal.user_id),
+                        plan_id: Some(&principal.plan),
+                        model: &model,
+                        status: err.status as i32,
+                        latency_ms: start.elapsed().as_millis() as i64,
+                        error_code: Some(err.code.as_str()),
+                        cost_usd: 0.0,
+                    },
+                );
+                return (
+                    StatusCode::from_u16(err.status).unwrap_or(StatusCode::TOO_MANY_REQUESTS),
+                    Json(serde_json::json!({
+                        "error": {"code": err.code.as_str(), "message": err.message}
+                    })),
+                )
+                    .into_response();
+            }
+        };
+
+    let session_id = new_session_id();
     let (used_minutes, allowed_minutes) = match state
         .app_db
-        .check_voice_quota(&principal.user_id, &principal.plan)
+        .reserve_voice_session(&principal.user_id, &principal.plan, &session_id)
         .await
     {
         Ok(crate::services::app_db::QuotaCheck::NotAvailable) => {
@@ -287,21 +274,115 @@ pub async fn live_websocket_handler(
     };
 
     let remaining_minutes = (allowed_minutes - used_minutes).max(0);
+    let credit_reservation_id = if credits_paid {
+        let cost_per_minute = find_live_model(&model)
+            .map(models::LiveModelSpec::blended_cost_per_min)
+            .unwrap_or(0.0);
+        let max_session_micros = (remaining_minutes.max(1) as f64 * cost_per_minute * 1_000_000.0)
+            .ceil()
+            .clamp(1.0, i64::MAX as f64) as i64;
+        let balance = match state.app_db.credit_balance(&principal.user_id).await {
+            Ok(balance) => balance,
+            Err(err) => {
+                tracing::error!(%err, user_id = %principal.user_id, "credit balance lookup failed");
+                let _ = state.app_db.release_voice_reservation(&session_id).await;
+                record(
+                    &state,
+                    LiveUsage {
+                        key_id: Some(&principal.key_id),
+                        user_id: Some(&principal.user_id),
+                        plan_id: Some(&principal.plan),
+                        model: &model,
+                        status: StatusCode::INTERNAL_SERVER_ERROR.as_u16() as i32,
+                        latency_ms: start.elapsed().as_millis() as i64,
+                        error_code: Some("credit_balance_failed"),
+                        cost_usd: 0.0,
+                    },
+                );
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({
+                        "error": {
+                            "code": "UPSTREAM_ERROR",
+                            "message": "the credit balance lookup failed",
+                        }
+                    })),
+                )
+                    .into_response();
+            }
+        };
+        let held_micros = max_session_micros.min(balance);
+        if held_micros <= 0 {
+            let _ = state.app_db.release_voice_reservation(&session_id).await;
+            record(
+                &state,
+                LiveUsage {
+                    key_id: Some(&principal.key_id),
+                    user_id: Some(&principal.user_id),
+                    plan_id: Some(&principal.plan),
+                    model: &model,
+                    status: StatusCode::PAYMENT_REQUIRED.as_u16() as i32,
+                    latency_ms: start.elapsed().as_millis() as i64,
+                    error_code: Some("credits_exhausted"),
+                    cost_usd: 0.0,
+                },
+            );
+            return (
+                StatusCode::PAYMENT_REQUIRED,
+                Json(serde_json::json!({
+                    "error": {
+                        "code": "credits_exhausted",
+                        "message": "included usage is exhausted and no prepaid credits remain",
+                    }
+                })),
+            )
+                .into_response();
+        }
+        match super::reserve_credit_operation(&state, &principal.user_id, held_micros).await {
+            Ok(reservation) => Some(reservation.id),
+            Err(item) => {
+                let _ = state.app_db.release_voice_reservation(&session_id).await;
+                record(
+                    &state,
+                    LiveUsage {
+                        key_id: Some(&principal.key_id),
+                        user_id: Some(&principal.user_id),
+                        plan_id: Some(&principal.plan),
+                        model: &model,
+                        status: item.status as i32,
+                        latency_ms: start.elapsed().as_millis() as i64,
+                        error_code: Some(item.code.as_str()),
+                        cost_usd: 0.0,
+                    },
+                );
+                return (
+                    StatusCode::from_u16(item.status).unwrap_or(StatusCode::PAYMENT_REQUIRED),
+                    Json(serde_json::json!({
+                        "error": {"code": item.code.as_str(), "message": item.message}
+                    })),
+                )
+                    .into_response();
+            }
+        }
+    } else {
+        None
+    };
     let gemini_key = state.settings.gemini_api_key.clone();
-    let session_id = new_session_id();
 
     ws.on_upgrade(move |socket| async move {
         session::handle_socket(
             socket,
-            state,
+            state.clone(),
             principal.key_id,
             principal.user_id,
             principal.plan,
             model,
             remaining_minutes,
             gemini_key,
-            session_id,
+            &session_id,
+            credit_reservation_id,
         )
         .await;
+        let _ = state.app_db.release_voice_reservation(&session_id).await;
     })
 }

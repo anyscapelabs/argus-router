@@ -4,11 +4,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { createKey, listKeys, revokeKey, type CreateKeyResult } from "./api";
 
-/**
- * Agent keys: what the desktop app pairs with. The BetterAuth session of the
- * browser creates, lists and revokes them; the desktop authenticates with
- * them.
- */
 export function useApiKeys() {
   return useQuery({
     queryKey: ["api-keys"] as const,
@@ -18,8 +13,8 @@ export function useApiKeys() {
 
 export function useCreateApiKey() {
   const qc = useQueryClient();
-  return useMutation<CreateKeyResult, Error, string>({
-    mutationFn: (name) => createKey(name),
+  return useMutation<CreateKeyResult, Error, { name: string; expiresIn?: number | null }>({
+    mutationFn: ({ name, expiresIn }) => createKey(name, expiresIn),
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ["api-keys"] });
     },

@@ -10,28 +10,24 @@ use crate::config::Settings;
 use crate::services::app_db::AppDb;
 use crate::services::cache::Cache;
 use crate::services::catalog::CatalogCache;
+use crate::services::dodo::{BillingCatalog, DodoClient};
+use crate::services::rate::RateWindow;
 use crate::services::search::SearchRouter;
 use crate::services::usage::UsageRecorder;
 
-/// Shared application state, resolved per-route via `FromRef`.
 #[derive(Clone)]
 pub struct AppState {
     pub settings: Settings,
     pub auth: Arc<BetterAuth<AppAuthSchema>>,
-    /// Same ApiKeyPlugin instance registered in the auth stack — used by
-    /// machine-facing domain routes to verify `x-api-key` credentials.
     pub api_keys: Arc<ApiKeyPlugin>,
-    /// App-owned SQLx pool (plans, entitlements, allowlists).
     pub app_db: AppDb,
-    /// Dynamic model catalog (model_catalog table), live-cache with refresh.
     pub catalog: CatalogCache,
-    /// Upstash Redis cache for hot reads (profile, ...); no-ops unconfigured.
+    pub billing_catalog: Arc<BillingCatalog>,
+    pub dodo: Option<Arc<DodoClient>>,
     pub cache: Cache,
-    /// Batched usage recorder (never stores prompt content).
     pub usage: UsageRecorder,
     pub search_router: Arc<SearchRouter>,
-    /// Short-lived in-memory store for voice-to-text fallback replies.
-    /// Populated when a live session ends with pending model text.
+    pub rate_window: Arc<RateWindow>,
     pub live_sessions: Arc<LiveSessionStore>,
     pub db: better_auth::seaorm::DatabaseConnection,
 }

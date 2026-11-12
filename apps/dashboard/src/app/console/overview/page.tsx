@@ -1,10 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { GoChevronDown, GoDownload, GoChevronRight, GoClock, GoSync } from "react-icons/go";
-import { useUsage, useUsageSummary } from "@/domains/usage/hooks";
-import type { UsageRange, UsageRow } from "@/domains/usage/api";
-import { chartAxisLabels, UsageChart, UsageEmptyState } from "@/components/usage-chart";
+import { Suspense, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { GoChevronDown, GoDownload, GoChevronRight } from "react-icons/go";
+import { useUsage } from "@/domains/usage/hooks";
+import type { UsageRow } from "@/domains/usage/api";
+import { UsageEmptyState } from "@/components/usage-empty-state";
+import { Skeleton } from "@/components/skeleton";
+import { formatTokenCount, modelDisplayName } from "@/lib/usage-format";
 
 const platforms = [
   { label: "macOS", detail: "Apple Silicon" },
@@ -15,8 +18,6 @@ const platforms = [
   { label: "Linux", detail: ".rpm" },
   { label: "Linux", detail: ".AppImage" },
 ];
-
-const subTabs = ["Activity", "My usage", "Leaderboard", "Logs"];
 
 type RequestLog = {
   id: string;
@@ -46,227 +47,228 @@ function toActivityLog(row: UsageRow): RequestLog {
   };
 }
 
-function getStatusColor(_status: number): string {
-  return "bg-white/25";
+function getStatusColor(status: number): string {
+  return status >= 400 || status === 0 ? "bg-red-500/60" : "bg-white/25";
 }
 
-const levelColors = [
-  "bg-[#1a1a1a]",
-];
+const levelColors = ["bg-[#1a1a1a]"];
 
-function RangeControls({
-  range,
-  onRangeChange,
-  onRefresh,
-  isFetching,
-}: {
-  range: UsageRange;
-  onRangeChange: (next: UsageRange) => void;
-  onRefresh: () => void;
-  isFetching: boolean;
-}) {
-  return (
-    <div className="flex gap-1">
-      <button
-        type="button"
-        onClick={() =>
-          onRangeChange(range === "24h" ? "7d" : range === "7d" ? "30d" : "24h")
-        }
-        className="flex cursor-pointer items-center gap-1 rounded-sm border border-border-secondary bg-tertiary px-2 py-1 text-xs text-primary transition-colors hover:bg-white/10"
-      >
-        <GoClock className="size-3" />
-        {range}
-      </button>
-      <button
-        type="button"
-        onClick={onRefresh}
-        disabled={isFetching}
-        className={`flex cursor-pointer items-center gap-1 rounded-sm border border-border-secondary px-2 py-1 text-xs text-primary transition-colors ${
-          isFetching ? "bg-white/10" : "bg-tertiary hover:bg-white/10"
-        }`}
-      >
-        <GoSync className={`size-3 ${isFetching ? "animate-spin" : ""}`} />
-        Refresh
-      </button>
-    </div>
-  );
-}
+const downloadUrl = process.env.NEXT_PUBLIC_ARGUS_DOWNLOAD_URL;
+const GUIDE_DISMISSED_KEY = "argus.guide.dismissed";
 
 export default function OverviewPage() {
   const [os, setOs] = useState("Unknown");
   const [open, setOpen] = useState(false);
-  const [activeSubTab, setActiveSubTab] = useState("Activity");
-  const [hovered, setHovered] = useState<RequestLog | null>(null);
-  const [usageMetric, setUsageMetric] = useState<"cost" | "tokens">("cost");
-  const [logRange, setLogRange] = useState<UsageRange>("24h");
+  const [guideDismissed, setGuideDismissed] = useState(false);
+  const [hovered, setHovered] = useState<{ log: RequestLog; index: number } | null>(null);
 
-  const usage = useUsage({ range: logRange });
-  const usageRows = usage.data?.rows ?? [];
-  // Totals/breakdowns/chart come from server-side aggregates over every row in
-  // range; `usageRows` is capped and is only the Logs list.
-  const summary = useUsageSummary({ range: logRange });
-  const totals = summary.data?.totals;
-  const series = summary.data?.series ?? [];
-  const logs = useMemo(() => {
-    return usageRows
-      .slice()
-      .reverse()
-      .map(toActivityLog);
-  }, [usageRows]);
-  const modelUsage = useMemo(
-    () =>
-      (summary.data?.byModel ?? []).map((m) => ({
-        model: m.model || "unknown",
-        requests: m.requests,
-        input: m.inputTokens,
-        output: m.outputTokens,
-        cacheRead: m.cacheReadTokens,
-        cost: m.costUsd,
-      })),
-    [summary.data],
-  );
+  const activityUsage = useUsage({ limit: 40 });
+  const activityRows = activityUsage.data?.rows ?? [];
+  const activityLogs = useMemo(() => {
+    return activityRows.slice().reverse().map(toActivityLog);
+  }, [activityRows]);
+
   useEffect(() => {
-    const platform = navigator.platform.toLowerCase();
-    if (platform.includes("mac")) setOs("macOS");
-    else if (platform.includes("win")) setOs("Windows");
-    else if (platform.includes("linux")) setOs("Linux");
+    const frame = requestAnimationFrame(() => {
+      try {
+        setGuideDismissed(window.localStorage.getItem(GUIDE_DISMISSED_KEY) === "1");
+      } catch {
+      }
+      const platform = window.navigator.platform.toLowerCase();
+      if (platform.includes("mac")) setOs("macOS");
+      else if (platform.includes("win")) setOs("Windows");
+      else if (platform.includes("linux")) setOs("Linux");
+    });
+    return () => cancelAnimationFrame(frame);
   }, []);
 
-  const sparkLogs = logs.slice(-40);
-  const recentLogs = logs.slice(-5);
-  const axisLabels = useMemo(() => chartAxisLabels(logRange), [logRange]);
-  const chartGranularity = logRange === "24h" ? "hourly" : "daily";
+  const dismissGuide = (dismissed: boolean) => {
+    setGuideDismissed(dismissed);
+    try {
+      if (dismissed) window.localStorage.setItem(GUIDE_DISMISSED_KEY, "1");
+      else window.localStorage.removeItem(GUIDE_DISMISSED_KEY);
+    } catch {
+    }
+  };
 
+  const sparkLogs = activityLogs.slice(-40);
+  const recentLogs = activityLogs.slice(-5);
 
   return (
-    <div className="flex min-h-full flex-1 flex-col px-2">
-      <div className="mb-4 flex shrink-0 flex-row gap-1">
-        {subTabs.map((tab) => {
-          const active = activeSubTab === tab;
-          return (
-            <button
-              key={tab}
-              type="button"
-              onClick={() => setActiveSubTab(tab)}
-              className={`cursor-pointer rounded-sm px-2 py-1 text-xs transition-colors ${
-                active
-                  ? "bg-[#202020] font-medium text-primary"
-                  : "text-white/60 hover:bg-[#202020] hover:text-primary"
-              }`}
-            >
-              {tab}
-            </button>
-          );
-        })}
-      </div>
-
-      {activeSubTab === "Activity" && (
-        <div className="flex gap-6">
-          <div className="w-2/3 min-w-0 max-w-full rounded-md border border-border-secondary bg-[#262626] p-4">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <h2 className="text-sm font-medium text-primary">Connect Argus Agent</h2>
-                <p className="mt-1 text-xs text-white/60">
-                  Once connected you can access everything available in Console. Not installed yet?{" "}
-                  <span className="text-white/80">Download Argus Agent</span>
+    <Suspense
+      fallback={
+        <div className="flex flex-1 flex-col gap-2 p-10">
+          <Skeleton className="h-3 w-40" />
+          <Skeleton className="h-3 w-64" />
+          <Skeleton className="h-3 w-52" />
+        </div>
+      }
+    >
+      <div className="flex min-h-full flex-1 flex-col px-2">
+        <div className="flex flex-col gap-6 xl:flex-row">
+          <div className="w-full min-w-0 max-w-4xl rounded-md border border-border-secondary bg-[#262626] p-4">
+            {guideDismissed ? (
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p className="text-xs text-white/60">
+                  Setup guide hidden — it walks you through pairing Argus Agent with this console.
                 </p>
+                <button
+                  type="button"
+                  onClick={() => dismissGuide(false)}
+                  className="cursor-pointer rounded-sm border border-border-secondary bg-tertiary px-2 py-1 text-xs text-primary transition-colors hover:bg-white/10"
+                >
+                  Show guide
+                </button>
               </div>
-              <button type="button" className="shrink-0 text-xs text-white/40 hover:text-primary">
-                —
-              </button>
-            </div>
-
-            <div className="mt-4 flex gap-4 border-b border-border-secondary text-xs">
-              <span className="border-b-2 border-primary pb-2 font-medium text-primary">Desktop</span>
-            </div>
-
-            <ol className="mt-6">
-              <li className="flex items-start gap-3 pb-8">
-                <div className="flex shrink-0 flex-col items-center self-stretch">
-                  <span className="flex size-5 shrink-0 items-center justify-center rounded-full border border-border-secondary bg-transparent text-[11px] text-white/60">
-                    1
-                  </span>
-                  <span className="mt-1 w-px flex-1 bg-border-secondary" />
-                </div>
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-primary">Install Argus Agent Desktop</p>
-                  <p className="mt-0.5 text-xs text-white/40">Skip this if you already have it.</p>
-                  <div className="relative mt-3 flex items-center">
-                    <button
-                      type="button"
-                      className="inline-flex cursor-pointer items-center gap-1.5 rounded-l-sm bg-accent px-2 py-1 text-xs font-medium text-black transition-colors hover:bg-[#d4d4d4]"
-                    >
-                      <GoDownload className="size-3" />
-                      Download for {os}
-                    </button>
-                    <div className="h-5 w-px bg-black/20" />
-                    <button
-                      type="button"
-                      onClick={() => setOpen((v) => !v)}
-                      className="inline-flex cursor-pointer items-center gap-1 rounded-r-sm bg-accent px-2 py-1 text-xs font-medium text-black transition-colors hover:bg-[#d4d4d4]"
-                    >
-                      Other platforms
-                      <GoChevronDown className={`size-3 transition-transform ${open ? "rotate-180" : ""}`} />
-                    </button>
-                    {open && (
-                      <div className="absolute top-full right-0 z-10 mt-1 w-40 overflow-hidden rounded-md border border-border-secondary bg-[#262626] py-1 shadow-lg">
-                        {platforms.map((p, i) => (
-                          <button
-                            key={`${p.label}-${p.detail}-${i}`}
-                            type="button"
-                            onClick={() => setOpen(false)}
-                            className="mx-1 flex w-[calc(100%-0.5rem)] cursor-pointer items-center justify-between gap-2 rounded-md px-2 py-1 text-left text-xs text-white/80 transition-colors hover:bg-[#202020] hover:text-primary"
-                          >
-                            <span>{p.label}</span>
-                            <span className="text-white/40">{p.detail}</span>
-                          </button>
-                        ))}
-                      </div>
-                    )}
+            ) : (
+              <>
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <h2 className="text-sm font-medium text-primary">Connect Argus Agent</h2>
+                    <p className="mt-1 text-xs text-white/60">
+                      Once connected you can access everything available in Console. Not installed yet?{" "}
+                      {downloadUrl ? (
+                        <a
+                          href={downloadUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-white/80 underline underline-offset-2 hover:text-primary"
+                        >
+                          Download Argus Agent
+                        </a>
+                      ) : (
+                        <span className="text-white/80">Download Argus Agent</span>
+                      )}
+                    </p>
                   </div>
+                  <button
+                    type="button"
+                    onClick={() => dismissGuide(true)}
+                    aria-label="Hide setup guide"
+                    className="shrink-0 cursor-pointer text-xs text-white/40 hover:text-primary"
+                  >
+                    —
+                  </button>
                 </div>
-              </li>
 
-              <li className="flex items-start gap-3 pb-8">
-                <div className="flex shrink-0 flex-col items-center self-stretch">
-                  <span className="flex size-5 shrink-0 items-center justify-center rounded-full border border-border-secondary bg-transparent text-[11px] text-white/60">
-                    2
-                  </span>
-                  <span className="mt-1 w-px flex-1 bg-border-secondary" />
+                <div className="mt-4 flex gap-4 border-b border-border-secondary text-xs">
+                  <span className="border-b-2 border-primary pb-2 font-medium text-primary">Desktop</span>
                 </div>
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-primary">Connect this workspace</p>
-                  <p className="mt-0.5 text-xs text-white/40">
-                    In the app, choose <span className="text-white/70">Connect provider → Argus Agent Console</span>.
-                    Your browser opens; approve the sign-in and pick <span className="text-white/70">Default</span>.
-                  </p>
-                </div>
-              </li>
 
-              <li className="flex items-start gap-3">
-                <div className="flex shrink-0 flex-col items-center">
-                  <span className="flex size-5 shrink-0 items-center justify-center rounded-full border border-border-secondary bg-transparent text-[11px] text-white/60">
-                    3
-                  </span>
-                </div>
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-primary">Choose a model</p>
-                  <p className="mt-0.5 text-xs text-white/40">
-                    Pick a model from the model selector dropdown in the app.
-                  </p>
-                </div>
-              </li>
-            </ol>
+                <ol className="mt-6">
+                  <li className="flex items-start gap-3 pb-8">
+                    <div className="flex shrink-0 flex-col items-center self-stretch">
+                      <span className="flex size-5 shrink-0 items-center justify-center rounded-full border border-border-secondary bg-transparent text-[11px] text-white/60">
+                        1
+                      </span>
+                      <span className="mt-1 w-px flex-1 bg-border-secondary" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-primary">Install Argus Agent Desktop</p>
+                      <p className="mt-0.5 text-xs text-white/40">Skip this if you already have it.</p>
+                      <div className="relative mt-3 flex items-center">
+                        {downloadUrl ? (
+                          <>
+                            <a
+                              href={downloadUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1.5 rounded-l-sm bg-accent px-2 py-1 text-xs font-medium text-black transition-colors hover:bg-[#d4d4d4]"
+                            >
+                              <GoDownload className="size-3" />
+                              Download for {os}
+                            </a>
+                            <div className="h-5 w-px bg-black/20" />
+                            <button
+                              type="button"
+                              onClick={() => setOpen((v) => !v)}
+                              aria-expanded={open}
+                              aria-haspopup="menu"
+                              className="inline-flex cursor-pointer items-center gap-1 rounded-r-sm bg-accent px-2 py-1 text-xs font-medium text-black transition-colors hover:bg-[#d4d4d4]"
+                            >
+                              Other platforms
+                              <GoChevronDown className={`size-3 transition-transform ${open ? "rotate-180" : ""}`} />
+                            </button>
+                            {open && (
+                              <div className="absolute top-full right-0 z-10 mt-1 w-40 overflow-hidden rounded-md border border-border-secondary bg-[#262626] py-1 shadow-lg">
+                                {platforms.map((p, i) => (
+                                  <a
+                                    key={`${p.label}-${p.detail}-${i}`}
+                                    href={downloadUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    onClick={() => setOpen(false)}
+                                    className="mx-1 flex w-[calc(100%-0.5rem)] items-center justify-between gap-2 rounded-md px-2 py-1 text-left text-xs text-white/80 transition-colors hover:bg-[#202020] hover:text-primary"
+                                  >
+                                    <span>{p.label}</span>
+                                    <span className="text-white/40">{p.detail}</span>
+                                  </a>
+                                ))}
+                              </div>
+                            )}
+                          </>
+                        ) : (
+                          <Link
+                            href="/console/settings/service-accounts"
+                            className="inline-flex items-center gap-1.5 rounded-sm bg-accent px-2 py-1 text-xs font-medium text-black transition-colors hover:bg-[#d4d4d4]"
+                          >
+                            Create your pairing key
+                          </Link>
+                        )}
+                      </div>
+                    </div>
+                  </li>
 
-            <div className="mt-6 flex items-center gap-4 border-t border-border-secondary pt-3">
-              <button
-                type="button"
-                className="cursor-pointer rounded-sm bg-accent px-2 py-1 text-xs font-medium text-black transition-colors hover:bg-[#d4d4d4]"
-              >
-                Dismiss guide
-              </button>
-              <span className="text-xs text-white/40">Will be accessible again from the user menu</span>
-            </div>
+                  <li className="flex items-start gap-3 pb-8">
+                    <div className="flex shrink-0 flex-col items-center self-stretch">
+                      <span className="flex size-5 shrink-0 items-center justify-center rounded-full border border-border-secondary bg-transparent text-[11px] text-white/60">
+                        2
+                      </span>
+                      <span className="mt-1 w-px flex-1 bg-border-secondary" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-primary">Connect this workspace</p>
+                      <p className="mt-0.5 text-xs text-white/40">
+                        In the app, choose <span className="text-white/70">Connect</span> and paste a service-account key.
+                        Create one from{" "}
+                        <Link
+                          href="/console/settings/service-accounts"
+                          className="text-white/70 underline underline-offset-2 hover:text-primary"
+                        >
+                          Settings → Service Accounts
+                        </Link>
+                        .
+                      </p>
+                    </div>
+                  </li>
+
+                  <li className="flex items-start gap-3">
+                    <div className="flex shrink-0 flex-col items-center">
+                      <span className="flex size-5 shrink-0 items-center justify-center rounded-full border border-border-secondary bg-transparent text-[11px] text-white/60">
+                        3
+                      </span>
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-primary">Choose a model</p>
+                      <p className="mt-0.5 text-xs text-white/40">
+                        Pick a model from the model selector dropdown in the app.
+                      </p>
+                    </div>
+                  </li>
+                </ol>
+
+                <div className="mt-6 flex items-center gap-4 border-t border-border-secondary pt-3">
+                  <button
+                    type="button"
+                    onClick={() => dismissGuide(true)}
+                    className="cursor-pointer rounded-sm bg-accent px-2 py-1 text-xs font-medium text-black transition-colors hover:bg-[#d4d4d4]"
+                  >
+                    Dismiss guide
+                  </button>
+                  <span className="text-xs text-white/40">You can show it again from this page at any time.</span>
+                </div>
+              </>
+            )}
           </div>
 
           <div className="min-w-0 flex-1">
@@ -281,20 +283,19 @@ export default function OverviewPage() {
                     ))}
                     More
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setActiveSubTab("Logs")}
+                  <Link
+                    href="/console/logs"
                     className="flex size-6 items-center justify-center rounded-sm border border-border-secondary bg-transparent text-white/60 transition-colors hover:bg-[#202020] hover:text-primary"
                     aria-label="View logs"
                   >
                     <GoChevronRight className="size-3.5" />
-                  </button>
+                  </Link>
                 </div>
               </div>
               <p className="mt-0.5 text-xs text-white/40">
                 {sparkLogs.length === 0
-                  ? "No requests in this range"
-                  : `${sparkLogs.length} requests · Last ${Math.min(40, sparkLogs.length)}`}
+                  ? "No requests yet"
+                  : `${sparkLogs.length} requests · Last ${sparkLogs.length}`}
               </p>
 
               <div className="relative mt-4">
@@ -304,14 +305,18 @@ export default function OverviewPage() {
                   <div className="flex h-12 w-full items-end gap-[2px]">
                     {(() => {
                       const maxTokens = Math.max(1, ...sparkLogs.map((l) => l.tokens));
-                      return sparkLogs.map((req) => {
+                      return sparkLogs.map((req, index) => {
                         const heightPct = 18 + Math.round((req.tokens / maxTokens) * 82);
                         return (
-                          <div
+                          <button
                             key={req.id}
-                            onMouseEnter={() => setHovered(req)}
+                            type="button"
+                            onMouseEnter={() => setHovered({ log: req, index })}
                             onMouseLeave={() => setHovered(null)}
-                            className={`flex-1 cursor-pointer rounded-t-[2px] transition-all hover:ring-1 hover:ring-white/40 ${getStatusColor(req.status)}`}
+                            onFocus={() => setHovered({ log: req, index })}
+                            onBlur={() => setHovered(null)}
+                            aria-label={`${modelDisplayName(req.model)} — ${req.tokens} tokens, status ${req.status}`}
+                            className={`w-2 shrink-0 cursor-pointer rounded-t-[2px] transition-all hover:ring-1 hover:ring-white/40 focus:outline-none focus:ring-1 focus:ring-white/60 ${getStatusColor(req.status)}`}
                             style={{ height: `${heightPct}%` }}
                           />
                         );
@@ -321,34 +326,43 @@ export default function OverviewPage() {
                 )}
 
                 {hovered && (
-                  <div className="pointer-events-none absolute -top-4 right-0 z-20 w-56 translate-y-[-100%] rounded-md border border-border-secondary bg-[#262626] p-3 shadow-2xl after:absolute after:top-full after:right-8 after:-translate-y-px after:border-4 after:border-transparent after:border-t-border-secondary">
+                  <div
+                    className="pointer-events-none absolute top-[52px] z-50 w-56 -translate-x-1/2 rounded-md border border-border-secondary bg-[#262626] p-3 shadow-2xl after:absolute after:bottom-full after:left-1/2 after:-translate-x-1/2 after:translate-y-px after:border-4 after:border-transparent after:border-b-border-secondary"
+                    style={{ left: `clamp(7rem, ${hovered.index * 10 + 4}px, calc(100% - 7rem))` }}
+                  >
                     <div className="flex items-center gap-2">
-                      <span className="text-[11px] text-white/50" suppressHydrationWarning>{hovered.date.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span>
+                      <span className="text-[11px] text-white/50" suppressHydrationWarning>
+                        {hovered.log.date.toLocaleTimeString("en-US", {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                          second: "2-digit",
+                        })}
+                      </span>
                     </div>
                     <div className="mt-2 flex items-center gap-2">
                       <span
                         className={`rounded-sm px-1.5 py-0.5 text-[11px] font-medium ${
-                          hovered.status === 200 ? "bg-white/10 text-primary" : "bg-white/10 text-yellow-400"
+                          hovered.log.status === 200 ? "bg-white/10 text-primary" : "bg-white/10 text-yellow-400"
                         }`}
                       >
-                        {hovered.status}
+                        {hovered.log.status}
                       </span>
-                      <span className="text-xs font-medium text-primary">{hovered.model}</span>
+                      <span className="text-xs font-medium text-primary">{modelDisplayName(hovered.log.model)}</span>
                     </div>
                     <div className="mt-3 space-y-1.5 text-[11px]">
                       <div className="flex justify-between">
                         <span className="text-white/50">Duration</span>
-                        <span className="text-white/80">{hovered.duration}</span>
+                        <span className="text-white/80">{hovered.log.duration}</span>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-white/50">Tokens</span>
                         <span className="text-white/80">
-                          {hovered.inputTokens} in · {hovered.outputTokens} out
+                          {formatTokenCount(hovered.log.inputTokens)} in · {formatTokenCount(hovered.log.outputTokens)} out
                         </span>
                       </div>
                       <div className="flex justify-between border-t border-border-secondary pt-1.5">
                         <span className="text-white/50">Cost</span>
-                        <span className="text-white/80">{hovered.cost}</span>
+                        <span className="text-white/80">{hovered.log.cost}</span>
                       </div>
                     </div>
                   </div>
@@ -368,19 +382,23 @@ export default function OverviewPage() {
                       {recentLogs.map((log) => (
                         <div
                           key={log.id}
-                          className="group flex cursor-pointer items-center gap-3 rounded-md px-2 py-1.5 text-xs transition-colors hover:bg-[#202020]"
+                          className="group grid cursor-pointer grid-cols-[2.75rem_minmax(0,1fr)_4.5rem_3.5rem_4.5rem] items-center gap-x-3 rounded-md px-2 py-1.5 text-xs transition-colors hover:bg-[#202020]"
                         >
                           <span
-                            className={`rounded-sm px-1.5 py-0.5 font-medium ${
+                            className={`inline-flex w-fit rounded-sm px-1.5 py-0.5 font-medium tabular-nums ${
                               log.status === 200 ? "bg-white/10 text-primary" : "bg-white/10 text-yellow-400"
                             }`}
                           >
                             {log.status}
                           </span>
-                          <span className="text-white/80">{log.model}</span>
-                          <span className="hidden text-white/40 lg:inline">{log.tokens.toLocaleString()} tokens</span>
-                          <span className="hidden text-white/40 md:inline">{log.duration}</span>
-                          <span className="ml-auto text-white/40" suppressHydrationWarning>
+                          <span className="truncate text-white/80" title={modelDisplayName(log.model)}>
+                            {modelDisplayName(log.model)}
+                          </span>
+                          <span className="text-right tabular-nums text-white/40">
+                            {formatTokenCount(log.tokens)}
+                          </span>
+                          <span className="text-right tabular-nums text-white/40">{log.duration}</span>
+                          <span className="text-right tabular-nums text-white/40" suppressHydrationWarning>
                             {log.date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
                           </span>
                         </div>
@@ -392,331 +410,7 @@ export default function OverviewPage() {
             </div>
           </div>
         </div>
-      )}
-      {activeSubTab === "Leaderboard" && (
-        <div className="mx-auto flex w-full max-w-3xl flex-col gap-4">
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <h2 className="mt-4 text-sm font-medium text-primary">Most used models</h2>
-              <p className="mt-1 text-xs text-white/60">
-                Leaderboard of models by request count.
-              </p>
-            </div>
-            <RangeControls
-              range={logRange}
-              onRangeChange={setLogRange}
-              onRefresh={() => usage.refetch()}
-              isFetching={usage.isFetching}
-            />
-          </div>
-          <div className="max-w-full overflow-x-auto rounded-md border border-border-secondary">
-            <table className="w-full text-left text-xs">
-              <thead>
-                <tr className="border-b border-border-secondary bg-tertiary text-white/40">
-                  <th className="px-2 py-2 font-medium rounded-tl-md">Rank</th>
-                  <th className="px-2 py-2 font-medium">Model</th>
-                  <th className="px-2 py-2 text-right font-medium">Requests</th>
-                  <th className="px-2 py-2 text-right font-medium">Input tokens</th>
-                  <th className="px-2 py-2 text-right font-medium">Output tokens</th>
-                  <th className="px-2 py-2 text-right font-medium rounded-tr-md">Cost</th>
-                </tr>
-              </thead>
-              <tbody>
-                {modelUsage
-                  .slice()
-                  .sort((a, b) => b.requests - a.requests)
-                  .map((m, i) => (
-                    <tr key={m.model} className="border-b border-border-secondary/50 transition-colors hover:bg-[#202020]">
-                      <td className="px-2 py-2 text-white/70">{i + 1}</td>
-                      <td className="px-2 py-2 font-medium text-primary">{m.model}</td>
-                      <td className="px-2 py-2 text-right text-white/70">{m.requests.toLocaleString()}</td>
-                      <td className="px-2 py-2 text-right text-white/70">{m.input.toLocaleString()}</td>
-                      <td className="px-2 py-2 text-right text-white/70">{m.output.toLocaleString()}</td>
-                      <td className="px-2 py-2 text-right text-white/70">${m.cost.toFixed(4)}</td>
-                    </tr>
-                  ))}
-                {modelUsage.length === 0 && (
-                  <tr>
-                    <td colSpan={6} className="px-2 py-6 text-center text-xs text-white/40">
-                      No usage in this range
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-      {activeSubTab === "Logs" && (
-        <div className="mx-auto flex w-full max-w-3xl flex-col gap-4">
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <h2 className="mt-4 text-sm font-medium text-primary">Logs</h2>
-              <p className="mt-1 text-xs text-white/60">
-                Recent requests through the gateway.
-              </p>
-            </div>
-            <RangeControls
-              range={logRange}
-              onRangeChange={setLogRange}
-              onRefresh={() => usage.refetch()}
-              isFetching={usage.isFetching}
-            />
-          </div>
-          <div className="max-w-full overflow-x-auto rounded-md border border-border-secondary">
-            <table className="w-full text-left text-xs">
-              <thead>
-                <tr className="border-b border-border-secondary bg-tertiary text-white/40">
-                  <th className="px-2 py-2 font-medium rounded-tl-md">Time</th>
-                  <th className="px-2 py-2 font-medium">Status</th>
-                  <th className="px-2 py-2 font-medium">Model</th>
-                  <th className="px-2 py-2 font-medium">Service account key</th>
-                  <th className="px-2 py-2 text-right font-medium">Duration</th>
-                  <th className="px-2 py-2 text-right font-medium">Tokens</th>
-                  <th className="px-2 py-2 text-right font-medium rounded-tr-md">Cost</th>
-                </tr>
-              </thead>
-              <tbody>
-                {usage.isLoading && (
-                  <tr>
-                    <td colSpan={7} className="px-2 py-3 text-white/60">
-                      Loading usage…
-                    </td>
-                  </tr>
-                )}
-                {usageRows.length === 0 && !usage.isLoading && (
-                  <tr>
-                    <td colSpan={7} className="px-2 py-6 text-center text-xs text-white/40">
-                      No usage in this range
-                    </td>
-                  </tr>
-                )}
-                {usageRows.map((r) => (
-                  <tr key={r.id} className="border-b border-border-secondary/50 transition-colors hover:bg-[#202020]">
-                    <td className="px-2 py-2 whitespace-nowrap text-white/70">
-                      {r.createdAt ? new Date(r.createdAt).toLocaleTimeString() : "-"}
-                    </td>
-                    <td className="px-2 py-2">
-                      <span
-                        className={`rounded-sm px-1.5 py-0.5 font-medium ${
-                          r.status === 200 ? "bg-white/10 text-primary" : "bg-white/10 text-yellow-400"
-                        }`}
-                      >
-                        {r.status ?? "-"}
-                      </span>
-                    </td>
-                    <td className="px-2 py-2 font-medium text-primary">{r.model ?? "-"}</td>
-                    <td className="px-2 py-2 text-white/70">{r.keyId ?? "-"}</td>
-                    <td className="px-2 py-2 text-right text-white/70">
-                      {r.latencyMs != null ? `${(r.latencyMs / 1000).toFixed(1)}s` : "-"}
-                    </td>
-                    <td className="px-2 py-2 text-right text-white/70">
-                      {((r.inputTokens ?? 0) + (r.outputTokens ?? 0)).toLocaleString()}
-                    </td>
-                    <td className="px-2 py-2 text-right text-white/70">${(r.costUsd ?? 0).toFixed(4)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-      {activeSubTab === "My usage" && (
-        <div className="mx-auto flex w-full max-w-3xl flex-col gap-4">
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <h2 className="mt-4 text-sm font-medium text-primary">My usage</h2>
-              <p className="mt-1 text-xs text-white/60">
-                Token usage and cost across your service accounts.
-              </p>
-            </div>
-            <RangeControls
-              range={logRange}
-              onRangeChange={setLogRange}
-              onRefresh={() => usage.refetch()}
-              isFetching={usage.isFetching}
-            />
-          </div>
-          <div className="flex min-w-0 flex-col overflow-hidden rounded-md border border-border-secondary bg-[#262626] p-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs font-medium text-white/60">Credit balance</p>
-                <p className="mt-1 text-2xl font-medium text-primary">$0.00</p>
-              </div>
-              <button
-                type="button"
-                className="cursor-pointer rounded-sm bg-accent px-3 py-1.5 text-xs font-medium text-background transition-colors hover:opacity-90"
-              >
-                Add Payment Method
-              </button>
-            </div>
-            <div className="mt-3 flex items-center justify-between border-t border-border-secondary pt-3">
-              <p className="text-xs font-medium text-white/60">Auto recharge</p>
-              <button
-                type="button"
-                className="cursor-pointer text-xs text-accent transition-colors hover:opacity-80"
-              >
-                Set up
-              </button>
-            </div>
-          </div>
-          <div className="grid min-w-0 grid-cols-3 gap-4">
-            <div className="min-w-0 overflow-hidden rounded-md border border-border-secondary bg-[#262626] p-2">
-              <p className="text-xs text-white/60">Total cost</p>
-              <p className="mt-1 text-2xl font-medium text-primary">
-                ${(totals?.costUsd ?? 0).toFixed(4)}
-              </p>
-            </div>
-            <div className="min-w-0 overflow-hidden rounded-md border border-border-secondary bg-[#262626] p-2">
-              <p className="text-xs text-white/60">Total requests</p>
-              <p className="mt-1 text-2xl font-medium text-primary">{(totals?.requests ?? 0).toLocaleString()}</p>
-            </div>
-            <div className="min-w-0 overflow-hidden rounded-md border border-border-secondary bg-[#262626] p-2">
-              <p className="text-xs text-white/60">Total tokens</p>
-              <p className="mt-1 text-2xl font-medium text-primary">
-                {((totals?.inputTokens ?? 0) + (totals?.outputTokens ?? 0)).toLocaleString()}
-              </p>
-            </div>
-          </div>
-          <div className="mt-4 flex items-center justify-between">
-            <div>
-              <h3 className="text-sm font-medium text-primary">
-                Total {usageMetric === "cost" ? "cost" : "tokens"} ({chartGranularity})
-              </h3>
-              <p className="mt-1 text-xs text-white/60">
-                {usageMetric === "cost"
-                  ? `Cost per ${chartGranularity === "hourly" ? "hour" : "day"}.`
-                  : `Tokens per ${chartGranularity === "hourly" ? "hour" : "day"}.`}
-              </p>
-            </div>
-            <div className="flex gap-1">
-              <button
-                type="button"
-                onClick={() => setUsageMetric("cost")}
-                className={`rounded-sm px-2 py-1 text-xs transition-colors ${
-                  usageMetric === "cost"
-                    ? "bg-white/10 font-medium text-primary"
-                    : "text-white/60 hover:bg-white/5 hover:text-primary"
-                }`}
-              >
-                Cost
-              </button>
-              <button
-                type="button"
-                onClick={() => setUsageMetric("tokens")}
-                className={`rounded-sm px-2 py-1 text-xs transition-colors ${
-                  usageMetric === "tokens"
-                    ? "bg-white/10 font-medium text-primary"
-                    : "text-white/60 hover:bg-white/5 hover:text-primary"
-                }`}
-              >
-                Tokens
-              </button>
-            </div>
-          </div>
-          <div className="rounded-md border border-border-secondary bg-[#262626] p-2">
-            <UsageChart series={series} metric={usageMetric} range={logRange} />
-            {series.length > 0 && (
-              <div className="ml-[30px] -mt-2 flex w-[715px] gap-0 text-[10px] text-white/40">
-                {axisLabels.map((label, i) => (
-                  <span key={i} className="flex-1 text-center">
-                    {label}
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
-          <div className="mt-4">
-            <h3 className="text-sm font-medium text-primary">Usage by Model</h3>
-            <p className="mt-1 text-xs text-white/60">
-              Breakdown of usage per model.
-            </p>
-          </div>
-          <div className="max-w-full overflow-x-auto rounded-md border border-border-secondary">
-            <table className="w-full text-left text-xs">
-              <thead>
-                <tr className="border-b border-border-secondary bg-tertiary text-white/40">
-                  <th className="px-2 py-2 font-medium rounded-tl-md">Model</th>
-                  <th className="px-2 py-2 text-right font-medium">Requests</th>
-                  <th className="px-2 py-2 text-right font-medium">Input tokens</th>
-                  <th className="px-2 py-2 text-right font-medium">Output tokens</th>
-                  <th className="px-2 py-2 text-right font-medium">Cache read</th>
-                  <th className="px-2 py-2 text-right font-medium">Cost</th>
-                  <th className="px-2 py-2 text-right font-medium rounded-tr-md">Cache write</th>
-                </tr>
-              </thead>
-              <tbody>
-                {modelUsage.length === 0 && (
-                  <tr>
-                    <td colSpan={6} className="px-2 py-6 text-center text-xs text-white/40">
-                      No usage in this range
-                    </td>
-                  </tr>
-                )}
-                {modelUsage.map((m) => (
-                  <tr key={m.model} className="border-b border-border-secondary/50 transition-colors hover:bg-[#202020]">
-                    <td className="px-2 py-2 font-medium text-primary">{m.model}</td>
-                    <td className="px-2 py-2 text-right text-white/70">{m.requests.toLocaleString()}</td>
-                    <td className="px-2 py-2 text-right text-white/70">{m.input.toLocaleString()}</td>
-                    <td className="px-2 py-2 text-right text-white/70">{m.output.toLocaleString()}</td>
-                    <td className="px-2 py-2 text-right text-white/70">{m.cacheRead.toLocaleString()}</td>
-                    <td className="px-2 py-2 text-right text-white/70">${m.cost.toFixed(4)}</td>
-                    <td className="px-2 py-2 text-right text-white/40" title="Cache-write tokens are not tracked yet">—</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div className="mt-6">
-            <h3 className="text-sm font-medium text-primary">Usage by Service Account</h3>
-            <p className="mt-1 text-xs text-white/60">
-              Breakdown of usage per service account key.
-            </p>
-          </div>
-          <div className="max-w-full overflow-x-auto rounded-md border border-border-secondary">
-            <table className="w-full text-left text-xs">
-              <thead>
-                <tr className="border-b border-border-secondary bg-tertiary text-white/40">
-                  <th className="px-2 py-2 font-medium rounded-tl-md">Service account</th>
-                  <th className="px-2 py-2 text-right font-medium">Requests</th>
-                  <th className="px-2 py-2 text-right font-medium">Input tokens</th>
-                  <th className="px-2 py-2 text-right font-medium">Output tokens</th>
-                  <th className="px-2 py-2 text-right font-medium rounded-tr-md">Cost</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(() => {
-                  const rows = (summary.data?.byKey ?? []).map((k) => ({
-                    key: k.keyId ?? "unknown",
-                    requests: k.requests,
-                    input: k.inputTokens,
-                    output: k.outputTokens,
-                    cost: k.costUsd,
-                  }));
-                  if (rows.length === 0) {
-                    return (
-                      <tr>
-                        <td colSpan={5} className="px-2 py-6 text-center text-xs text-white/40">
-                          No usage in this range
-                        </td>
-                      </tr>
-                    );
-                  }
-                  return rows.map((k) => (
-                    <tr key={k.key} className="border-b border-border-secondary/50 transition-colors hover:bg-[#202020]">
-                      <td className="px-2 py-2 font-medium text-primary">{k.key}</td>
-                      <td className="px-2 py-2 text-right text-white/70">{k.requests.toLocaleString()}</td>
-                      <td className="px-2 py-2 text-right text-white/70">{k.input.toLocaleString()}</td>
-                      <td className="px-2 py-2 text-right text-white/70">{k.output.toLocaleString()}</td>
-                      <td className="px-2 py-2 text-right text-white/70">${k.cost.toFixed(4)}</td>
-                    </tr>
-                  ));
-                })()}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-    </div>
+      </div>
+    </Suspense>
   );
 }

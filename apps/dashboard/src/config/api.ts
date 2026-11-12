@@ -7,10 +7,14 @@ if (!API_URL) {
 export const API_ROUTES = {
   auth: `${API_URL}/api/v1/auth`,
   agents: `${API_URL}/api/v1/agents`,
+  billing: `${API_URL}/api/v1/billing`,
+  billingCheckout: `${API_URL}/api/v1/billing/checkout`,
+  billingPortal: `${API_URL}/api/v1/billing/portal`,
   health: `${API_URL}/api/v1/health`,
   models: `${API_URL}/api/v1/models`,
   plans: `${API_URL}/api/v1/plans`,
   profile: `${API_URL}/api/v1/profile`,
+  settings: `${API_URL}/api/v1/settings`,
   usage: `${API_URL}/api/v1/usage`,
   workspace: `${API_URL}/api/v1/workspace`,
 } as const;

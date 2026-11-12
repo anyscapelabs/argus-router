@@ -136,10 +136,7 @@ struct SummaryQuery {
     #[serde(alias = "keyId")]
     key_id: Option<String>,
     since: Option<String>,
-    /// `hour` or `day`; anything else defaults to `day`.
     bucket: Option<String>,
-    /// IANA zone name (e.g. `Africa/Harare`) so chart buckets line up with
-    /// the viewer's local hours/days. Unknown names fall back to UTC.
     tz: Option<String>,
 }
 
@@ -152,10 +149,6 @@ fn api_err(status: StatusCode, code: &str, message: String) -> ApiErr {
     )
 }
 
-/// `GET /api/v1/usage/summary` — aggregates computed in SQL over *every* row
-/// in range. The list endpoint is capped (max 1000 rows) so totals summed
-/// from it undercount busy accounts; the dashboard uses this for totals,
-/// per-model / per-key breakdowns and chart series.
 async fn usage_summary(
     State(state): State<AppState>,
     session: CurrentSession<AppAuthSchema>,
@@ -183,6 +176,7 @@ async fn usage_summary(
         ),
         None => None,
     };
+    let since = since.map(|s| s.max(Utc::now() - chrono::Duration::days(400)));
     let unit = if q.bucket.as_deref() == Some("hour") {
         "hour"
     } else {
@@ -197,7 +191,6 @@ async fn usage_summary(
         )
     };
 
-    // Only ever hand Postgres a zone name it knows.
     let tz = match q.tz.as_deref().filter(|name| !name.is_empty()) {
         Some(name) => {
             let known = sqlx::query("SELECT 1 FROM pg_timezone_names WHERE name = $1 LIMIT 1")
@@ -215,8 +208,6 @@ async fn usage_summary(
         None => "UTC".to_owned(),
     };
 
-    // SQL is assembled at compile time (`concat!`), never at runtime: every
-    // user-controlled value below is a bound parameter.
     macro_rules! filter {
         () => {
             "user_id = $1 AND ($2::text IS NULL OR key_id = $2) AND ($3::timestamptz IS NULL OR created_at >= $3)"
@@ -259,7 +250,7 @@ async fn usage_summary(
         agg!(),
         " FROM usage_logs WHERE ",
         filter!(),
-        " GROUP BY model ORDER BY SUM(cost_usd) DESC, COUNT(*) DESC"
+        " GROUP BY model ORDER BY SUM(cost_usd) DESC, COUNT(*) DESC LIMIT 50"
     ))
     .bind(&user)
     .bind(key_id)
@@ -273,7 +264,7 @@ async fn usage_summary(
         agg!(),
         " FROM usage_logs WHERE ",
         filter!(),
-        " GROUP BY key_id ORDER BY SUM(cost_usd) DESC, COUNT(*) DESC"
+        " GROUP BY key_id ORDER BY SUM(cost_usd) DESC, COUNT(*) DESC LIMIT 50"
     ))
     .bind(&user)
     .bind(key_id)
@@ -282,8 +273,6 @@ async fn usage_summary(
     .await
     .map_err(db_err)?;
 
-    // `date_trunc` over the viewer-local wall clock, rendered as a plain
-    // local timestamp string the client can key its buckets on.
     let series_rows = sqlx::query(concat!(
         "SELECT to_char(date_trunc($4::text, created_at AT TIME ZONE $5::text), 'YYYY-MM-DD\"T\"HH24:MI') AS bucket, ",
         "COUNT(*)::bigint AS requests, ",
@@ -329,11 +318,42 @@ async fn usage_summary(
         })
         .collect();
 
+    let by_model_series_rows = sqlx::query(concat!(
+        "SELECT to_char(date_trunc($4::text, created_at AT TIME ZONE $5::text), 'YYYY-MM-DD\"T\"HH24:MI') AS bucket, ",
+        "model, ",
+        "COUNT(*)::bigint AS requests, ",
+        "COALESCE(SUM(input_tokens + output_tokens), 0)::bigint AS tokens, ",
+        "COALESCE(SUM(cost_usd), 0)::float8 AS cost_usd ",
+        "FROM usage_logs WHERE ", filter!(), " GROUP BY 1, 2 ORDER BY 1, 2"
+    ))
+    .bind(&user)
+    .bind(key_id)
+    .bind(since)
+    .bind(unit)
+    .bind(&tz)
+    .fetch_all(&pool)
+    .await
+    .map_err(db_err)?;
+
+    let by_model_series: Vec<_> = by_model_series_rows
+        .iter()
+        .map(|row| {
+            serde_json::json!({
+                "bucket": row.try_get::<String, _>("bucket").unwrap_or_default(),
+                "model": row.try_get::<String, _>("model").unwrap_or_default(),
+                "requests": row.try_get::<i64, _>("requests").unwrap_or(0),
+                "tokens": row.try_get::<i64, _>("tokens").unwrap_or(0),
+                "costUsd": row.try_get::<f64, _>("cost_usd").unwrap_or(0.0),
+            })
+        })
+        .collect();
+
     Ok(AxumJson(serde_json::json!({
         "totals": agg_json(&totals_row),
         "byModel": by_model,
         "byKey": by_key,
         "series": series,
+        "byModelSeries": by_model_series,
         "bucket": unit,
         "tz": tz,
     })))

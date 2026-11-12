@@ -16,10 +16,6 @@ export type AgentSummary = {
   status: string;
 };
 
-/**
- * `GET /api/v1/agents` — session-protected list of the operator's agents.
- * Placeholder payload until the agents domain model is built.
- */
 export function useAgents() {
   return useQuery({
     queryKey: ["agents"] as const,

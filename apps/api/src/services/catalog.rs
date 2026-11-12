@@ -1,11 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, RwLock};
 
-/// Adapter family of the upstream endpoint a model is served through.
-/// The router fronts everything via OpenRouter's OpenAI-compatible API:
-/// the direct Gemini protocol broke tool calling in the desktop app, so
-/// the Gemini ingress dialect stays but converts through the IR. Further
-/// direct-origin families (native Anthropic/Gemini) can slot in here.
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Compat {
@@ -20,6 +15,24 @@ impl Compat {
     }
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Tier {
+    Free,
+    Small,
+    Medium,
+}
+
+impl Tier {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Tier::Free => "free",
+            Tier::Small => "small",
+            Tier::Medium => "medium",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Capabilities {
     pub tools: bool,
@@ -27,7 +40,6 @@ pub struct Capabilities {
     pub reasoning: bool,
 }
 
-/// Per-1M-token prices in USD, displayed in the dashboard models list.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Pricing {
     pub input: String,
@@ -41,7 +53,6 @@ pub struct ModelCatalogEntry {
     pub id: String,
     pub name: String,
     pub compat: Compat,
-    /// Server-held provider id, resolved through the provider registry.
     pub provider: String,
     pub upstream_model: String,
     #[serde(default)]
@@ -52,9 +63,9 @@ pub struct ModelCatalogEntry {
     pub pricing: Pricing,
     #[serde(default)]
     pub free: bool,
+    pub tier: Tier,
 }
 
-/// Serialized shape returned by the models API and consumed by the dashboard.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelView {
@@ -67,8 +78,7 @@ pub struct ModelView {
     pub capabilities: Capabilities,
     pub pricing: Pricing,
     pub free: bool,
-    /// Published/allowlisted for the viewer (console: plan allowlist;
-    /// agent key: its plan's allowlist).
+    pub tier: Tier,
     pub enabled: bool,
 }
 
@@ -84,6 +94,7 @@ impl ModelCatalogEntry {
             capabilities: self.capabilities.clone(),
             pricing: self.pricing.clone(),
             free: self.free,
+            tier: self.tier,
             enabled,
         }
     }
@@ -93,8 +104,6 @@ impl ModelCatalogEntry {
     }
 }
 
-/// Live catalog cache — loaded from Postgres at boot (`model_catalog`
-/// table) and refreshed from it on demand. Cloned into application state.
 #[derive(Clone)]
 pub struct CatalogCache {
     inner: Arc<RwLock<Vec<ModelCatalogEntry>>>,
@@ -125,9 +134,6 @@ impl CatalogCache {
     }
 }
 
-/// Seed list. The live catalog lives in the `model_catalog` table (dynamic,
-/// editable without redeploying); this file seeds it on boot and can
-/// temporarily override through `CATALOG_PATH` for local experiments.
 const EMBEDDED: &str = include_str!("../../catalog/models.json");
 
 pub fn seed_entries() -> Vec<ModelCatalogEntry> {

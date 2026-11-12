@@ -23,7 +23,7 @@ function VerifyEmail() {
   if (token) {
     return (
       <main className="flex min-h-full flex-1 flex-col items-center justify-center gap-6">
-        <h1 className="font-pixel text-5xl">Argus Agent</h1>
+        <h1 className="font-pixel text-5xl">Anyscape Gateway</h1>
         {verify.isPending && (
           <p className="flex w-80 items-center justify-center gap-2 text-sm text-white/70">
             <FaSpinner className="size-4 animate-spin" /> Verifying your email...
@@ -59,7 +59,7 @@ function VerifyEmail() {
 
   return (
     <main className="flex min-h-full flex-1 flex-col items-center justify-center gap-6">
-      <h1 className="font-pixel text-5xl">Argus Agent</h1>
+      <h1 className="font-pixel text-5xl">Anyscape Gateway</h1>
       <p className="w-80 text-center text-sm leading-relaxed text-white/70">
         Check your inbox for a verification email and click the link, or resend it
         below.
@@ -107,7 +107,7 @@ function VerifyEmail() {
         <a href="/privacy" className="underline hover:text-white/80">
           Privacy
         </a>{" "}
-        and to receive updates and emails from Argus Agent.
+        and to receive updates and emails from Anyscape.
       </p>
     </main>
   );

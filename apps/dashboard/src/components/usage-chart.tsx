@@ -1,19 +1,38 @@
 "use client";
 
 import { useMemo } from "react";
-import { GoInfo } from "react-icons/go";
 import { barY, defineChart } from "@tanstack/charts";
 import { Chart as RendererChart } from "@tanstack/charts/react/core";
 import { motion } from "@tanstack/charts/motion";
 import { tooltip } from "@tanstack/charts/tooltip";
 import { scaleBand, scaleLinear } from "d3-scale";
 import type { UsageRange, UsageSeriesPoint } from "@/domains/usage/api";
+import { UsageEmptyState } from "./usage-empty-state";
 
 type Bucket = {
   label: string;
   value: number;
   requests: number;
 };
+
+function formatAxisValue(value: number, metric: "cost" | "tokens"): string {
+  const abs = Math.abs(value);
+  const sign = value < 0 ? "-" : "";
+  if (abs >= 1_000_000_000) return `${sign}${trimCompact(abs / 1_000_000_000)}B`;
+  if (abs >= 1_000_000) return `${sign}${trimCompact(abs / 1_000_000)}M`;
+  if (abs >= 1_000) return `${sign}${trimCompact(abs / 1_000)}K`;
+  if (metric === "cost") {
+    if (abs === 0) return "0";
+    if (abs < 0.01) return value.toFixed(4).replace(/\.?0+$/, "");
+    return value.toFixed(2).replace(/\.?0+$/, "");
+  }
+  if (Number.isInteger(value)) return String(value);
+  return trimCompact(abs);
+}
+
+function trimCompact(n: number): string {
+  return n.toFixed(1).replace(/\.0$/, "");
+}
 
 function startOfHour(d: Date): Date {
   const out = new Date(d);
@@ -31,16 +50,11 @@ function pad(n: number): string {
   return String(n).padStart(2, "0");
 }
 
-/** Viewer-local `YYYY-MM-DDTHH:00` / `YYYY-MM-DDT00:00` key, matching the server's bucket strings. */
 function localKey(d: Date, unit: "hour" | "day"): string {
   const date = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   return unit === "hour" ? `${date}T${pad(d.getHours())}:00` : `${date}T00:00`;
 }
 
-/**
- * Lays the server-computed series (aggregated in SQL over every row in range,
- * in the viewer's timezone) onto a fixed local-time axis, zero-filling gaps.
- */
 function bucketSeries(series: UsageSeriesPoint[], metric: "cost" | "tokens", range: UsageRange): Bucket[] {
   const now = new Date();
   const byKey = new Map(series.map((p) => [p.bucket, p]));
@@ -59,15 +73,6 @@ function bucketSeries(series: UsageSeriesPoint[], metric: "cost" | "tokens", ran
       requests: point?.requests ?? 0,
     };
   });
-}
-
-export function UsageEmptyState({ className = "" }: { className?: string }) {
-  return (
-    <div className={`flex flex-col items-center justify-center gap-2 ${className}`}>
-      <GoInfo className="size-5 text-white/35" aria-hidden />
-      <p className="text-xs text-white/40">No usage available in this range</p>
-    </div>
-  );
 }
 
 export function UsageChart({
@@ -89,7 +94,7 @@ export function UsageChart({
       value: b.value,
       requests: b.requests,
     }));
-    // Dynamic row arrays lose the const-mark tuple that defineChart's overloads expect.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return (defineChart as any)(
       {
         marks: [
@@ -106,9 +111,17 @@ export function UsageChart({
             scale: () => scaleBand<string>().paddingInner(0.4).paddingOuter(0.1),
             axis: false,
           },
-          y: { scale: scaleLinear, grid: true, axis: true },
+          y: {
+            scale: scaleLinear,
+            grid: true,
+            axis: {
+              ticks: {
+                format: (value: number) => formatAxisValue(value, metric),
+              },
+            },
+          },
         },
-        margin: { top: 5, right: 5, bottom: 20, left: 30 },
+        margin: { top: 5, right: 5, bottom: 20, left: 44 },
       },
       {
         focus: "group-x",
@@ -117,7 +130,7 @@ export function UsageChart({
           className: "sc-chart-tooltip",
           anchor: "group-center",
           placement: "auto",
-          content: (points: any) => {
+          content: (points: ReadonlyArray<{ xValue?: unknown; yValue?: unknown; color?: string }>) => {
             const label = String(points[0]?.xValue ?? "");
             const bucket = chartRows.find((b) => b.hour === label);
             return {
@@ -167,22 +180,4 @@ export function UsageChart({
       />
     </div>
   );
-}
-
-export function chartAxisLabels(range: UsageRange): string[] {
-  const now = new Date();
-  if (range === "24h") {
-    return Array.from({ length: 24 }, (_, i) => {
-      const hour = (now.getHours() - 23 + i + 48) % 24;
-      return i % 5 === 0 ? `${hour}:00` : "";
-    });
-  }
-  const days = range === "7d" ? 7 : 30;
-  const dayStart = startOfDay(now);
-  const windowStart = new Date(dayStart.getTime() - (days - 1) * 24 * 60 * 60 * 1000);
-  const step = range === "7d" ? 1 : 5;
-  return Array.from({ length: days }, (_, i) => {
-    const d = new Date(windowStart.getTime() + i * 24 * 60 * 60 * 1000);
-    return i % step === 0 ? `${d.getMonth() + 1}/${d.getDate()}` : "";
-  });
 }

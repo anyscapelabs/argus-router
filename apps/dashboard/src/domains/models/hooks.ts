@@ -9,11 +9,6 @@ import {
   type ModelsResult,
 } from "./api";
 
-/**
- * The signed-in owner's plan and its model catalog (enablement included).
- * The models page renders straight from this; toggles and the catalog
- * refresh both invalidate it.
- */
 export function useModels() {
   return useQuery<ModelsResult, Error>({
     queryKey: ["models"] as const,

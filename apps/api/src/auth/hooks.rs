@@ -1,11 +1,17 @@
+use std::sync::OnceLock;
+
 use better_auth::seaorm::{DatabaseHookUpdate, SeaOrmHookContext, SeaOrmHooks};
 use better_auth::{AuthSchema, FieldValue};
 
 use crate::services::avatar::initials_avatar_url;
+use crate::services::cache::Cache;
 
-/// Assigns a generated initials avatar when a user is created without one,
-/// e.g. email/password sign-ups. OAuth providers that supply a picture are
-/// left untouched.
+static CACHE: OnceLock<Cache> = OnceLock::new();
+
+pub fn init_profile_cache(cache: Cache) {
+    let _ = CACHE.set(cache);
+}
+
 #[derive(Clone, Default)]
 pub struct InitialAvatarHook;
 
@@ -47,5 +53,19 @@ impl<S: AuthSchema> SeaOrmHooks<S> for InitialAvatarHook {
             FieldValue::String(initials_avatar_url(&seed)),
         );
         Ok(DatabaseHookUpdate::Continue)
+    }
+
+    async fn after_update_user(
+        &self,
+        user: Option<&better_auth::wire::UserView>,
+        ctx: &SeaOrmHookContext<'_, S>,
+    ) -> better_auth::AuthResult<()> {
+        let _ = ctx;
+        if let (Some(cache), Some(user)) = (CACHE.get(), user) {
+            if let Ok(id) = user.id.typed() {
+                cache.delete(&format!("argus:profile:{id}")).await;
+            }
+        }
+        Ok(())
     }
 }

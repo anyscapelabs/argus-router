@@ -1,5 +1,3 @@
-//! Search router: analyzes query complexity and routes with automatic fallback.
-
 use super::providers::{
     BraveSearchProvider, ExaSearchProvider, SearchProvider, TavilySearchProvider,
 };
@@ -12,13 +10,10 @@ pub enum QueryComplexity {
     Complex,
 }
 
-/// Evaluates query complexity based on length, comparative keywords,
-/// analytical terminology, research questions, and structured requirements.
 pub fn evaluate_complexity(query: &str) -> QueryComplexity {
     let lower = query.to_lowercase();
     let word_count = lower.split_whitespace().count();
 
-    // Long, descriptive research prompts are usually complex
     if word_count > 12 {
         return QueryComplexity::Complex;
     }
@@ -87,11 +82,6 @@ impl SearchRouter {
         }
     }
 
-    /// Determines the provider priority chain for the query.
-    /// Complex queries prefer Tavily / Exa for semantic quality and clean extraction,
-    /// falling back to Brave.
-    /// Simple queries prefer Brave for speed and cost-effectiveness,
-    /// falling back to Tavily and then Exa.
     pub fn provider_chain(&self, query: &str) -> Vec<&(dyn SearchProvider + 'static)> {
         let complexity = evaluate_complexity(query);
         match complexity {
@@ -104,8 +94,14 @@ impl SearchRouter {
         }
     }
 
-    /// Dispatches search to the best available provider with automatic fallback on failure.
-    /// Returns the response together with the provider's per-query cost in USD.
+    pub fn max_cost_per_query(&self, query: &str) -> f64 {
+        self.provider_chain(query)
+            .into_iter()
+            .filter(|provider| provider.is_configured())
+            .map(SearchProvider::cost_per_query)
+            .fold(0.0, f64::max)
+    }
+
     pub async fn search(
         &self,
         client: &reqwest::Client,
@@ -143,13 +139,28 @@ impl SearchRouter {
             ));
         }
 
-        Err(last_err.unwrap_or_else(|| {
+        let Some(last_err) = last_err else {
+            return Err(Errx::new(
+                ErrCode::Upstream,
+                502,
+                "all search provider attempts failed",
+            ));
+        };
+        let mut normalized = if last_err.code == ErrCode::RateLimited {
+            Errx::new(
+                ErrCode::RateLimited,
+                429,
+                "web search providers are temporarily rate limited",
+            )
+        } else {
             Errx::new(
                 ErrCode::Upstream,
                 502,
                 "all search provider attempts failed",
             )
-        }))
+        };
+        normalized.retry_after = last_err.retry_after;
+        Err(normalized)
     }
 }
 
@@ -207,8 +218,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_search_unconfigured_error() {
-        // Use an explicit unconfigured router so the test is deterministic
-        // regardless of ambient BRAVE/TAVILY/EXA env vars.
         let router = SearchRouter::unconfigured();
         let client = reqwest::Client::new();
         let res = router.search(&client, "test query", 5).await;

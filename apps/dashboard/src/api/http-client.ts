@@ -13,11 +13,6 @@ export class ApiError extends Error {
 
 const JSON_HEADERS = { "Content-Type": "application/json" } as const;
 
-/**
- * Thin wrapper around fetch for the versioned API (`/api/v1`). Auth-domain
- * traffic goes through the better-auth client instead; this wrapper is for
- * plain domain endpoints (agents, profile, ...).
- */
 export async function apiFetch<T>(
   route: ApiRoute,
   init: Omit<RequestInit, "body"> & { body?: unknown } = {},
@@ -39,7 +34,6 @@ export async function apiFetch<T>(
     try {
       payload = await response.json();
     } catch {
-      // non-JSON error bodies are folded into the generic message below
     }
     const code = payload.error?.code ?? payload.code ?? `HTTP_${response.status}`;
     const message = payload.error?.message ?? payload.message ?? response.statusText;

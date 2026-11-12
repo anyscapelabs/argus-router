@@ -1,30 +1,20 @@
 "use client";
 
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect } from "react";
+import { Suspense, useEffect } from "react";
 
 import { useSession } from "@/domains/auth/hooks";
 import { NavBar } from "@/components/nav-bar";
 import { SettingsSidebar } from "@/components/settings-sidebar";
 import { TopBar } from "@/components/top-bar";
 
-/**
- * Guards the console layout — every route under `/console/*` requires a valid
- * session. Signed-out users are sent to `/auth/login`. Session data comes from
- * the shared QueryClient (`useSession()`), so this guard and the overview page
- * read from one cached request.
- *
- * The guard redirects; it does not withhold the segment. `children` is always
- * rendered, because returning a spinner in place of `{children}` drops the page
- * from the server render entirely — Next.js then can't validate it for instant
- * navigation (`instant-unrendered-segment`) and reports the page as "dropped
- * from rendering". Loading and error UI belong to the pages themselves.
- */
 export default function ConsoleLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const session = useSession();
   const isSettings = pathname === "/console/settings" || pathname?.startsWith("/console/settings/");
+  const isServiceAccountDetail =
+    /^\/console\/settings\/service-accounts\/[^/]+/.test(pathname ?? "");
 
   useEffect(() => {
     if (session.isSuccess && !session.data) {
@@ -33,26 +23,42 @@ export default function ConsoleLayout({ children }: { children: React.ReactNode 
   }, [session.isSuccess, session.data, router]);
 
   return (
-    /* h-dvh pins the whole shell to the viewport: ancestors here have auto
-       heights, so `min-h-full` chains never resolve and the card would grow
-       with its content, pushing the scroll out to the page. The only
-       scrollbar is the content column's below. */
     <div className="flex h-dvh flex-col overflow-hidden">
       <TopBar />
       <main className="flex min-h-0 min-w-0 flex-1 flex-col px-2 pb-2">
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-md bg-secondary px-2 pb-2">
-          {/* The tab bar stays pinned at the top of the card — only the
-              content column below scrolls. Settings adds its own left rail. */}
-          <NavBar />
+          <Suspense fallback={<nav className="flex shrink-0 flex-row gap-4 border-b border-border-secondary -ml-2" />}>
+            <NavBar />
+          </Suspense>
           {isSettings ? (
-            <div className="pt-6 flex min-h-0 min-w-0 w-full flex-1">
-              <SettingsSidebar />
-              <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden px-2 py-1">
-                <div className="mx-auto w-full max-w-2xl">{children}</div>
+            isServiceAccountDetail ? (
+              <div className="min-h-0 min-w-0 w-full flex-1 overflow-auto">
+                <div className="mx-auto w-full max-w-5xl px-2 pb-1 pt-10">
+                  <Suspense fallback={<div className="flex flex-col gap-2 p-4"><div className="h-3 w-40 animate-pulse rounded-sm bg-white/10" /><div className="h-3 w-64 animate-pulse rounded-sm bg-white/10" /></div>}>
+                    {children}
+                  </Suspense>
+                </div>
               </div>
-            </div>
+            ) : (
+              <div className="min-h-0 min-w-0 w-full flex-1 overflow-y-auto overflow-x-hidden">
+                <div className="mx-auto flex w-full max-w-5xl gap-8 pt-10 pb-1">
+                  <Suspense fallback={<aside className="sticky top-10 w-44 shrink-0 self-start px-2 py-3" />}>
+                    <SettingsSidebar />
+                  </Suspense>
+                  <div className="min-w-0 flex-1 px-2 py-1">
+                    <Suspense fallback={<div className="flex flex-col gap-2 p-4"><div className="h-3 w-40 animate-pulse rounded-sm bg-white/10" /><div className="h-3 w-64 animate-pulse rounded-sm bg-white/10" /></div>}>
+                      {children}
+                    </Suspense>
+                  </div>
+                </div>
+              </div>
+            )
           ) : (
-            <div className="pt-10 min-h-0 min-w-0 w-full flex-1 overflow-y-auto overflow-x-hidden px-2 py-1">{children}</div>
+            <div className="pt-10 min-h-0 min-w-0 w-full flex-1 overflow-y-auto overflow-x-hidden px-2 py-1">
+              <Suspense fallback={<div className="flex flex-col gap-2 p-4"><div className="h-3 w-40 animate-pulse rounded-sm bg-white/10" /><div className="h-3 w-64 animate-pulse rounded-sm bg-white/10" /></div>}>
+                {children}
+              </Suspense>
+            </div>
           )}
         </div>
       </main>

@@ -10,8 +10,6 @@ pub fn router() -> Router<AppState> {
     Router::new().route("/", get(me))
 }
 
-/// Cached profile payload — mirrors the dashboard `Profile` shape
-/// (`apps/dashboard/src/domains/profile/hooks.ts`).
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Profile {
@@ -22,14 +20,6 @@ pub struct Profile {
     pub email_verified: bool,
 }
 
-/// Current user profile for the dashboard overview screen. Unauthenticated
-/// requests are rejected with 401 by the session extractor. Responses are
-/// served from the Upstash cache (`argus:profile:<user_id>`, 60s TTL) and
-/// backfilled on miss; a Redis outage degrades to the origin.
-///
-/// `UserView` fields are `SchemaValue<T>` — `typed()` extracts the inner
-/// value, with `Undefined` (omitted adapter field) falling back to the
-/// zero value (`None`/`false`/`""`).
 async fn me(
     State(cache): State<Cache>,
     session: CurrentSession<AppAuthSchema>,

@@ -1,5 +1,3 @@
-//! Web search provider adapters for Brave Search, Tavily AI, and Exa AI.
-
 use async_trait::async_trait;
 use serde_json::Value;
 
@@ -25,7 +23,6 @@ fn truncate_chars(s: &str, max_chars: usize) -> String {
 pub trait SearchProvider: Send + Sync {
     fn id(&self) -> &'static str;
     fn is_configured(&self) -> bool;
-    /// Estimated cost in USD per query for this provider.
     fn cost_per_query(&self) -> f64;
     async fn search(
         &self,
@@ -35,21 +32,34 @@ pub trait SearchProvider: Send + Sync {
     ) -> Result<SearchResponse, Errx>;
 }
 
-/// Brave Search API provider.
-/// https://api.search.brave.com/res/v1/web/search
 pub struct BraveSearchProvider {
     api_key: Option<String>,
+    base_url: String,
 }
 
 impl BraveSearchProvider {
     pub fn from_env() -> Self {
         let api_key = read_env("BRAVE_SEARCH_API_KEY").or_else(|| read_env("BRAVE_API_KEY"));
-        Self { api_key }
+        Self {
+            api_key,
+            base_url: "https://api.search.brave.com".to_owned(),
+        }
     }
 
     #[cfg(test)]
     pub fn disabled() -> Self {
-        Self { api_key: None }
+        Self {
+            api_key: None,
+            base_url: "https://api.search.brave.com".to_owned(),
+        }
+    }
+
+    #[cfg(test)]
+    fn configured_for(base_url: String) -> Self {
+        Self {
+            api_key: Some("test-key".to_owned()),
+            base_url,
+        }
     }
 }
 
@@ -63,7 +73,6 @@ impl SearchProvider for BraveSearchProvider {
         self.api_key.is_some()
     }
     fn cost_per_query(&self) -> f64 {
-        // Brave Data for Search: $3.00 per 1000 queries = $0.003 each.
         0.003
     }
 
@@ -82,7 +91,8 @@ impl SearchProvider for BraveSearchProvider {
         })?;
         let count = max_results.clamp(1, 20);
         let url = format!(
-            "https://api.search.brave.com/res/v1/web/search?q={}&count={}",
+            "{}/res/v1/web/search?q={}&count={}&result_filter=web&text_decorations=false",
+            self.base_url.trim_end_matches('/'),
             urlencoding::encode(query),
             count
         );
@@ -90,7 +100,6 @@ impl SearchProvider for BraveSearchProvider {
         let res = client
             .get(&url)
             .header("Accept", "application/json")
-            .header("Accept-Encoding", "gzip")
             .header("X-Subscription-Token", key)
             .send()
             .await
@@ -116,11 +125,33 @@ impl SearchProvider for BraveSearchProvider {
             ));
         }
 
-        let body: Value = res.json().await.map_err(|e| {
+        let content_type = res
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("unknown")
+            .to_owned();
+        let content_encoding = res
+            .headers()
+            .get(reqwest::header::CONTENT_ENCODING)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("identity")
+            .to_owned();
+        let bytes = res.bytes().await.map_err(|e| {
+            Errx::new(
+                ErrCode::Network,
+                502,
+                format!("Failed to read Brave response: {e}"),
+            )
+        })?;
+        let body: Value = serde_json::from_slice(&bytes).map_err(|e| {
             Errx::new(
                 ErrCode::Upstream,
                 502,
-                format!("Failed to parse Brave response: {e}"),
+                format!(
+                    "Failed to parse Brave response: {e} (content-type={content_type}, content-encoding={content_encoding}, bytes={})",
+                    bytes.len()
+                ),
             )
         })?;
 
@@ -168,8 +199,6 @@ impl SearchProvider for BraveSearchProvider {
     }
 }
 
-/// Tavily Search API provider.
-/// https://api.tavily.com/search
 pub struct TavilySearchProvider {
     api_key: Option<String>,
 }
@@ -197,7 +226,6 @@ impl SearchProvider for TavilySearchProvider {
         self.api_key.is_some()
     }
     fn cost_per_query(&self) -> f64 {
-        // Tavily Starter: $4.00 per 1000 queries = $0.004 each.
         0.004
     }
 
@@ -297,8 +325,6 @@ impl SearchProvider for TavilySearchProvider {
     }
 }
 
-/// Exa AI search provider.
-/// https://api.exa.ai/search
 pub struct ExaSearchProvider {
     api_key: Option<String>,
 }
@@ -326,7 +352,6 @@ impl SearchProvider for ExaSearchProvider {
         self.api_key.is_some()
     }
     fn cost_per_query(&self) -> f64 {
-        // Exa: $1.00 per 1000 queries = $0.001 each.
         0.001
     }
 
@@ -430,7 +455,16 @@ impl SearchProvider for ExaSearchProvider {
 
 #[cfg(test)]
 mod tests {
-    use super::truncate_chars;
+    use std::io::Write;
+
+    use axum::Router;
+    use axum::body::Body;
+    use axum::http::{Response, header};
+    use axum::routing::get;
+    use flate2::Compression;
+    use flate2::write::GzEncoder;
+
+    use super::{BraveSearchProvider, SearchProvider, truncate_chars};
 
     #[test]
     fn truncate_chars_is_utf8_safe() {
@@ -442,5 +476,41 @@ mod tests {
 
         let short = "héllo";
         assert_eq!(truncate_chars(short, 300), short);
+    }
+
+    #[tokio::test]
+    async fn brave_decodes_gzip_response() {
+        let json = br#"{"web":{"results":[{"title":"Argus","url":"https://example.com","description":"result"}]}}"#;
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(json).expect("compress fixture");
+        let compressed = encoder.finish().expect("finish fixture");
+        let app = Router::new().route(
+            "/res/v1/web/search",
+            get(move || {
+                let body = compressed.clone();
+                async move {
+                    Response::builder()
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .header(header::CONTENT_ENCODING, "gzip")
+                        .body(Body::from(body))
+                        .expect("gzip response")
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test server");
+        let address = listener.local_addr().expect("test server address");
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve fixture");
+        });
+
+        let provider = BraveSearchProvider::configured_for(format!("http://{address}"));
+        let response = provider
+            .search(&reqwest::Client::new(), "argus", 5)
+            .await
+            .expect("decode gzip search result");
+        assert_eq!(response.results.len(), 1);
+        assert_eq!(response.results[0].title, "Argus");
     }
 }

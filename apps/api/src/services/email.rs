@@ -1,9 +1,5 @@
 use tracing::{error, instrument};
 
-/// Resend email delivery (https://resend.com/docs/api-reference/).
-///
-/// Uses `POST /emails` with a bearer key. Falls back to console logging when
-/// `RESEND_API_KEY` is not configured so local development still works.
 #[derive(Clone)]
 pub struct ResendEmail {
     pub client: ::reqwest::Client,
