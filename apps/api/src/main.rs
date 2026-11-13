@@ -166,13 +166,7 @@ async fn log_request(
     let start = std::time::Instant::now();
     let response = next.run(req).await;
     let latency_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
-    tracing::info!(
-        method = %method,
-        path = %path,
-        status = response.status().as_u16(),
-        latency_ms,
-        "request"
-    );
+    tracing::info!("request {method} {path} {} {latency_ms}", response.status().as_u16());
     response
 }
 
