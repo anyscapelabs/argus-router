@@ -65,4 +65,5 @@ jobs:
           chmod 600 deploy_key
           scp -i deploy_key -o StrictHostKeyChecking=accept-new ./api "ubuntu@$IP:/tmp/api"
           ssh -i deploy_key -o StrictHostKeyChecking=accept-new "ubuntu@$IP" \
-            'sudo install -m 0755 /tmp/api /opt/argus/api && sudo systemctl restart argus-api && sleep 2 && curl -sf http://localhost:8080/api/v1/health && echo && echo DEPLOY_OK'
+            'sudo install -m 0755 /tmp/api /opt/argus/api && sudo systemctl restart argus-api && \
+             for i in $(seq 1 60); do curl -sf http://localhost:8080/api/v1/health && echo && echo DEPLOY_OK && exit 0; sleep 2; done; echo "health check timed out"; exit 1'
