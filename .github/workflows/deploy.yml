@@ -1,0 +1,68 @@
+name: deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/api/**"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch:
+
+env:
+  INSTANCE_ID: i-0ca849fa6f19b0fd1
+  REGION: eu-north-1
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq libicu-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build release binary
+        run: cargo build --release --manifest-path apps/api/Cargo.toml
+        env:
+          RUST_ICU_MAJOR_VERSION_NUMBER: "74"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: api
+          path: apps/api/target/release/api
+          retention-days: 7
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: api
+          path: .
+      - name: Resolve instance address
+        id: ip
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --region "$REGION" \
+            --query "Reservations[].Instances[0].{state:State.Name,ip:PublicIpAddress}" \
+            --output json > instance.json
+          state=$(jq -r '.[0].state' instance.json)
+          echo "instance state: $state"
+          if [ "$state" != "running" ]; then
+            echo "::notice::Instance is $state (paused) — skipping deploy"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          echo "ip=$(jq -r '.[0].ip' instance.json)" >> "$GITHUB_OUTPUT"
+      - name: Deploy
+        if: steps.ip.outputs.skip == 'false'
+        env:
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          IP: ${{ steps.ip.outputs.ip }}
+        run: |
+          printf '%s' "$EC2_SSH_KEY" > deploy_key
+          chmod 600 deploy_key
+          scp -i deploy_key -o StrictHostKeyChecking=accept-new ./api "ubuntu@$IP:/tmp/api"
+          ssh -i deploy_key -o StrictHostKeyChecking=accept-new "ubuntu@$IP" \
+            'sudo install -m 0755 /tmp/api /opt/argus/api && sudo systemctl restart argus-api && sleep 2 && curl -sf http://localhost:8080/api/v1/health && echo && echo DEPLOY_OK'
