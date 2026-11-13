@@ -1,0 +1,20 @@
+version: 1
+applications:
+  - appRoot: apps/dashboard
+    frontend:
+      phases:
+        preBuild:
+          commands:
+            - npm install -g bun@1.3.14
+            - cd ../.. && bun install --frozen-lockfile
+        build:
+          commands:
+            - bun run build
+      artifacts:
+        baseDirectory: .next
+        files:
+          - "**/*"
+      cache:
+        paths:
+          - node_modules/**/*
+          - .next/cache/**/*
