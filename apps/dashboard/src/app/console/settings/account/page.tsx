@@ -157,9 +157,9 @@ export default function AccountSettingsPage() {
               )}
             </div>
             <div>
-              <p className="text-sm font-medium text-primary">
+              <div className="text-sm font-medium text-primary">
                 {workspace.data?.name ?? <Skeleton className="h-4 w-28" />}
-              </p>
+              </div>
               <p className="text-xs text-white/60">
                 {workspace.data?.role
                   ? workspace.data.role.charAt(0).toUpperCase() + workspace.data.role.slice(1)

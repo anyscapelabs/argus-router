@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { GoCopy, GoTrash, GoKebabHorizontal, GoCircleSlash } from "react-icons/go";
 
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { EmptyState } from "@/components/empty-state";
 import { MenuDropdown } from "@/components/menu-dropdown";
 import { SelectDropdown } from "@/components/select-dropdown";
 import { useApiKeys, useCreateApiKey, useRevokeApiKey } from "@/domains/keys/hooks";
@@ -169,9 +170,9 @@ export default function ServiceAccountsSettingsPage() {
             {keys.isPending ? (
               <SkeletonRows />
             ) : records.length === 0 ? (
-              <tr className="border-b border-border-secondary/50 last:border-b-0">
-                <td colSpan={5} className="px-2 py-8 text-center text-white/40">
-                  No keys yet — create the first one above.
+              <tr>
+                <td colSpan={5} className="px-2 py-10">
+                  <EmptyState message="No keys yet — create the first one above." />
                 </td>
               </tr>
             ) : (

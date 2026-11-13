@@ -223,6 +223,15 @@ impl AppDb {
         .await?;
 
         sqlx::query(
+            "CREATE TABLE IF NOT EXISTS user_onboarding (
+                user_id TEXT PRIMARY KEY,
+                completed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )",
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
             "CREATE TABLE IF NOT EXISTS billing_customers (
                 user_id TEXT PRIMARY KEY,
                 customer_id TEXT NOT NULL UNIQUE,
@@ -248,6 +257,16 @@ impl AppDb {
         .await?;
         sqlx::query(
             "ALTER TABLE billing_subscriptions ADD COLUMN IF NOT EXISTS event_at TIMESTAMPTZ NOT NULL DEFAULT NOW()",
+        )
+        .execute(&self.pool)
+        .await?;
+        sqlx::query(
+            "ALTER TABLE billing_subscriptions ADD COLUMN IF NOT EXISTS cancel_at_next_billing_date BOOLEAN NOT NULL DEFAULT FALSE",
+        )
+        .execute(&self.pool)
+        .await?;
+        sqlx::query(
+            "ALTER TABLE billing_subscriptions ADD COLUMN IF NOT EXISTS cancelled_at TEXT",
         )
         .execute(&self.pool)
         .await?;
@@ -326,6 +345,15 @@ impl AppDb {
                 user_id TEXT NOT NULL,
                 checkout_url TEXT,
                 expires_at TIMESTAMPTZ NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )",
+        )
+        .execute(&self.pool)
+        .await?;
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS billing_credit_products (
+                amount_cents INTEGER PRIMARY KEY,
+                product_id TEXT NOT NULL UNIQUE,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )",
         )

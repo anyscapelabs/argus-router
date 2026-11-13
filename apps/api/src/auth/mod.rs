@@ -179,6 +179,7 @@ pub async fn build_auth(
         .plugin(
             EmailVerificationPlugin::new()
                 .send_on_sign_in(true)
+                .auto_sign_in_after_verification(true)
                 .custom_send_verification_email(Arc::new(sender)),
         )
         .plugin(oauth)

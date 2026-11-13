@@ -7,6 +7,7 @@ import {
   createBillingPortal,
   createCheckout,
   getBilling,
+  getInvoices,
   type CheckoutTarget,
 } from "./api";
 
@@ -16,6 +17,14 @@ export function useBilling() {
   return useQuery({
     queryKey: BILLING_KEY,
     queryFn: getBilling,
+  });
+}
+
+export function useInvoices(enabled: boolean) {
+  return useQuery({
+    queryKey: [...BILLING_KEY, "invoices"],
+    queryFn: getInvoices,
+    enabled,
   });
 }
 

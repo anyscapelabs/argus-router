@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useRef } from "react";
 import { FaCheckCircle, FaSpinner } from "react-icons/fa";
@@ -8,7 +9,9 @@ import { useResendVerification, useVerifyEmail } from "@/domains/auth/hooks";
 
 function VerifyEmail() {
   const router = useRouter();
-  const token = useSearchParams().get("token");
+  const params = useSearchParams();
+  const token = params.get("token");
+  const email = params.get("email");
   const verify = useVerifyEmail();
   const resend = useResendVerification();
   const attempted = useRef(false);
@@ -20,31 +23,34 @@ function VerifyEmail() {
     }
   }, [token, verify]);
 
+  useEffect(() => {
+    if (verify.isSuccess) {
+      router.replace("/onboarding");
+    }
+  }, [verify.isSuccess, router]);
+
   if (token) {
     return (
       <main className="flex min-h-full flex-1 flex-col items-center justify-center gap-6">
-        <h1 className="font-pixel text-5xl">Anyscape Gateway</h1>
+        <div className="flex flex-col items-center gap-3">
+          <Image src="/icon-white.svg" alt="Anyscape Gateway" width={40} height={32} priority />
+          <h1 className="text-xl font-medium">Verify your email</h1>
+        </div>
         {verify.isPending && (
           <p className="flex w-80 items-center justify-center gap-2 text-sm text-white/70">
             <FaSpinner className="size-4 animate-spin" /> Verifying your email...
           </p>
         )}
         {verify.isSuccess && (
-          <>
-            <p className="flex w-80 items-center justify-center gap-2 text-sm text-white/70">
-              <FaCheckCircle className="size-4" /> Your email is verified.
-            </p>
-            <button
-              type="button"
-              onClick={() => router.push("/auth/login")}
-              className="flex w-80 cursor-pointer items-center justify-center gap-2 bg-accent px-3 py-2 text-sm font-medium text-black transition-colors hover:bg-white/90"
-            >
-              Sign in
-            </button>
-          </>
+          <p className="flex w-80 items-center justify-center gap-2 text-sm text-white/70">
+            <FaCheckCircle className="size-4" /> Your email is verified. Redirecting...
+          </p>
         )}
         {verify.isError && (
           <div className="flex w-80 flex-col items-center gap-4">
+            <p className="text-center text-xs leading-relaxed text-red-400">
+              {verify.error?.message ?? "This verification link is invalid or has expired."}
+            </p>
             <a
               href="/auth/signup"
               className="text-sm text-white underline hover:text-white/80"
@@ -59,56 +65,31 @@ function VerifyEmail() {
 
   return (
     <main className="flex min-h-full flex-1 flex-col items-center justify-center gap-6">
-      <h1 className="font-pixel text-5xl">Anyscape Gateway</h1>
+      <div className="flex flex-col items-center gap-3">
+        <Image src="/icon-white.svg" alt="Anyscape Gateway" width={40} height={32} priority />
+        <h1 className="text-xl font-medium">Check your inbox</h1>
+      </div>
       <p className="w-80 text-center text-sm leading-relaxed text-white/70">
-        Check your inbox for a verification email and click the link, or resend it
-        below.
+        {email ? (
+          <>
+            We sent a verification email to{" "}
+            <span className="font-medium text-white">{email}</span>. Click the link
+            in the email to activate your account.
+          </>
+        ) : (
+          "Check your inbox for a verification email and click the link to activate your account."
+        )}
       </p>
-        <form
-          className="flex w-80 flex-col gap-3"
-          autoComplete="off"
-          onSubmit={(e) => {
-            e.preventDefault();
-            const email = String(new FormData(e.currentTarget).get("email") ?? "");
-            resend.mutate(email);
-          }}
+      {email && (
+        <button
+          type="button"
+          disabled={resend.isPending}
+          onClick={() => resend.mutate(email)}
+          className="cursor-pointer text-sm text-white/70 underline hover:text-white disabled:cursor-not-allowed disabled:opacity-70"
         >
-          <label className="flex flex-col gap-1.5 text-xs font-medium text-white/70">
-            Email
-            <input
-              type="email"
-              name="email"
-              placeholder="you@example.com"
-              required
-              className="border border-border bg-transparent px-3 py-2 text-sm text-white placeholder:text-white/30 outline-none focus:border-white/40"
-            />
-          </label>
-          <button
-            type="submit"
-            disabled={resend.isPending}
-            className="flex w-full cursor-pointer items-center justify-center gap-2 bg-accent px-3 py-2 text-sm font-medium text-black transition-colors hover:bg-white/90 disabled:cursor-not-allowed disabled:opacity-70"
-          >
-            {resend.isPending && <FaSpinner className="size-4 animate-spin" />}
-            {resend.isPending ? "Sending..." : "Resend verification email"}
-          </button>
-        </form>
-      <p className="w-80 text-center text-sm text-white/70">
-        Wrong email?{" "}
-        <a href="/auth/signup" className="font-medium text-white underline hover:text-white/80">
-          Sign up again
-        </a>
-      </p>
-      <p className="w-80 text-center text-xs leading-relaxed text-white/50">
-        By signing up you agree to our{" "}
-        <a href="/terms" className="underline hover:text-white/80">
-          Terms
-        </a>{" "}
-        and{" "}
-        <a href="/privacy" className="underline hover:text-white/80">
-          Privacy
-        </a>{" "}
-        and to receive updates and emails from Anyscape.
-      </p>
+          {resend.isPending ? "Sending..." : "Resend verification email"}
+        </button>
+      )}
     </main>
   );
 }

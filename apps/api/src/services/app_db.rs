@@ -6,6 +6,7 @@ mod catalog;
 mod generation;
 mod migrate;
 mod models;
+mod onboarding;
 mod plans;
 mod quota;
 mod settings;

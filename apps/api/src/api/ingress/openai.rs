@@ -441,7 +441,10 @@ fn error_type(code: ErrCode) -> &'static str {
         ErrCode::Unauthorized => "authentication_error",
         ErrCode::Forbidden => "permission_error",
         ErrCode::NotFound => "invalid_request_error",
-        ErrCode::RateLimited => "rate_limit_error",
+        ErrCode::RateLimited
+        | ErrCode::DailyLimitReached
+        | ErrCode::WeeklyLimitReached
+        | ErrCode::MonthlyLimitReached => "rate_limit_error",
         ErrCode::CreditsExhausted => "insufficient_quota",
         ErrCode::Overloaded => "overloaded_error",
         ErrCode::Upstream | ErrCode::Network | ErrCode::Timeout => "api_error",

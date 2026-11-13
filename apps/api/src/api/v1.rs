@@ -3,6 +3,7 @@ pub mod agents;
 pub mod billing;
 pub mod health;
 pub mod models;
+pub mod onboarding;
 pub mod plans;
 pub mod profile;
 pub mod search;
@@ -21,6 +22,7 @@ pub fn router() -> Router<AppState> {
         .nest("/billing", billing::router())
         .nest("/health", health::router())
         .nest("/models", models::router())
+        .nest("/onboarding", onboarding::router())
         .nest("/plans", plans::router())
         .nest("/profile", profile::router())
         .nest("/search", search::router())

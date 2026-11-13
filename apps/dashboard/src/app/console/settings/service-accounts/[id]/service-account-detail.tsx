@@ -8,7 +8,9 @@ import { IoChevronForward } from "react-icons/io5";
 import { FiKey } from "react-icons/fi";
 import { FaCircle } from "react-icons/fa";
 import { MenuDropdown } from "@/components/menu-dropdown";
+import { EmptyState } from "@/components/empty-state";
 import { Skeleton } from "@/components/skeleton";
+import { SkeletonRows } from "@/components/skeleton-rows";
 import { useApiKeys, useRevokeApiKey } from "@/domains/keys/hooks";
 import { useModels } from "@/domains/models/hooks";
 import { useUsage, useUsageSummary } from "@/domains/usage/hooks";
@@ -44,16 +46,11 @@ export default function ServiceAccountDetail({ id }: { id: string }) {
   const [logsPage, setLogsPage] = useState(1);
   const [confirmAction, setConfirmAction] = useState<"revoke" | "delete" | null>(null);
 
-  useEffect(() => {
-    setLogsPage((p) =>
-      Math.min(p, Math.max(1, Math.ceil(rows.length / LOGS_PAGE_SIZE))),
-    );
-  }, [rows.length]);
-
   const logsPageCount = Math.max(1, Math.ceil(rows.length / LOGS_PAGE_SIZE));
+  const currentPage = Math.min(logsPage, logsPageCount);
   const logsPageRows = rows.slice(
-    (logsPage - 1) * LOGS_PAGE_SIZE,
-    logsPage * LOGS_PAGE_SIZE,
+    (currentPage - 1) * LOGS_PAGE_SIZE,
+    currentPage * LOGS_PAGE_SIZE,
   );
 
   const summary = useUsageSummary({ keyId: id });
@@ -191,9 +188,9 @@ export default function ServiceAccountDetail({ id }: { id: string }) {
       </div>
       <div className="mt-6">
         <h2 className="text-sm font-medium text-primary">Models</h2>
-        <p className="mt-1 text-sm text-white/60">
+        <div className="mt-1 text-sm text-white/60">
           {models.isLoading ? <Skeleton className="inline-block h-3.5 w-16 align-middle" /> : `${availableModels} Available`}
-        </p>
+        </div>
       </div>
       <div className="mt-4">
         <h2 className="text-sm font-medium text-primary">Spend</h2>
@@ -230,7 +227,7 @@ export default function ServiceAccountDetail({ id }: { id: string }) {
             <Skeleton className="h-1/2 flex-1" />
           </div>
         ) : chartModels.length === 0 ? (
-          <p className="mt-4 text-xs text-white/60">No requests yet.</p>
+          <EmptyState className="mt-4 h-40" message="No requests yet" />
         ) : (
           <>
             <div className="relative mt-4 h-40">
@@ -342,74 +339,73 @@ export default function ServiceAccountDetail({ id }: { id: string }) {
               </tr>
             </thead>
             <tbody>
-              {usage.isLoading && (
-                <>
-                  {[0, 1, 2, 3, 4].map((row) => (
-                    <tr key={row} className="border-b border-border-secondary/50">
-                      <td colSpan={7} className="px-2 py-2.5">
-                        <Skeleton className={["w-44", "w-36", "w-40", "w-32", "w-40"][row]} />
+              {usage.isLoading ? (
+                <SkeletonRows columns={7} />
+              ) : logsPageRows.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="px-2 py-10">
+                    <EmptyState message="No requests logged for this service account yet" />
+                  </td>
+                </tr>
+              ) : (
+                logsPageRows.map((r) => {
+                  return (
+                    <tr key={r.id} className="border-b border-border-secondary/50 transition-colors hover:bg-[#202020]">
+                      <td className="px-2 py-2 whitespace-nowrap tabular-nums text-white/70" suppressHydrationWarning>
+                        {r.createdAt
+                          ? new Date(r.createdAt).toLocaleString("en-US", {
+                              dateStyle: "medium",
+                              timeStyle: "short",
+                            })
+                          : "-"}
                       </td>
+                      <td className="px-2 py-2 font-medium text-primary">
+                        {r.model ? modelDisplayName(r.model) : "-"}
+                      </td>
+                      <td className="px-2 py-2">
+                        <span
+                          className={`rounded-sm px-1.5 py-0.5 font-medium ${
+                            r.status === 200 ? "bg-white/10 text-primary" : "bg-white/10 text-yellow-400"
+                          }`}
+                        >
+                          {r.status ?? "-"}
+                        </span>
+                      </td>
+                      <td className="px-2 py-2 text-right tabular-nums text-white/70">{formatTokenCount(r.inputTokens ?? 0)}</td>
+                      <td className="px-2 py-2 text-right tabular-nums text-white/70">{formatTokenCount(r.outputTokens ?? 0)}</td>
+                      <td className="px-2 py-2 text-right tabular-nums text-white/70">
+                        {r.latencyMs != null ? `${(r.latencyMs / 1000).toFixed(1)}s` : "-"}
+                      </td>
+                      <td className="px-2 py-2 text-right tabular-nums text-white/70">${(r.costUsd ?? 0).toFixed(4)}</td>
                     </tr>
-                  ))}
-                </>
+                  );
+                })
               )}
-              {logsPageRows.map((r) => {
-                return (
-                  <tr key={r.id} className="border-b border-border-secondary/50 transition-colors hover:bg-[#202020]">
-                    <td className="px-2 py-2 whitespace-nowrap tabular-nums text-white/70" suppressHydrationWarning>
-                      {r.createdAt
-                        ? new Date(r.createdAt).toLocaleString("en-US", {
-                            dateStyle: "medium",
-                            timeStyle: "short",
-                          })
-                        : "-"}
-                    </td>
-                    <td className="px-2 py-2 font-medium text-primary">
-                      {r.model ? modelDisplayName(r.model) : "-"}
-                    </td>
-                    <td className="px-2 py-2">
-                      <span
-                        className={`rounded-sm px-1.5 py-0.5 font-medium ${
-                          r.status === 200 ? "bg-white/10 text-primary" : "bg-white/10 text-yellow-400"
-                        }`}
-                      >
-                        {r.status ?? "-"}
-                      </span>
-                    </td>
-                    <td className="px-2 py-2 text-right tabular-nums text-white/70">{formatTokenCount(r.inputTokens ?? 0)}</td>
-                    <td className="px-2 py-2 text-right tabular-nums text-white/70">{formatTokenCount(r.outputTokens ?? 0)}</td>
-                    <td className="px-2 py-2 text-right tabular-nums text-white/70">
-                      {r.latencyMs != null ? `${(r.latencyMs / 1000).toFixed(1)}s` : "-"}
-                    </td>
-                    <td className="px-2 py-2 text-right tabular-nums text-white/70">${(r.costUsd ?? 0).toFixed(4)}</td>
-                  </tr>
-                );
-              })}
             </tbody>
           </table>
         </div>
         {rows.length > 0 && (
           <div className="mt-2 flex items-center justify-between text-xs text-white/60">
             <span>
-              Showing {(logsPage - 1) * LOGS_PAGE_SIZE + 1}–
-              {Math.min(logsPage * LOGS_PAGE_SIZE, rows.length)} of {rows.length}
+              Showing {(currentPage - 1) * LOGS_PAGE_SIZE + 1}–
+              {Math.min(currentPage * LOGS_PAGE_SIZE, rows.length)} of {rows.length}
             </span>
             <div className="flex items-center gap-2">
               <button
                 type="button"
                 onClick={() => setLogsPage((p) => Math.max(1, p - 1))}
-                disabled={logsPage <= 1}
+                disabled={currentPage <= 1}
                 className="cursor-pointer rounded-sm border border-border-secondary bg-tertiary px-2 py-1 text-xs text-primary transition-colors hover:bg-white/10 disabled:cursor-default disabled:opacity-40 disabled:hover:bg-tertiary"
               >
                 Previous
               </button>
               <span className="tabular-nums">
-                Page {logsPage} of {logsPageCount}
+                Page {currentPage} of {logsPageCount}
               </span>
               <button
                 type="button"
                 onClick={() => setLogsPage((p) => Math.min(logsPageCount, p + 1))}
-                disabled={logsPage >= logsPageCount}
+                disabled={currentPage >= logsPageCount}
                 className="cursor-pointer rounded-sm border border-border-secondary bg-tertiary px-2 py-1 text-xs text-primary transition-colors hover:bg-white/10 disabled:cursor-default disabled:opacity-40 disabled:hover:bg-tertiary"
               >
                 Next

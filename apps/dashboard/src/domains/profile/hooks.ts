@@ -11,6 +11,7 @@ export type Profile = {
   name: string | null;
   image: string | null;
   emailVerified: boolean;
+  providers: string[];
 };
 
 export function useProfile({ enabled = true }: { enabled?: boolean } = {}) {

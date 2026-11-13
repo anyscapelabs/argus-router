@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { FaEye, FaEyeSlash, FaGithub, FaGoogle, FaSpinner } from "react-icons/fa";
@@ -11,13 +12,13 @@ export default function SignupPage() {
   const router = useRouter();
   const session = useSession();
   const signUp = useEmailSignUp();
-  const google = useSocialSignIn("google");
-  const github = useSocialSignIn("github");
+  const google = useSocialSignIn("google", "/onboarding");
+  const github = useSocialSignIn("github", "/onboarding");
   const isMutating = signUp.isPending || google.isPending || github.isPending;
 
   useEffect(() => {
     if (session.isSuccess && session.data) {
-      router.replace("/console/overview");
+      router.replace("/onboarding");
     }
   }, [session.isSuccess, session.data, router]);
   return (
@@ -26,7 +27,10 @@ export default function SignupPage() {
         <FaSpinner className="size-5 animate-spin text-white/60" />
       ) : (
         <>
-      <h1 className="font-pixel text-5xl">Anyscape Gateway</h1>
+      <div className="flex flex-col items-center gap-3">
+        <Image src="/icon-white.svg" alt="Anyscape Gateway" width={40} height={32} priority />
+        <h1 className="text-xl font-medium">Sign up for Anyscape</h1>
+      </div>
       {(google.isError || github.isError) && (
         <p className="w-80 text-center text-xs leading-relaxed text-red-400">
           {(google.error ?? github.error)?.message}

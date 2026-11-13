@@ -141,15 +141,22 @@ export function useSignOut() {
   const router = useRouter();
   return useMutation({
     mutationFn: async () => {
-      await authClient.signOut();
+      const response = await authClient.signOut();
+      if (response.error) {
+        throw toAuthError(response.error, "Sign out failed");
+      }
+      return response.data;
     },
-    onSuccess: () => {
+    onMutate: () => {
       queryClient.setQueryData(SESSION_KEY, null);
-      queryClient.clear();
-      toast.success("Signed out");
       router.push("/auth/login");
     },
+    onSuccess: () => {
+      queryClient.clear();
+      toast.success("Signed out");
+    },
     onError: (error) => {
+      void queryClient.invalidateQueries({ queryKey: SESSION_KEY });
       toast.error(error.message);
     },
   });

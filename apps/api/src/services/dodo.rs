@@ -79,12 +79,29 @@ pub struct DodoSubscription {
     pub product_id: String,
     pub next_billing_date: Option<String>,
     pub past_due_ends_at: Option<String>,
+    #[serde(default)]
+    pub cancel_at_next_billing_date: bool,
+    pub cancelled_at: Option<String>,
     pub customer: DodoCustomer,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct DodoCustomer {
     pub customer_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct DodoPayment {
+    pub payment_id: String,
+    pub total_amount: i64,
+    pub currency: String,
+    pub status: Option<String>,
+    pub created_at: String,
+    pub invoice_id: Option<String>,
+    pub subscription_id: Option<String>,
+    pub charge_type: Option<String>,
+    #[serde(default)]
+    pub customer: Option<DodoCustomer>,
 }
 
 #[derive(Debug)]
@@ -187,6 +204,7 @@ impl DodoClient {
         product_id: &str,
         return_url: &str,
         metadata: Value,
+        idempotency_key: &str,
     ) -> Result<String, DodoError> {
         #[derive(Deserialize)]
         struct Response {
@@ -197,6 +215,7 @@ impl DodoClient {
             .send(
                 self.http
                     .post(format!("{}/checkouts", self.base_url))
+                    .header("Idempotency-Key", idempotency_key)
                     .json(&json!({
                         "product_cart": [{ "product_id": product_id, "quantity": 1 }],
                         "customer": { "customer_id": customer_id },
@@ -209,6 +228,88 @@ impl DodoClient {
             .checkout_url
             .filter(|url| !url.is_empty())
             .ok_or_else(|| DodoError::invalid("Dodo Payments returned no checkout URL"))
+    }
+
+    pub async fn create_credit_product(
+        &self,
+        name: &str,
+        price_cents: i64,
+        metadata: Value,
+    ) -> Result<String, DodoError> {
+        #[derive(Deserialize)]
+        struct Response {
+            product_id: String,
+        }
+
+        let response: Response = self
+            .send(
+                self.http
+                    .post(format!("{}/products", self.base_url))
+                    .header("Idempotency-Key", format!("argus-credit-product-{price_cents}"))
+                    .json(&json!({
+                        "name": name,
+                        "price": {
+                            "currency": "USD",
+                            "price": price_cents,
+                            "type": "one_time_price"
+                        },
+                        "tax_category": "digital_products",
+                        "metadata": metadata
+                    })),
+            )
+            .await?;
+        Ok(response.product_id)
+    }
+
+    pub async fn list_payments(&self, customer_id: &str) -> Result<Vec<DodoPayment>, DodoError> {
+        #[derive(Deserialize)]
+        struct Response {
+            items: Vec<DodoPayment>,
+        }
+
+        let response: Response = self
+            .send(
+                self.http
+                    .get(format!("{}/payments", self.base_url))
+                    .query(&[
+                        ("customer_id", customer_id),
+                        ("page_size", "50"),
+                        ("status", "succeeded"),
+                    ]),
+            )
+            .await?;
+        Ok(response.items)
+    }
+
+    pub async fn payment(&self, payment_id: &str) -> Result<DodoPayment, DodoError> {
+        self.send(self.http.get(format!(
+            "{}/payments/{}",
+            self.base_url, payment_id
+        )))
+        .await
+    }
+
+    pub async fn invoice_pdf(&self, payment_id: &str) -> Result<Vec<u8>, DodoError> {
+        let response = self
+            .http
+            .get(format!(
+                "{}/invoices/payments/{}",
+                self.base_url, payment_id
+            ))
+            .bearer_auth(&self.api_key)
+            .send()
+            .await
+            .map_err(DodoError::request)?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            return Err(DodoError::response(status, body));
+        }
+        Ok(response
+            .bytes()
+            .await
+            .map_err(DodoError::request)?
+            .to_vec())
     }
 
     pub async fn create_portal(

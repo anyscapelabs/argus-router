@@ -149,14 +149,13 @@ pub(crate) async fn enforce_plan_quotas(
         .await
         .map_err(|_| db_error("the token usage lookup"))?;
     if quota.monthly_tokens > 0 && monthly >= quota.monthly_tokens {
-        return Err(Errx::new(
-            ErrCode::RateLimited,
-            429,
-            format!(
-                "monthly token limit reached ({monthly}/{}) — it resets next month",
-                quota.monthly_tokens
-            ),
-        ));
+        return Err(limit_error(
+            state,
+            LimitWindow::Monthly,
+            quota.monthly_tokens,
+            monthly,
+        )
+        .await);
     }
     let weekly_exceeded = quota.weekly_tokens > 0 && weekly >= quota.weekly_tokens;
     if daily_exceeded || weekly_exceeded {
@@ -166,15 +165,132 @@ pub(crate) async fn enforce_plan_quotas(
             .await
             .map_err(|_| db_error("the credit balance lookup"))?;
         if balance <= 0 {
-            return Err(Errx::new(
-                ErrCode::CreditsExhausted,
-                402,
-                "included usage is exhausted and no prepaid credits remain",
-            ));
+            if weekly_exceeded && !daily_exceeded {
+                return Err(limit_error(
+                    state,
+                    LimitWindow::Weekly,
+                    quota.weekly_tokens,
+                    weekly,
+                )
+                .await);
+            }
+            return Err(limit_error(
+                state,
+                LimitWindow::Daily,
+                quota.daily_requests,
+                quota.daily_requests,
+            )
+            .await);
         }
         return Ok(true);
     }
     Ok(false)
+}
+
+#[derive(Clone, Copy)]
+enum LimitWindow {
+    Daily,
+    Weekly,
+    Monthly,
+}
+
+impl LimitWindow {
+    fn code(self) -> ErrCode {
+        match self {
+            LimitWindow::Daily => ErrCode::DailyLimitReached,
+            LimitWindow::Weekly => ErrCode::WeeklyLimitReached,
+            LimitWindow::Monthly => ErrCode::MonthlyLimitReached,
+        }
+    }
+}
+
+async fn limit_error(state: &AppState, window: LimitWindow, quota: i64, used: i64) -> Errx {
+    let sql: &str = match window {
+        LimitWindow::Daily => {
+            "SELECT EXTRACT(EPOCH FROM (date_trunc('day', CURRENT_TIMESTAMP) + INTERVAL '1 day'))::bigint"
+        }
+        LimitWindow::Weekly => {
+            "SELECT EXTRACT(EPOCH FROM (date_trunc('week', CURRENT_TIMESTAMP) + INTERVAL '1 week'))::bigint"
+        }
+        LimitWindow::Monthly => {
+            "SELECT EXTRACT(EPOCH FROM (date_trunc('month', CURRENT_TIMESTAMP) + INTERVAL '1 month'))::bigint"
+        }
+    };
+    let reset_epoch: Result<i64, _> = sqlx::query_scalar(sql)
+        .fetch_one(&state.app_db.pool())
+        .await;
+    let reset = match reset_epoch {
+        Ok(epoch) => chrono::DateTime::from_timestamp(epoch, 0)
+            .unwrap_or_else(|| chrono::Utc::now() + chrono::Duration::hours(24)),
+        Err(_) => {
+            return Errx::new(
+                window.code(),
+                429,
+                format!(
+                    "{} Limit Reached ({used}/{quota}) — it resets {}",
+                    window_label(window),
+                    window_reset_hint(window),
+                ),
+            );
+        }
+    };
+    Errx::new(window.code(), 429, limit_message(window, quota, used, reset))
+        .with_retry_after(reset_seconds_left(reset))
+}
+
+fn window_label(window: LimitWindow) -> &'static str {
+    match window {
+        LimitWindow::Daily => "Daily",
+        LimitWindow::Weekly => "Weekly",
+        LimitWindow::Monthly => "Monthly",
+    }
+}
+
+fn window_reset_hint(window: LimitWindow) -> &'static str {
+    match window {
+        LimitWindow::Daily => "at 00:00 UTC",
+        LimitWindow::Weekly => "on Monday, 00:00 UTC",
+        LimitWindow::Monthly => "on the 1st, 00:00 UTC",
+    }
+}
+
+fn limit_message(
+    window: LimitWindow,
+    quota: i64,
+    used: i64,
+    reset: chrono::DateTime<chrono::Utc>,
+) -> String {
+    let reset_text = match window {
+        LimitWindow::Daily => format!("Resets at {}", reset.format("%H:%M UTC")),
+        _ => format!("Resets on {}", reset.format("%a, %d %b %Y at %H:%M UTC")),
+    };
+    let countdown = humanize_duration(reset_seconds_left(reset));
+    let counter = if quota > 0 { format!(" ({used}/{quota})") } else { String::new() };
+    format!(
+        "{} Limit Reached — {reset_text} (in {countdown}){counter}",
+        window_label(window)
+    )
+}
+
+fn reset_seconds_left(reset: chrono::DateTime<chrono::Utc>) -> u64 {
+    let now = chrono::Utc::now();
+    reset
+        .signed_duration_since(now)
+        .num_seconds()
+        .max(0) as u64
+}
+
+fn humanize_duration(total_seconds: u64) -> String {
+    let days = total_seconds / 86_400;
+    let hours = (total_seconds % 86_400) / 3_600;
+    let minutes = (total_seconds % 3_600) / 60;
+    if days > 0 {
+        format!("{days}d {hours}h")
+    } else if hours > 0 {
+        format!("{hours}h {minutes}m")
+    } else {
+        format!("{minutes}m")
+    }
 }
 
 async fn reserve_generation(
@@ -220,11 +336,9 @@ async fn reserve_generation(
             chat.params.max_tokens = Some(reservation.max_output_tokens);
             Ok(reservation)
         }
-        GenerationReservationOutcome::MonthlyExhausted => Err(Errx::new(
-            ErrCode::RateLimited,
-            429,
-            "monthly token limit reached; it resets next month",
-        )),
+        GenerationReservationOutcome::MonthlyExhausted => {
+            Err(limit_error(state, LimitWindow::Monthly, 0, 0).await)
+        }
         GenerationReservationOutcome::CreditsExhausted => Err(Errx::new(
             ErrCode::CreditsExhausted,
             402,

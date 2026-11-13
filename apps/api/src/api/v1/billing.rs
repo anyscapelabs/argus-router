@@ -1,9 +1,10 @@
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use axum::body::Bytes;
-use axum::extract::State;
+use axum::body::{Body, Bytes};
+use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json as AxumJson, Router};
 use base64::Engine;
@@ -14,7 +15,7 @@ use serde_json::{Value, json};
 use sha2::Sha256;
 
 use crate::auth::AppAuthSchema;
-use crate::services::app_db::{FREE_PLAN_ID, SubscriptionView};
+use crate::services::app_db::{CheckoutClaim, FREE_PLAN_ID, SubscriptionView};
 use crate::services::dodo::{CreditPack, DodoClient};
 use crate::state::AppState;
 
@@ -27,6 +28,8 @@ pub fn router() -> Router<AppState> {
         .route("/checkout", post(checkout))
         .route("/portal", post(portal))
         .route("/webhook", post(webhook))
+        .route("/invoices", get(invoices))
+        .route("/invoices/{payment_id}/download", get(invoice_download))
 }
 
 #[derive(Serialize)]
@@ -109,12 +112,38 @@ async fn summary(
 struct CheckoutRequest {
     plan_id: Option<String>,
     credit_pack_id: Option<String>,
+    amount_usd: Option<f64>,
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct RedirectResponse {
     checkout_url: String,
+}
+
+const MIN_CUSTOM_CREDIT_CENTS: i64 = 100;
+const MAX_CUSTOM_CREDIT_CENTS: i64 = 50_000;
+
+fn custom_amount_cents(amount_usd: f64) -> Option<i64> {
+    if !amount_usd.is_finite() {
+        return None;
+    }
+    let cents = (amount_usd * 100.0).round() as i64;
+    (MIN_CUSTOM_CREDIT_CENTS..=MAX_CUSTOM_CREDIT_CENTS).contains(&cents).then_some(cents)
+}
+
+fn credit_product_name(cents: i64) -> String {
+    if cents % 100 == 0 {
+        format!("Argus Prepaid Credits ${}", cents / 100)
+    } else {
+        format!("Argus Prepaid Credits ${:.2}", cents as f64 / 100.0)
+    }
+}
+
+struct CheckoutTarget {
+    checkout_key: String,
+    product_id: String,
+    metadata: Value,
 }
 
 async fn checkout(
@@ -124,8 +153,8 @@ async fn checkout(
 ) -> Result<AxumJson<RedirectResponse>, ApiProblem> {
     let user_id = user_id(&session)?;
     let dodo = dodo_client(&state)?;
-    let (product_id, metadata) = match (&request.plan_id, &request.credit_pack_id) {
-        (Some(plan_id), None) => {
+    let target = match (&request.plan_id, &request.credit_pack_id, request.amount_usd) {
+        (Some(plan_id), None, None) => {
             if plan_id == FREE_PLAN_ID {
                 return Err(problem(
                     StatusCode::BAD_REQUEST,
@@ -154,40 +183,139 @@ async fn checkout(
                 .billing_catalog
                 .subscription_product(plan_id)
                 .ok_or_else(|| billing_product_problem("plan"))?;
-            (
-                product_id.to_owned(),
-                json!({ "argus_user_id": user_id, "argus_plan_id": plan_id }),
-            )
+            CheckoutTarget {
+                checkout_key: format!("plan:{user_id}:{plan_id}"),
+                product_id: product_id.to_owned(),
+                metadata: json!({ "argus_user_id": user_id, "argus_plan_id": plan_id }),
+            }
         }
-        (None, Some(pack_id)) => {
+        (None, Some(pack_id), None) => {
             let pack = state
                 .billing_catalog
                 .credit_pack(pack_id)
                 .filter(|pack| !pack.product_id.is_empty())
                 .ok_or_else(|| billing_product_problem("credit pack"))?;
-            (
-                pack.product_id.clone(),
-                json!({ "argus_user_id": user_id, "argus_credit_pack_id": pack.id }),
-            )
+            CheckoutTarget {
+                checkout_key: format!("credits:{user_id}:{}", pack.id),
+                product_id: pack.product_id.clone(),
+                metadata: json!({ "argus_user_id": user_id, "argus_credit_pack_id": pack.id }),
+            }
+        }
+        (None, None, Some(amount_usd)) => {
+            let cents = custom_amount_cents(amount_usd).ok_or_else(|| {
+                problem(
+                    StatusCode::BAD_REQUEST,
+                    "INVALID_AMOUNT",
+                    "Custom credit amounts must be between $1 and $500.",
+                )
+            })?;
+            let product_id = match state
+                .app_db
+                .credit_product_of_amount(cents)
+                .await
+                .map_err(database_problem)?
+            {
+                Some(product_id) => product_id,
+                None => {
+                    let product_id = dodo
+                        .create_credit_product(
+                            &credit_product_name(cents),
+                            cents,
+                            json!({ "argus_credit_amount_cents": cents }),
+                        )
+                        .await
+                        .map_err(|error| provider_problem("credit product", error))?;
+                    state
+                        .app_db
+                        .upsert_credit_product(cents, &product_id)
+                        .await
+                        .map_err(database_problem)?;
+                    state
+                        .app_db
+                        .credit_product_of_amount(cents)
+                        .await
+                        .map_err(database_problem)?
+                        .ok_or_else(|| {
+                            problem(
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                "BILLING_DATABASE",
+                                "The credit product mapping could not be loaded.",
+                            )
+                        })?
+                }
+            };
+            CheckoutTarget {
+                checkout_key: format!("credits:{user_id}:{cents}"),
+                product_id,
+                metadata: json!({ "argus_user_id": user_id, "argus_credit_amount_cents": cents }),
+            }
         }
         _ => {
             return Err(problem(
                 StatusCode::BAD_REQUEST,
                 "INVALID_CHECKOUT",
-                "Provide exactly one of `planId` or `creditPackId`.",
+                "Provide exactly one of `planId`, `creditPackId` or `amountUsd`.",
             ));
         }
     };
-    let customer_id = ensure_customer(&state, dodo, &session, &user_id).await?;
-    let return_url =
-        state.settings.dodo_return_url.clone().unwrap_or_else(|| {
+    match state
+        .app_db
+        .claim_billing_checkout(&target.checkout_key, &user_id)
+        .await
+        .map_err(database_problem)?
+    {
+        CheckoutClaim::Existing(checkout_url) => {
+            return Ok(AxumJson(RedirectResponse { checkout_url }));
+        }
+        CheckoutClaim::InProgress => {
+            return Err(problem(
+                StatusCode::CONFLICT,
+                "CHECKOUT_IN_PROGRESS",
+                "A checkout session is already being opened. Try again in a moment.",
+            ));
+        }
+        CheckoutClaim::Claimed => {}
+    }
+    let outcome = async {
+        let customer_id = ensure_customer(&state, dodo, &session, &user_id).await?;
+        let return_url = state.settings.dodo_return_url.clone().unwrap_or_else(|| {
             format!("{}/console/settings/billing", state.settings.dashboard_url)
         });
-    let checkout_url = dodo
-        .create_checkout(&customer_id, &product_id, &return_url, metadata)
-        .await
-        .map_err(|error| provider_problem("checkout session", error))?;
-    Ok(AxumJson(RedirectResponse { checkout_url }))
+        let checkout_url = dodo
+            .create_checkout(
+                &customer_id,
+                &target.product_id,
+                &return_url,
+                target.metadata,
+                &format!("argus-checkout-{}", target.checkout_key),
+            )
+            .await
+            .map_err(|error| provider_problem("checkout session", error))?;
+        Ok::<String, ApiProblem>(checkout_url)
+    }
+    .await;
+    match outcome {
+        Ok(checkout_url) => {
+            if let Err(error) = state
+                .app_db
+                .finish_billing_checkout(&target.checkout_key, &checkout_url)
+                .await
+            {
+                tracing::error!(%error, "billing checkout session registration failed");
+            }
+            Ok(AxumJson(RedirectResponse { checkout_url }))
+        }
+        Err(problem_response) => {
+            if let Err(error) = state
+                .app_db
+                .clear_billing_checkout(&target.checkout_key)
+                .await
+            {
+                tracing::error!(%error, "billing checkout session cleanup failed");
+            }
+            Err(problem_response)
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -202,18 +330,7 @@ async fn portal(
 ) -> Result<AxumJson<PortalResponse>, ApiProblem> {
     let user_id = user_id(&session)?;
     let dodo = dodo_client(&state)?;
-    let customer_id = state
-        .app_db
-        .billing_customer_id(&user_id)
-        .await
-        .map_err(database_problem)?
-        .ok_or_else(|| {
-            problem(
-                StatusCode::NOT_FOUND,
-                "BILLING_CUSTOMER_NOT_FOUND",
-                "No billing customer exists for this account.",
-            )
-        })?;
+    let customer_id = ensure_customer(&state, &dodo, &session, &user_id).await?;
     let return_url =
         state.settings.dodo_return_url.clone().unwrap_or_else(|| {
             format!("{}/console/settings/billing", state.settings.dashboard_url)
@@ -223,6 +340,129 @@ async fn portal(
         .await
         .map_err(|error| provider_problem("customer portal", error))?;
     Ok(AxumJson(PortalResponse { portal_url }))
+}
+
+async fn billing_customer_id_of(state: &AppState, user_id: &str) -> Result<String, ApiProblem> {
+    state
+        .app_db
+        .billing_customer_id(user_id)
+        .await
+        .map_err(database_problem)?
+        .ok_or_else(|| {
+            problem(
+                StatusCode::NOT_FOUND,
+                "BILLING_CUSTOMER_NOT_FOUND",
+                "No billing customer exists for this account.",
+            )
+        })
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct InvoiceView {
+    payment_id: String,
+    created_at: String,
+    total_amount: i64,
+    currency: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    invoice_id: Option<String>,
+    description: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct InvoiceList {
+    invoices: Vec<InvoiceView>,
+}
+
+async fn invoices(
+    State(state): State<AppState>,
+    session: CurrentSession<AppAuthSchema>,
+) -> Result<AxumJson<InvoiceList>, ApiProblem> {
+    let user_id = user_id(&session)?;
+    let dodo = dodo_client(&state)?;
+    let Some(customer_id) = state
+        .app_db
+        .billing_customer_id(&user_id)
+        .await
+        .map_err(database_problem)?
+    else {
+        return Ok(AxumJson(InvoiceList { invoices: Vec::new() }));
+    };
+    let payments = dodo
+        .list_payments(&customer_id)
+        .await
+        .map_err(|error| provider_problem("payment history", error))?;
+    let invoices = payments
+        .into_iter()
+        .map(|payment| {
+            let description = match payment.charge_type.as_deref() {
+                Some("new") => "Subscription".to_owned(),
+                Some("renewal") => "Subscription renewal".to_owned(),
+                Some("plan_change") => "Plan change".to_owned(),
+                Some("on_demand") => "On-demand charge".to_owned(),
+                _ => "Prepaid credits".to_owned(),
+            };
+            InvoiceView {
+                payment_id: payment.payment_id,
+                created_at: payment.created_at,
+                total_amount: payment.total_amount,
+                currency: payment.currency,
+                status: payment.status,
+                invoice_id: payment.invoice_id,
+                description,
+            }
+        })
+        .collect();
+    Ok(AxumJson(InvoiceList { invoices }))
+}
+
+async fn invoice_download(
+    State(state): State<AppState>,
+    session: CurrentSession<AppAuthSchema>,
+    Path(payment_id): Path<String>,
+) -> Result<Response, ApiProblem> {
+    let user_id = user_id(&session)?;
+    let dodo = dodo_client(&state)?;
+    let customer_id = billing_customer_id_of(&state, &user_id).await?;
+    let payment = dodo
+        .payment(&payment_id)
+        .await
+        .map_err(|error| provider_problem("payment lookup", error))?;
+    if payment
+        .customer
+        .as_ref()
+        .is_none_or(|customer| customer.customer_id != customer_id)
+    {
+        return Err(problem(
+            StatusCode::NOT_FOUND,
+            "INVOICE_NOT_FOUND",
+            "No invoice was found for this account.",
+        ));
+    }
+    let pdf = dodo
+        .invoice_pdf(&payment_id)
+        .await
+        .map_err(|error| provider_problem("invoice download", error))?;
+    let disposition = format!("attachment; filename=\"invoice-{payment_id}.pdf\"");
+    Ok((
+        StatusCode::OK,
+        [
+            (
+                axum::http::header::CONTENT_TYPE,
+                axum::http::HeaderValue::from_static("application/pdf"),
+            ),
+            (
+                axum::http::header::CONTENT_DISPOSITION,
+                axum::http::HeaderValue::from_str(&disposition)
+                    .unwrap_or(axum::http::HeaderValue::from_static("attachment")),
+            ),
+        ],
+        Body::from(pdf),
+    )
+        .into_response())
 }
 
 async fn ensure_customer(
@@ -392,9 +632,16 @@ pub async fn reconcile_subscriptions(state: &AppState) {
                 &remote.status,
                 remote.next_billing_date.as_deref(),
                 remote.past_due_ends_at.as_deref(),
+                remote.cancel_at_next_billing_date,
+                remote.cancelled_at.as_deref(),
                 None,
             )
-            .await
+            .await?;
+            state
+                .app_db
+                .clear_user_plan_checkouts(&stored.user_id)
+                .await
+                .map_err(|error| error.to_string())
         }
         .await;
         if let Err(error) = result {
@@ -469,6 +716,11 @@ async fn sync_subscription(
         .ok_or_else(|| format!("no plan is configured for Dodo product `{product_id}`"))?;
     let next_billing_date = data.get("next_billing_date").and_then(Value::as_str);
     let past_due_ends_at = data.get("past_due_ends_at").and_then(Value::as_str);
+    let cancel_at_next_billing_date = data
+        .get("cancel_at_next_billing_date")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let cancelled_at = data.get("cancelled_at").and_then(Value::as_str);
     persist_subscription(
         state,
         subscription_id,
@@ -477,11 +729,32 @@ async fn sync_subscription(
         status,
         next_billing_date,
         past_due_ends_at,
+        cancel_at_next_billing_date,
+        cancelled_at,
         event_at,
     )
-    .await
+    .await?;
+    if let Err(error) = state.app_db.clear_user_plan_checkouts(&user_id).await {
+        tracing::error!(%error, "billing plan checkout session cleanup failed");
+    }
+    if matches!(status, "active" | "pending") {
+        if let Ok(Some(other)) = state
+            .app_db
+            .duplicate_managed_subscription(&user_id, subscription_id)
+            .await
+        {
+            tracing::warn!(
+                user_id = %user_id,
+                subscription_id,
+                other_subscription_id = %other,
+                "user has more than one managed subscription; manual review recommended"
+            );
+        }
+    }
+    Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn persist_subscription(
     state: &AppState,
     subscription_id: &str,
@@ -490,6 +763,8 @@ async fn persist_subscription(
     status: &str,
     next_billing_date: Option<&str>,
     past_due_ends_at: Option<&str>,
+    cancel_at_next_billing_date: bool,
+    cancelled_at: Option<&str>,
     event_at: Option<&str>,
 ) -> Result<(), String> {
     state
@@ -501,6 +776,8 @@ async fn persist_subscription(
             status,
             next_billing_date,
             past_due_ends_at,
+            cancel_at_next_billing_date,
+            cancelled_at,
             event_at,
         )
         .await
@@ -524,25 +801,64 @@ async fn grant_purchased_credits(state: &AppState, data: &Value) -> Result<(), S
         Some(cart) => cart,
         None => return Ok(()),
     };
-    let purchases: Vec<(&CreditPack, i64)> = cart
-        .iter()
-        .filter_map(|item| {
-            let product_id = item.get("product_id")?.as_str()?;
-            let quantity = item.get("quantity")?.as_i64()?;
-            state
-                .billing_catalog
-                .credit_pack_for_product(product_id)
-                .map(|pack| (pack, quantity))
-        })
-        .filter(|(_, quantity)| *quantity > 0)
-        .collect();
+    let mut purchases: Vec<(i64, String)> = Vec::new();
+    let mut purchased_pack_ids: Vec<&str> = Vec::new();
+    let mut purchased_custom_cents: Vec<i64> = Vec::new();
+    for item in cart {
+        let Some(product_id) = item.get("product_id").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(quantity) = item.get("quantity").and_then(Value::as_i64) else {
+            continue;
+        };
+        if quantity <= 0 {
+            continue;
+        }
+        let per_unit_micros = if let Some(pack) =
+            state.billing_catalog.credit_pack_for_product(product_id)
+        {
+            purchased_pack_ids.push(pack.id.as_str());
+            pack.credits_micros
+        } else if let Some(amount_cents) = state
+            .app_db
+            .credit_amount_of_product(product_id)
+            .await
+            .map_err(|error| error.to_string())?
+        {
+            purchased_custom_cents.push(amount_cents);
+            amount_cents
+                .checked_mul(10_000)
+                .ok_or_else(|| "credit purchase amount overflowed".to_owned())?
+        } else {
+            tracing::warn!(
+                payment_id,
+                product_id,
+                "payment product is not a configured credit product; skipping"
+            );
+            continue;
+        };
+        let delta = per_unit_micros
+            .checked_mul(quantity)
+            .ok_or_else(|| "credit purchase amount overflowed".to_owned())?;
+        purchases.push((delta, product_id.to_owned()));
+    }
     if let Some(expected) = data
         .pointer("/metadata/argus_credit_pack_id")
         .and_then(Value::as_str)
     {
-        if !purchases.iter().any(|(pack, _)| pack.id == expected) {
+        if !purchased_pack_ids.contains(&expected) {
             return Err(format!(
                 "payment `{payment_id}` was for credit pack `{expected}` but no configured credit product matched"
+            ));
+        }
+    }
+    if let Some(expected_cents) = data
+        .pointer("/metadata/argus_credit_amount_cents")
+        .and_then(Value::as_i64)
+    {
+        if !purchased_custom_cents.contains(&expected_cents) {
+            return Err(format!(
+                "payment `{payment_id}` was for a custom credit amount but no matching credit product was found"
             ));
         }
     }
@@ -571,24 +887,26 @@ async fn grant_purchased_credits(state: &AppState, data: &Value) -> Result<(), S
         }
     }
     let user_id = mapped_user
-        .or_else(|| metadata_user.map(str::to_owned))
+        .or_else(|| data
+            .pointer("/metadata/argus_user_id")
+            .and_then(Value::as_str)
+            .map(str::to_owned))
         .ok_or_else(|| "credit payment cannot be mapped to an Argus user".to_owned())?;
     state
         .app_db
         .upsert_billing_customer(&user_id, customer_id)
         .await
         .map_err(|error| error.to_string())?;
-    for (pack, quantity) in purchases {
-        let delta = pack
-            .credits_micros
-            .checked_mul(quantity)
-            .ok_or_else(|| "credit purchase amount overflowed".to_owned())?;
-        let reference = format!("{payment_id}:{}", pack.product_id);
+    for (delta, product_id) in purchases {
+        let reference = format!("{payment_id}:{product_id}");
         state
             .app_db
             .add_credits(&user_id, delta, "purchase", &reference)
             .await
             .map_err(|error| error.to_string())?;
+    }
+    if let Err(error) = state.app_db.clear_user_credit_checkouts(&user_id).await {
+        tracing::error!(%error, "billing credit checkout session cleanup failed");
     }
     Ok(())
 }
@@ -723,7 +1041,31 @@ fn problem(status: StatusCode, code: &str, message: &str) -> ApiProblem {
 mod tests {
     use axum::http::{HeaderMap, HeaderValue};
 
-    use super::verify_webhook_at;
+    use super::{credit_product_name, custom_amount_cents, verify_webhook_at};
+
+    #[test]
+    fn accepts_custom_amounts_in_range() {
+        assert_eq!(custom_amount_cents(1.0), Some(100));
+        assert_eq!(custom_amount_cents(5.0), Some(500));
+        assert_eq!(custom_amount_cents(5.5), Some(550));
+        assert_eq!(custom_amount_cents(499.999), Some(50_000));
+        assert_eq!(custom_amount_cents(500.0), Some(50_000));
+    }
+
+    #[test]
+    fn rejects_custom_amounts_out_of_range() {
+        assert_eq!(custom_amount_cents(0.0), None);
+        assert_eq!(custom_amount_cents(0.99), None);
+        assert_eq!(custom_amount_cents(500.01), None);
+        assert_eq!(custom_amount_cents(f64::NAN), None);
+        assert_eq!(custom_amount_cents(f64::INFINITY), None);
+    }
+
+    #[test]
+    fn formats_credit_product_names() {
+        assert_eq!(credit_product_name(500), "Argus Prepaid Credits $5");
+        assert_eq!(credit_product_name(550), "Argus Prepaid Credits $5.50");
+    }
 
     #[test]
     fn verifies_standard_webhook_test_vector() {

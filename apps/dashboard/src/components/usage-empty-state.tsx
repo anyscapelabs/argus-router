@@ -1,15 +1,10 @@
 "use client";
 
-import { GoInfo } from "react-icons/go";
+import { EmptyState } from "@/components/empty-state";
 import type { UsageRange } from "@/domains/usage/api";
 
 export function UsageEmptyState({ className = "" }: { className?: string }) {
-  return (
-    <div className={`flex flex-col items-center justify-center gap-2 ${className}`}>
-      <GoInfo className="size-5 text-white/35" aria-hidden />
-      <p className="text-xs text-white/40">No usage available in this range</p>
-    </div>
-  );
+  return <EmptyState message="No usage available in this range" className={className} />;
 }
 
 export function chartAxisLabels(range: UsageRange): string[] {

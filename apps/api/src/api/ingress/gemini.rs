@@ -383,7 +383,11 @@ fn error_status(code: ErrCode) -> &'static str {
         ErrCode::Unauthorized => "UNAUTHENTICATED",
         ErrCode::Forbidden => "PERMISSION_DENIED",
         ErrCode::NotFound => "NOT_FOUND",
-        ErrCode::RateLimited | ErrCode::CreditsExhausted => "RESOURCE_EXHAUSTED",
+        ErrCode::RateLimited
+        | ErrCode::DailyLimitReached
+        | ErrCode::WeeklyLimitReached
+        | ErrCode::MonthlyLimitReached
+        | ErrCode::CreditsExhausted => "RESOURCE_EXHAUSTED",
         ErrCode::Overloaded | ErrCode::Upstream | ErrCode::Network => "UNAVAILABLE",
         ErrCode::ProviderUnconfigured => "UNAVAILABLE",
         ErrCode::Timeout => "DEADLINE_EXCEEDED",

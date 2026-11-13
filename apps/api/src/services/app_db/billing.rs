@@ -12,6 +12,9 @@ pub struct SubscriptionView {
     pub next_billing_date: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub past_due_ends_at: Option<String>,
+    pub cancel_at_next_billing_date: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cancelled_at: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -91,6 +94,28 @@ impl AppDb {
         Ok(())
     }
 
+    pub async fn clear_user_plan_checkouts(&self, user_id: &str) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "DELETE FROM billing_checkout_sessions
+             WHERE user_id = $1 AND checkout_key LIKE 'plan:%'",
+        )
+        .bind(user_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn clear_user_credit_checkouts(&self, user_id: &str) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "DELETE FROM billing_checkout_sessions
+             WHERE user_id = $1 AND checkout_key LIKE 'credits:%'",
+        )
+        .bind(user_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
     pub async fn billing_customer_id(&self, user_id: &str) -> Result<Option<String>, sqlx::Error> {
         sqlx::query_scalar("SELECT customer_id FROM billing_customers WHERE user_id = $1")
             .bind(user_id)
@@ -126,6 +151,7 @@ impl AppDb {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn upsert_subscription(
         &self,
         subscription_id: &str,
@@ -134,12 +160,15 @@ impl AppDb {
         status: &str,
         next_billing_date: Option<&str>,
         past_due_ends_at: Option<&str>,
+        cancel_at_next_billing_date: bool,
+        cancelled_at: Option<&str>,
         event_at: Option<&str>,
     ) -> Result<(), sqlx::Error> {
         sqlx::query(
             "INSERT INTO billing_subscriptions
-                 (subscription_id, user_id, plan_id, status, next_billing_date, past_due_ends_at, event_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7::text::timestamptz, NOW()), NOW())
+                 (subscription_id, user_id, plan_id, status, next_billing_date, past_due_ends_at,
+                  cancel_at_next_billing_date, cancelled_at, event_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE($9::text::timestamptz, NOW()), NOW())
              ON CONFLICT (subscription_id) DO UPDATE
                SET plan_id = EXCLUDED.plan_id,
                    status = EXCLUDED.status,
@@ -148,6 +177,8 @@ impl AppDb {
                      WHEN EXCLUDED.status = 'past_due' THEN COALESCE(EXCLUDED.past_due_ends_at, billing_subscriptions.past_due_ends_at)
                      ELSE NULL
                    END,
+                   cancel_at_next_billing_date = EXCLUDED.cancel_at_next_billing_date,
+                   cancelled_at = COALESCE(EXCLUDED.cancelled_at, billing_subscriptions.cancelled_at),
                    event_at = EXCLUDED.event_at,
                    updated_at = NOW()
              WHERE billing_subscriptions.event_at <= EXCLUDED.event_at",
@@ -158,26 +189,9 @@ impl AppDb {
         .bind(status)
         .bind(next_billing_date)
         .bind(past_due_ends_at)
+        .bind(cancel_at_next_billing_date)
+        .bind(cancelled_at)
         .bind(event_at)
-        .execute(&self.pool)
-        .await?;
-        Ok(())
-    }
-
-    pub async fn set_subscription_status(
-        &self,
-        subscription_id: &str,
-        status: &str,
-        past_due_ends_at: Option<&str>,
-    ) -> Result<(), sqlx::Error> {
-        sqlx::query(
-            "UPDATE billing_subscriptions
-             SET status = $2, past_due_ends_at = $3, updated_at = NOW()
-             WHERE subscription_id = $1",
-        )
-        .bind(subscription_id)
-        .bind(status)
-        .bind(past_due_ends_at)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -188,10 +202,14 @@ impl AppDb {
         user_id: &str,
     ) -> Result<Option<SubscriptionView>, sqlx::Error> {
         let row = sqlx::query(
-            "SELECT plan_id, status, next_billing_date, past_due_ends_at
+            "SELECT plan_id, status, next_billing_date, past_due_ends_at,
+                    cancel_at_next_billing_date, cancelled_at
              FROM billing_subscriptions
              WHERE user_id = $1
-             ORDER BY CASE WHEN status IN ('active', 'past_due') THEN 0 ELSE 1 END,
+             ORDER BY CASE
+                        WHEN status IN ('active', 'past_due')
+                          OR (status = 'cancelled' AND cancel_at_next_billing_date)
+                        THEN 0 ELSE 1 END,
                       updated_at DESC
              LIMIT 1",
         )
@@ -203,6 +221,8 @@ impl AppDb {
             status: row.get("status"),
             next_billing_date: row.get("next_billing_date"),
             past_due_ends_at: row.get("past_due_ends_at"),
+            cancel_at_next_billing_date: row.get("cancel_at_next_billing_date"),
+            cancelled_at: row.get("cancelled_at"),
         }))
     }
 
@@ -234,6 +254,12 @@ impl AppDb {
                    AND past_due_ends_at IS NOT NULL
                    AND past_due_ends_at::timestamptz > NOW()
                  )
+                 OR (
+                   status = 'cancelled'
+                   AND cancel_at_next_billing_date
+                   AND next_billing_date IS NOT NULL
+                   AND next_billing_date::timestamptz > NOW()
+                 )
                )
              ORDER BY updated_at DESC
              LIMIT 1",
@@ -247,7 +273,8 @@ impl AppDb {
         let rows = sqlx::query(
             "SELECT subscription_id, user_id, plan_id, status
              FROM billing_subscriptions
-             WHERE status IN ('pending', 'active', 'past_due', 'on_hold', 'paused')",
+             WHERE status IN ('pending', 'active', 'past_due', 'on_hold', 'paused')
+                OR (status = 'cancelled' AND cancel_at_next_billing_date)",
         )
         .fetch_all(&self.pool)
         .await?;
@@ -260,6 +287,26 @@ impl AppDb {
                 status: row.get("status"),
             })
             .collect())
+    }
+
+    pub async fn duplicate_managed_subscription(
+        &self,
+        user_id: &str,
+        exclude_subscription_id: &str,
+    ) -> Result<Option<String>, sqlx::Error> {
+        sqlx::query_scalar(
+            "SELECT subscription_id
+             FROM billing_subscriptions
+             WHERE user_id = $1
+               AND subscription_id <> $2
+               AND status IN ('pending', 'active', 'past_due', 'on_hold', 'paused')
+             ORDER BY updated_at DESC
+             LIMIT 1",
+        )
+        .bind(user_id)
+        .bind(exclude_subscription_id)
+        .fetch_optional(&self.pool)
+        .await
     }
 
     pub async fn set_user_plan(&self, user_id: &str, plan_id: &str) -> Result<(), sqlx::Error> {
@@ -320,6 +367,45 @@ impl AppDb {
             .await?;
         }
         tx.commit().await?;
+        Ok(())
+    }
+
+    pub async fn credit_product_of_amount(
+        &self,
+        amount_cents: i64,
+    ) -> Result<Option<String>, sqlx::Error> {
+        sqlx::query_scalar("SELECT product_id FROM billing_credit_products WHERE amount_cents = $1")
+            .bind(amount_cents)
+            .fetch_optional(&self.pool)
+            .await
+    }
+
+    pub async fn credit_amount_of_product(
+        &self,
+        product_id: &str,
+    ) -> Result<Option<i64>, sqlx::Error> {
+        sqlx::query_scalar(
+            "SELECT amount_cents FROM billing_credit_products WHERE product_id = $1",
+        )
+        .bind(product_id)
+        .fetch_optional(&self.pool)
+        .await
+    }
+
+    pub async fn upsert_credit_product(
+        &self,
+        amount_cents: i64,
+        product_id: &str,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "INSERT INTO billing_credit_products (amount_cents, product_id)
+             VALUES ($1, $2)
+             ON CONFLICT (amount_cents) DO NOTHING",
+        )
+        .bind(amount_cents)
+        .bind(product_id)
+        .execute(&self.pool)
+        .await?;
         Ok(())
     }
 

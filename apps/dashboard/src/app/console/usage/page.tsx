@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import { RangeControls } from "@/components/usage-range-controls";
 import { chartAxisLabels } from "@/components/usage-empty-state";
+import { EmptyState } from "@/components/empty-state";
+import { SkeletonRows } from "@/components/skeleton-rows";
 import { formatTokenCount } from "@/lib/usage-format";
 import { useUsage, useUsageSummary } from "@/domains/usage/hooks";
 import type { UsageRange } from "@/domains/usage/api";
@@ -201,26 +203,29 @@ export default function UsagePage() {
             </tr>
           </thead>
           <tbody>
-            {modelUsage.length === 0 && (
+            {summary.isLoading ? (
+              <SkeletonRows columns={6} />
+            ) : modelUsage.length === 0 ? (
               <tr>
-                <td colSpan={6} className="px-2 py-6 text-center text-xs text-white/40">
-                  No usage in this range
+                <td colSpan={6} className="px-2 py-10">
+                  <EmptyState message="No usage in this range" />
                 </td>
               </tr>
+            ) : (
+              modelUsage
+                .slice()
+                .sort((a, b) => b.requests - a.requests)
+                .map((m, i) => (
+                  <tr key={m.model} className="border-b border-border-secondary/50 transition-colors hover:bg-[#202020]">
+                    <td className="px-2 py-2 text-white/70">{i + 1}</td>
+                    <td className="px-2 py-2 font-medium text-primary">{m.model}</td>
+                    <td className="px-2 py-2 text-right text-white/70">{m.requests.toLocaleString()}</td>
+                    <td className="px-2 py-2 text-right text-white/70">{m.input.toLocaleString()}</td>
+                    <td className="px-2 py-2 text-right text-white/70">{m.output.toLocaleString()}</td>
+                    <td className="px-2 py-2 text-right text-white/70">${m.cost.toFixed(4)}</td>
+                  </tr>
+                ))
             )}
-            {modelUsage
-              .slice()
-              .sort((a, b) => b.requests - a.requests)
-              .map((m, i) => (
-                <tr key={m.model} className="border-b border-border-secondary/50 transition-colors hover:bg-[#202020]">
-                  <td className="px-2 py-2 text-white/70">{i + 1}</td>
-                  <td className="px-2 py-2 font-medium text-primary">{m.model}</td>
-                  <td className="px-2 py-2 text-right text-white/70">{m.requests.toLocaleString()}</td>
-                  <td className="px-2 py-2 text-right text-white/70">{m.input.toLocaleString()}</td>
-                  <td className="px-2 py-2 text-right text-white/70">{m.output.toLocaleString()}</td>
-                  <td className="px-2 py-2 text-right text-white/70">${m.cost.toFixed(4)}</td>
-                </tr>
-              ))}
           </tbody>
         </table>
       </div>
@@ -245,24 +250,27 @@ export default function UsagePage() {
             </tr>
           </thead>
           <tbody>
-            {modelUsage.length === 0 && (
+            {summary.isLoading ? (
+              <SkeletonRows columns={7} />
+            ) : modelUsage.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-2 py-6 text-center text-xs text-white/40">
-                  No usage in this range
+                <td colSpan={7} className="px-2 py-10">
+                  <EmptyState message="No usage in this range" />
                 </td>
               </tr>
+            ) : (
+              modelUsage.map((m) => (
+                <tr key={m.model} className="border-b border-border-secondary/50 transition-colors hover:bg-[#202020]">
+                  <td className="px-2 py-2 font-medium text-primary">{m.model}</td>
+                  <td className="px-2 py-2 text-right text-white/70">{m.requests.toLocaleString()}</td>
+                  <td className="px-2 py-2 text-right text-white/70">{m.input.toLocaleString()}</td>
+                  <td className="px-2 py-2 text-right text-white/70">{m.output.toLocaleString()}</td>
+                  <td className="px-2 py-2 text-right text-white/70">{m.cacheRead.toLocaleString()}</td>
+                  <td className="px-2 py-2 text-right text-white/70">${m.cost.toFixed(4)}</td>
+                  <td className="px-2 py-2 text-right text-white/40" title="Cache-write tokens are not tracked yet">—</td>
+                </tr>
+              ))
             )}
-            {modelUsage.map((m) => (
-              <tr key={m.model} className="border-b border-border-secondary/50 transition-colors hover:bg-[#202020]">
-                <td className="px-2 py-2 font-medium text-primary">{m.model}</td>
-                <td className="px-2 py-2 text-right text-white/70">{m.requests.toLocaleString()}</td>
-                <td className="px-2 py-2 text-right text-white/70">{m.input.toLocaleString()}</td>
-                <td className="px-2 py-2 text-right text-white/70">{m.output.toLocaleString()}</td>
-                <td className="px-2 py-2 text-right text-white/70">{m.cacheRead.toLocaleString()}</td>
-                <td className="px-2 py-2 text-right text-white/70">${m.cost.toFixed(4)}</td>
-                <td className="px-2 py-2 text-right text-white/40" title="Cache-write tokens are not tracked yet">—</td>
-              </tr>
-            ))}
           </tbody>
         </table>
       </div>
@@ -286,6 +294,9 @@ export default function UsagePage() {
           </thead>
           <tbody>
             {(() => {
+              if (summary.isLoading) {
+                return <SkeletonRows columns={5} />;
+              }
               const rows = (summary.data?.byKey ?? []).map((k) => ({
                 key: k.keyId ?? "unknown",
                 requests: k.requests,
@@ -296,8 +307,8 @@ export default function UsagePage() {
               if (rows.length === 0) {
                 return (
                   <tr>
-                    <td colSpan={5} className="px-2 py-6 text-center text-xs text-white/40">
-                      No usage in this range
+                    <td colSpan={5} className="px-2 py-10">
+                      <EmptyState message="No usage in this range" />
                     </td>
                   </tr>
                 );
