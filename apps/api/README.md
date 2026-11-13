@@ -33,7 +33,6 @@ and model/search/voice proxying. One process, one Postgres database.
 
 ## Quotas (enforced per request)
 
-- Per-minute RPM window (plan `ratePerMin`)
 - Daily request count (plan `dailyRequests`, atomic conditional upsert)
 - Rolling monthly/weekly token totals from completed `usage_logs` rows
 - Monthly web searches (plan `searchesPerMonth`, atomic counter) and voice

@@ -29,7 +29,6 @@ pub struct PlanQuota {
     pub monthly_tokens: i64,
     pub weekly_tokens: i64,
     pub daily_requests: i64,
-    pub rate_per_min: i64,
 }
 
 #[derive(Clone, Debug)]

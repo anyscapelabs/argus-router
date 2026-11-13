@@ -123,16 +123,6 @@ pub(crate) async fn enforce_plan_quotas(
         .await
         .map_err(|_| db_error("the plan quota lookup"))?;
 
-    let (used, limit) = state.rate_window.hit(user_id, quota.rate_per_min);
-    if limit > 0 && used > limit {
-        return Err(Errx::new(
-            ErrCode::RateLimited,
-            429,
-            format!("plan limit is {limit} requests per minute"),
-        )
-        .with_retry_after(60));
-    }
-
     let daily_exceeded = if let QuotaCheck::Exceeded { .. } = state
         .app_db
         .reserve_daily_request(user_id, plan)
@@ -227,9 +217,8 @@ async fn limit_error(state: &AppState, window: LimitWindow, quota: i64, used: i6
                 window.code(),
                 429,
                 format!(
-                    "{} Limit Reached ({used}/{quota}) — it resets {}",
+                    "{} Limit has reached. Try again later.",
                     window_label(window),
-                    window_reset_hint(window),
                 ),
             );
         }
@@ -246,28 +235,15 @@ fn window_label(window: LimitWindow) -> &'static str {
     }
 }
 
-fn window_reset_hint(window: LimitWindow) -> &'static str {
-    match window {
-        LimitWindow::Daily => "at 00:00 UTC",
-        LimitWindow::Weekly => "on Monday, 00:00 UTC",
-        LimitWindow::Monthly => "on the 1st, 00:00 UTC",
-    }
-}
-
 fn limit_message(
     window: LimitWindow,
-    quota: i64,
-    used: i64,
+    _quota: i64,
+    _used: i64,
     reset: chrono::DateTime<chrono::Utc>,
 ) -> String {
-    let reset_text = match window {
-        LimitWindow::Daily => format!("Resets at {}", reset.format("%H:%M UTC")),
-        _ => format!("Resets on {}", reset.format("%a, %d %b %Y at %H:%M UTC")),
-    };
     let countdown = humanize_duration(reset_seconds_left(reset));
-    let counter = if quota > 0 { format!(" ({used}/{quota})") } else { String::new() };
     format!(
-        "{} Limit Reached — {reset_text} (in {countdown}){counter}",
+        "{} Limit has reached. Try again in {countdown}",
         window_label(window)
     )
 }

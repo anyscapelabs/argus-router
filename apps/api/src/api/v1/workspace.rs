@@ -59,10 +59,10 @@ fn provisioning_failure(error: WorkspaceError) -> ApiFailure {
             "WORKSPACE_PRECLAIMED",
             "Your default workspace slug is held by another account. Contact support to resolve it.",
         ),
-        error => failure(
+        _error => failure(
             StatusCode::INTERNAL_SERVER_ERROR,
             "WORKSPACE",
-            &error.to_string(),
+            "An error has occurred. Try again later.",
         ),
     }
 }

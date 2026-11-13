@@ -21,11 +21,11 @@ async fn list_plans(
     State(state): State<AppState>,
     _session: CurrentSession<AppAuthSchema>,
 ) -> Result<AxumJson<serde_json::Value>, (StatusCode, AxumJson<serde_json::Value>)> {
-    let plans = state.app_db.list_plans().await.map_err(|error| {
+    let plans = state.app_db.list_plans().await.map_err(|_error| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             AxumJson(
-                serde_json::json!({"error": {"code": "PLAN_LIST", "message": error.to_string()}}),
+                serde_json::json!({"error": {"code": "PLAN_LIST", "message": "An error has occurred. Try again later."}}),
             ),
         )
     })?;
@@ -49,19 +49,19 @@ async fn refresh_plans(
         ));
     }
     let plans = crate::services::plans::seed_entries();
-    if let Err(error) = state.app_db.seed_plans(&plans).await {
+    if let Err(_error) = state.app_db.seed_plans(&plans).await {
         return Err((
             StatusCode::INTERNAL_SERVER_ERROR,
             AxumJson(
-                serde_json::json!({"error": {"code": "PLAN_REFRESH", "message": error.to_string()}}),
+                serde_json::json!({"error": {"code": "PLAN_REFRESH", "message": "An error has occurred. Try again later."}}),
             ),
         ));
     }
-    if let Err(error) = state.app_db.seed_plan_allowlists(&plans).await {
+    if let Err(_error) = state.app_db.seed_plan_allowlists(&plans).await {
         return Err((
             StatusCode::INTERNAL_SERVER_ERROR,
             AxumJson(
-                serde_json::json!({"error": {"code": "PLAN_REFRESH", "message": error.to_string()}}),
+                serde_json::json!({"error": {"code": "PLAN_REFRESH", "message": "An error has occurred. Try again later."}}),
             ),
         ));
     }

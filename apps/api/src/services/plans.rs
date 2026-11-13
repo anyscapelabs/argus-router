@@ -6,7 +6,6 @@ pub struct PlanLimits {
     pub monthly_tokens: String,
     pub weekly_tokens: String,
     pub daily_requests: String,
-    pub rate_per_min: String,
 }
 
 impl PlanLimits {
@@ -44,9 +43,6 @@ impl PlanLimits {
         Self::count(&self.daily_requests)
     }
 
-    pub fn rate_per_min_count(&self) -> i64 {
-        Self::count(&self.rate_per_min)
-    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

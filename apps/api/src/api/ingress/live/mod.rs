@@ -54,7 +54,7 @@ pub async fn last_reply_handler(
             return (
                 StatusCode::UNAUTHORIZED,
                 Json(serde_json::json!({
-                    "error": {"code": "unauthorized", "message": "invalid API key"}
+                    "error": {"code": "unauthorized", "message": "An error has occurred. Try again later."}
                 })),
             )
                 .into_response();
@@ -74,7 +74,7 @@ pub async fn last_reply_handler(
             Json(serde_json::json!({
                 "error": {
                     "code": "not_found",
-                    "message": "no pending reply for this session (may have expired or never existed)"
+                    "message": "An error has occurred. Try again later."
                 }
             })),
         )
@@ -115,10 +115,7 @@ pub async fn live_websocket_handler(
             Json(serde_json::json!({
                 "error": {
                     "code": "INVALID_ARGUMENT",
-                    "message": format!(
-                        "unknown live model `{model}`; supported models: {}",
-                        allowed.join(", ")
-                    ),
+                    "message": "An error has occurred. Try again later.",
                     "supported_models": allowed,
                 }
             })),
@@ -147,7 +144,7 @@ pub async fn live_websocket_handler(
             return (
                 StatusCode::from_u16(err.status).unwrap_or(StatusCode::UNAUTHORIZED),
                 Json(serde_json::json!({
-                    "error": {"code": err.code.as_str(), "message": err.message}
+                    "error": {"code": err.code.as_str(), "message": err.public_message()}
                 })),
             )
                 .into_response();
@@ -176,7 +173,7 @@ pub async fn live_websocket_handler(
                 return (
                     StatusCode::from_u16(err.status).unwrap_or(StatusCode::TOO_MANY_REQUESTS),
                     Json(serde_json::json!({
-                        "error": {"code": err.code.as_str(), "message": err.message}
+                        "error": {"code": err.code.as_str(), "message": err.public_message()}
                     })),
                 )
                     .into_response();
@@ -208,10 +205,7 @@ pub async fn live_websocket_handler(
                 Json(serde_json::json!({
                     "error": {
                         "code": "FORBIDDEN",
-                        "message": format!(
-                            "live voice is not available on your plan `{}`",
-                            principal.plan
-                        ),
+                        "message": "An error has occurred. Try again later.",
                     }
                 })),
             )
@@ -236,7 +230,7 @@ pub async fn live_websocket_handler(
                 Json(serde_json::json!({
                     "error": {
                         "code": "RESOURCE_EXHAUSTED",
-                        "message": "Monthly voice minutes quota exhausted for this plan.",
+                        "message": "An error has occurred. Try again later.",
                         "voice_minutes_limit": quota,
                         "voice_minutes_used": used,
                     }
@@ -265,7 +259,7 @@ pub async fn live_websocket_handler(
                 Json(serde_json::json!({
                     "error": {
                         "code": "UPSTREAM_ERROR",
-                        "message": "the voice quota lookup failed",
+                        "message": "An error has occurred. Try again later.",
                     }
                 })),
             )
@@ -304,7 +298,7 @@ pub async fn live_websocket_handler(
                     Json(serde_json::json!({
                         "error": {
                             "code": "UPSTREAM_ERROR",
-                            "message": "the credit balance lookup failed",
+                            "message": "An error has occurred. Try again later.",
                         }
                     })),
                 )
@@ -332,7 +326,7 @@ pub async fn live_websocket_handler(
                 Json(serde_json::json!({
                     "error": {
                         "code": "credits_exhausted",
-                        "message": "included usage is exhausted and no prepaid credits remain",
+                        "message": "An error has occurred. Try again later.",
                     }
                 })),
             )
@@ -358,7 +352,7 @@ pub async fn live_websocket_handler(
                 return (
                     StatusCode::from_u16(item.status).unwrap_or(StatusCode::PAYMENT_REQUIRED),
                     Json(serde_json::json!({
-                        "error": {"code": item.code.as_str(), "message": item.message}
+                        "error": {"code": item.code.as_str(), "message": item.public_message()}
                     })),
                 )
                     .into_response();

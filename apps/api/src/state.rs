@@ -11,7 +11,6 @@ use crate::services::app_db::AppDb;
 use crate::services::cache::Cache;
 use crate::services::catalog::CatalogCache;
 use crate::services::dodo::{BillingCatalog, DodoClient};
-use crate::services::rate::RateWindow;
 use crate::services::search::SearchRouter;
 use crate::services::usage::UsageRecorder;
 
@@ -27,7 +26,6 @@ pub struct AppState {
     pub cache: Cache,
     pub usage: UsageRecorder,
     pub search_router: Arc<SearchRouter>,
-    pub rate_window: Arc<RateWindow>,
     pub live_sessions: Arc<LiveSessionStore>,
     pub db: better_auth::seaorm::DatabaseConnection,
 }

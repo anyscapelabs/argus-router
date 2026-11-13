@@ -6,7 +6,6 @@ pub mod dodo;
 pub mod email;
 pub mod plans;
 pub mod providers;
-pub mod rate;
 pub mod search;
 pub mod usage;
 pub mod workspace;

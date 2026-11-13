@@ -4,7 +4,6 @@ import { useState } from "react";
 import { FaSpinner } from "react-icons/fa";
 import { FaArrowRight } from "react-icons/fa6";
 import { IoCalendarOutline } from "react-icons/io5";
-import { CiClock2 } from "react-icons/ci";
 import { GoSync } from "react-icons/go";
 import { AiOutlineRobot } from "react-icons/ai";
 import { GiToken } from "react-icons/gi";
@@ -121,10 +120,6 @@ export function PlanCard({
             <div className="flex items-center gap-1.5">
               <GoSync className="size-3 shrink-0 text-white/60" />
               <span className="text-xs text-white/60">{plan.limits.dailyRequests}</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <CiClock2 className="size-3 shrink-0 text-white/60" />
-              <span className="text-xs text-white/60">{plan.limits.ratePerMin}</span>
             </div>
           </>
         )}

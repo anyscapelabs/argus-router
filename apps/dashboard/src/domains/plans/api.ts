@@ -4,7 +4,6 @@ export type PlanLimits = {
   monthlyTokens: string;
   weeklyTokens: string;
   dailyRequests: string;
-  ratePerMin: string;
 };
 
 export type Plan = {

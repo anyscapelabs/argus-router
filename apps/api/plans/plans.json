@@ -9,8 +9,7 @@
     "limits": {
       "monthlyTokens": "20M monthly tokens",
       "weeklyTokens": "5M weekly tokens",
-      "dailyRequests": "50 requests/day",
-      "ratePerMin": "5 req/min"
+      "dailyRequests": "50 requests/day"
     },
     "tiers": [
       "free"
@@ -26,8 +25,7 @@
     "limits": {
       "monthlyTokens": "100M monthly tokens",
       "weeklyTokens": "25M weekly tokens",
-      "dailyRequests": "700 requests/day",
-      "ratePerMin": "10 req/min"
+      "dailyRequests": "700 requests/day"
     },
     "tiers": [
       "free",
@@ -44,8 +42,7 @@
     "limits": {
       "monthlyTokens": "500M monthly tokens",
       "weeklyTokens": "125M weekly tokens",
-      "dailyRequests": "3,400 requests/day",
-      "ratePerMin": "30 req/min"
+      "dailyRequests": "3,400 requests/day"
     },
     "tiers": [
       "free",
@@ -63,8 +60,7 @@
     "limits": {
       "monthlyTokens": "500M monthly tokens",
       "weeklyTokens": "125M weekly tokens",
-      "dailyRequests": "3,400 requests/day",
-      "ratePerMin": "60 req/min"
+      "dailyRequests": "3,400 requests/day"
     },
     "tiers": [
       "free",

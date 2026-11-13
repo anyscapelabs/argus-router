@@ -287,6 +287,15 @@ impl Errx {
         self
     }
 
+    pub fn public_message(&self) -> String {
+        match self.code {
+            ErrCode::DailyLimitReached
+            | ErrCode::WeeklyLimitReached
+            | ErrCode::MonthlyLimitReached => self.message.clone(),
+            _ => "An error has occurred. Try again later.".to_owned(),
+        }
+    }
+
     pub fn from_upstream_status(status: u16, message: impl Into<String>) -> Self {
         let code = match status {
             400 | 404 | 422 => ErrCode::InvalidRequest,

@@ -20,11 +20,6 @@ fn parses_embedded_plan_limits() {
             "plan `{}` must cap daily requests",
             plan.id
         );
-        assert!(
-            limits.rate_per_min_count() > 0,
-            "plan `{}` must cap requests per minute",
-            plan.id
-        );
     }
 }
 
@@ -39,7 +34,6 @@ fn free_plan_matches_expected_budget() {
     assert_eq!(limits.monthly_tokens_count(), 20_000_000);
     assert_eq!(limits.weekly_tokens_count(), 5_000_000);
     assert_eq!(limits.daily_requests_count(), 50);
-    assert_eq!(limits.rate_per_min_count(), 5);
 }
 
 #[test]
@@ -66,9 +60,7 @@ fn unparseable_limits_read_as_unset() {
         monthly_tokens: "7".to_owned(),
         weekly_tokens: "bogus".to_owned(),
         daily_requests: String::new(),
-        rate_per_min: "3 req/min".to_owned(),
     };
     assert_eq!(limits.monthly_tokens_count(), 7);
     assert_eq!(limits.daily_requests_count(), 0);
-    assert_eq!(limits.rate_per_min_count(), 3);
 }

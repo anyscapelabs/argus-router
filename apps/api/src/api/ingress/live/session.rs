@@ -69,7 +69,7 @@ pub(super) async fn handle_socket(
                     serde_json::json!({
                         "error": {
                             "code": "UPSTREAM_ERROR",
-                            "message": "Live voice billing could not be started"
+                            "message": "An error has occurred. Try again later."
                         }
                     })
                     .to_string()
@@ -104,7 +104,7 @@ pub(super) async fn handle_socket(
                 serde_json::json!({
                     "error": {
                         "code": "SERVICE_UNAVAILABLE",
-                        "message": "Gemini Live provider is unconfigured on router (missing GEMINI_API_KEY)"
+                        "message": "An error has occurred. Try again later."
                     }
                 })
                 .to_string()
@@ -141,7 +141,7 @@ pub(super) async fn handle_socket(
                     serde_json::json!({
                         "error": {
                             "code": "UPSTREAM_ERROR",
-                            "message": "Failed to connect to the live voice provider"
+                            "message": "An error has occurred. Try again later."
                         }
                     })
                     .to_string()
@@ -191,7 +191,7 @@ pub(super) async fn handle_socket(
                             "error": {
                                 "code": "voice_minutes_exhausted",
                                 "status": 429,
-                                "message": "Monthly voice minutes quota exhausted."
+                                "message": "An error has occurred. Try again later."
                             }
                         })
                         .to_string()
@@ -278,7 +278,7 @@ pub(super) async fn handle_socket(
                                     .send(Message::Text(
                                         serde_json::json!({
                                             "type": "rate_limit_exceeded",
-                                            "message": "Google Live token rate limit hit too many times; session closed."
+                                            "message": "An error has occurred. Try again later."
                                         })
                                         .to_string()
                                         .into(),
@@ -293,7 +293,7 @@ pub(super) async fn handle_socket(
                                     serde_json::json!({
                                         "type": "rate_limited",
                                         "retry_after": retry_secs,
-                                        "message": format!("Rate limited by Google; resuming in {retry_secs}s")
+                                        "message": "An error has occurred. Try again later.".to_string()
                                     })
                                     .to_string()
                                     .into(),
@@ -310,7 +310,7 @@ pub(super) async fn handle_socket(
                                     serde_json::json!({
                                         "error": {
                                             "code": "UPSTREAM_ERROR",
-                                            "message": "The live voice provider request failed"
+                                            "message": "An error has occurred. Try again later."
                                         }
                                     })
                                     .to_string()

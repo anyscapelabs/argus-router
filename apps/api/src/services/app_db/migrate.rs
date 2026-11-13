@@ -58,11 +58,6 @@ impl AppDb {
         )
         .execute(&self.pool)
         .await;
-        let _ = sqlx::query(
-            "ALTER TABLE plans ADD COLUMN IF NOT EXISTS rate_per_min BIGINT NOT NULL DEFAULT 0",
-        )
-        .execute(&self.pool)
-        .await;
 
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS user_entitlements (

@@ -25,7 +25,7 @@ fn unauthorized() -> ApiFailure {
     failure(
         StatusCode::UNAUTHORIZED,
         "INVALID_KEY",
-        "The agent key is invalid or was revoked.",
+        "An error has occurred. Try again later.",
     )
 }
 
@@ -59,11 +59,11 @@ pub fn router() -> Router<AppState> {
     Router::new().nest("/entitlements", Router::new().route("/", get(entitlements)))
 }
 
-fn db_error(error: sqlx::Error) -> ApiFailure {
+fn db_error(_error: sqlx::Error) -> ApiFailure {
     (
         StatusCode::INTERNAL_SERVER_ERROR,
         AxumJson(serde_json::json!({
-            "error": {"code": "APP_DB", "message": error.to_string()},
+            "error": {"code": "APP_DB", "message": "An error has occurred. Try again later."},
         })),
     )
 }

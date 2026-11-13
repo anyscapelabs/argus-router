@@ -48,9 +48,5 @@ name = "catalog_consistency"
 path = "../../test/api/catalog_consistency.rs"
 
 [[test]]
-name = "rate_window"
-path = "../../test/api/rate_window.rs"
-
-[[test]]
 name = "redact"
 path = "../../test/api/redact.rs"

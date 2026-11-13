@@ -31,7 +31,7 @@ impl AppDb {
                     index: "payload".into(),
                     source: Box::new(error),
                 })?;
-            let (monthly, weekly, daily, rpm) = plan
+            let (monthly, weekly, daily) = plan
                 .limits
                 .as_ref()
                 .map(|l| {
@@ -39,13 +39,12 @@ impl AppDb {
                         l.monthly_tokens_count(),
                         l.weekly_tokens_count(),
                         l.daily_requests_count(),
-                        l.rate_per_min_count(),
                     )
                 })
-                .unwrap_or((0, 0, 0, 0));
+                .unwrap_or((0, 0, 0));
             sqlx::query(
-                "INSERT INTO plans (id, name, price, payload, searches_per_month, voice_minutes, monthly_tokens, weekly_tokens, daily_requests, rate_per_min, created_at)
-                 VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10, $11)
+                "INSERT INTO plans (id, name, price, payload, searches_per_month, voice_minutes, monthly_tokens, weekly_tokens, daily_requests, created_at)
+                 VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10)
                  ON CONFLICT (id) DO UPDATE SET
                    name = EXCLUDED.name,
                    price = EXCLUDED.price,
@@ -54,8 +53,7 @@ impl AppDb {
                    voice_minutes = EXCLUDED.voice_minutes,
                    monthly_tokens = EXCLUDED.monthly_tokens,
                    weekly_tokens = EXCLUDED.weekly_tokens,
-                   daily_requests = EXCLUDED.daily_requests,
-                   rate_per_min = EXCLUDED.rate_per_min",
+                   daily_requests = EXCLUDED.daily_requests",
             )
             .bind(&plan.id)
             .bind(&plan.name)
@@ -66,7 +64,6 @@ impl AppDb {
             .bind(monthly)
             .bind(weekly)
             .bind(daily)
-            .bind(rpm)
             .bind(Utc::now().to_rfc3339())
             .execute(&self.pool)
             .await?;
@@ -161,7 +158,7 @@ impl AppDb {
 
     pub async fn quota_of(&self, plan_id: &str) -> Result<PlanQuota, sqlx::Error> {
         let row = sqlx::query(
-            "SELECT monthly_tokens, weekly_tokens, daily_requests, rate_per_min
+            "SELECT monthly_tokens, weekly_tokens, daily_requests
              FROM plans WHERE id = $1",
         )
         .bind(plan_id)
@@ -172,7 +169,6 @@ impl AppDb {
                 monthly_tokens: row.try_get("monthly_tokens").unwrap_or(0),
                 weekly_tokens: row.try_get("weekly_tokens").unwrap_or(0),
                 daily_requests: row.try_get("daily_requests").unwrap_or(0),
-                rate_per_min: row.try_get("rate_per_min").unwrap_or(0),
             },
             None => PlanQuota::default(),
         })

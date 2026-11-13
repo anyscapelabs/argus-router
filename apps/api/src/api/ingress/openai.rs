@@ -427,7 +427,7 @@ pub fn completion(state: &StreamState, turn: &Turn) -> Value {
 pub fn error_body(item: &Errx) -> Value {
     json!({
         "error": {
-            "message": item.message,
+            "message": item.public_message(),
             "type": error_type(item.code),
             "code": item.code.as_str(),
             "param": Value::Null,

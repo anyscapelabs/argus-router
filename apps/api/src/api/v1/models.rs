@@ -24,22 +24,22 @@ async fn list_models(
     session: CurrentSession<AppAuthSchema>,
 ) -> Result<AxumJson<serde_json::Value>, ApiProblem> {
     let user = user_id(&session);
-    let plan = state.app_db.plan_of(&user).await.map_err(|error| {
+    let plan = state.app_db.plan_of(&user).await.map_err(|_error| {
         problem(
             StatusCode::INTERNAL_SERVER_ERROR,
             "PLAN_LOOKUP",
-            &error.to_string(),
+            "An error has occurred. Try again later.",
         )
     })?;
     let allowlist = state
         .app_db
         .effective_allowlist_of(&user, &plan)
         .await
-        .map_err(|error| {
+        .map_err(|_error| {
             problem(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "ALLOWLIST_LOOKUP",
-                &error.to_string(),
+                "An error has occurred. Try again later.",
             )
         })?;
     let models: Vec<ModelView> = state
@@ -74,11 +74,11 @@ async fn toggle_allowlist(
     AxumJson(request): AxumJson<ToggleRequest>,
 ) -> Result<AxumJson<ToggleResponse>, ApiProblem> {
     let user = user_id(&session);
-    let plan = state.app_db.plan_of(&user).await.map_err(|error| {
+    let plan = state.app_db.plan_of(&user).await.map_err(|_error| {
         problem(
             StatusCode::INTERNAL_SERVER_ERROR,
             "PLAN_LOOKUP",
-            &error.to_string(),
+            "An error has occurred. Try again later.",
         )
     })?;
     let known = state.catalog.find(&request.model_id).is_some();
@@ -94,11 +94,11 @@ async fn toggle_allowlist(
             .app_db
             .allowlist_of(&plan)
             .await
-            .map_err(|error| {
+            .map_err(|_error| {
                 problem(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "ALLOWLIST_LOOKUP",
-                    &error.to_string(),
+                    "An error has occurred. Try again later.",
                 )
             })?
             .iter()
@@ -120,11 +120,11 @@ async fn toggle_allowlist(
                 .app_db
                 .allowlist_set(&plan, &request.model_id, true)
                 .await
-                .map_err(|error| {
+                .map_err(|_error| {
                     problem(
                         StatusCode::INTERNAL_SERVER_ERROR,
                         "ALLOWLIST_UPDATE",
-                        &error.to_string(),
+                        "An error has occurred. Try again later.",
                     )
                 })?;
         }
@@ -133,22 +133,22 @@ async fn toggle_allowlist(
         .app_db
         .set_model_preference(&user, &request.model_id, request.enabled)
         .await
-        .map_err(|error| {
+        .map_err(|_error| {
             problem(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "ALLOWLIST_UPDATE",
-                &error.to_string(),
+                "An error has occurred. Try again later.",
             )
         })?;
     let allowlist = state
         .app_db
         .effective_allowlist_of(&user, &plan)
         .await
-        .map_err(|error| {
+        .map_err(|_error| {
             problem(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "ALLOWLIST_LOOKUP",
-                &error.to_string(),
+                "An error has occurred. Try again later.",
             )
         })?;
     Ok(AxumJson(ToggleResponse {
@@ -164,11 +164,11 @@ async fn refresh_models(
 ) -> Result<AxumJson<serde_json::Value>, ApiProblem> {
     require_admin(&state, &session)?;
     let seed = crate::services::catalog::seed_entries();
-    let entries = state.app_db.load_catalog(&seed).await.map_err(|error| {
+    let entries = state.app_db.load_catalog(&seed).await.map_err(|_error| {
         problem(
             StatusCode::INTERNAL_SERVER_ERROR,
             "CATALOG_REFRESH",
-            &error.to_string(),
+            "An error has occurred. Try again later.",
         )
     })?;
     state.catalog.replace(entries);

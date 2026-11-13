@@ -49,10 +49,10 @@ async fn list_usage(
         Some(raw) => Some(
             DateTime::parse_from_rfc3339(raw)
                 .map(|dt| dt.with_timezone(&Utc))
-                .map_err(|e| {
+                .map_err(|_e| {
                     (
                         StatusCode::BAD_REQUEST,
-                        AxumJson(serde_json::json!({"error": {"code": "USAGE_SINCE", "message": format!("Invalid since: {e}")}})),
+                        AxumJson(serde_json::json!({"error": {"code": "USAGE_SINCE", "message": "An error has occurred. Try again later.".to_owned()}})),
                     )
                 })?,
         ),
@@ -102,10 +102,10 @@ async fn list_usage(
             .await
         }
     }
-    .map_err(|e| {
+    .map_err(|_e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            AxumJson(serde_json::json!({"error": {"code": "USAGE_LIST", "message": e.to_string()}})),
+            AxumJson(serde_json::json!({"error": {"code": "USAGE_LIST", "message": "An error has occurred. Try again later."}})),
         )
     })?;
 
@@ -166,11 +166,11 @@ async fn usage_summary(
         Some(raw) => Some(
             DateTime::parse_from_rfc3339(raw)
                 .map(|dt| dt.with_timezone(&Utc))
-                .map_err(|e| {
+                .map_err(|_e| {
                     api_err(
                         StatusCode::BAD_REQUEST,
                         "USAGE_SINCE",
-                        format!("Invalid since: {e}"),
+                        "An error has occurred. Try again later.".to_owned(),
                     )
                 })?,
         ),
@@ -183,11 +183,11 @@ async fn usage_summary(
         "day"
     };
     let pool = state.app_db.pool();
-    let db_err = |e: sqlx::Error| {
+    let db_err = |_e: sqlx::Error| {
         api_err(
             StatusCode::INTERNAL_SERVER_ERROR,
             "USAGE_SUMMARY",
-            e.to_string(),
+            "An error has occurred. Try again later.".to_owned(),
         )
     };
 

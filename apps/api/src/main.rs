@@ -77,8 +77,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let search_router = Arc::new(services::search::SearchRouter::new());
     let live_sessions = Arc::new(gateway::ingress::live::LiveSessionStore::default());
-    let rate_window = Arc::new(services::rate::RateWindow::default());
-
     let state = AppState {
         settings: settings.clone(),
         auth: auth.clone(),
@@ -90,7 +88,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cache,
         usage,
         search_router,
-        rate_window,
         live_sessions,
         db: database,
     };

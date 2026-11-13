@@ -371,7 +371,7 @@ pub fn error_body(item: &Errx) -> Value {
     json!({
         "error": {
             "code": item.status,
-            "message": item.message,
+            "message": item.public_message(),
             "status": error_status(item.code),
         }
     })
