@@ -479,5 +479,27 @@
     },
     "free": true,
     "tier": "free"
+  },
+  {
+    "id": "thinkingmachines/inkling-2-small:free",
+    "name": "Inkling 2 Small (free)",
+    "compat": "openai",
+    "provider": "openrouter",
+    "upstream_model": "thinkingmachines/inkling-2-small:free",
+    "context": 1048576,
+    "max_output": 32768,
+    "capabilities": {
+      "tools": true,
+      "vision": false,
+      "reasoning": true
+    },
+    "pricing": {
+      "input": "0",
+      "output": "0",
+      "cache_read": "0",
+      "cache_write": null
+    },
+    "free": true,
+    "tier": "free"
   }
 ]
