@@ -23,7 +23,6 @@
   --color-tertiary: var(--tertiary);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
-  --font-pixel: var(--font-geist-pixel);
 }
 
 body {
