@@ -24,7 +24,7 @@ pub struct Target {
     pub base_url: String,
     pub model: String,
     pub api_key: String,
-    pub extra_headers: &'static [(&'static str, &'static str)],
+    pub extra_headers: Vec<(String, String)>,
     pub quirks: Quirks,
     pub provider_routing: Option<serde_json::Value>,
 }
@@ -50,12 +50,41 @@ pub fn target_for(
             "the provider has no base URL",
         ));
     }
+    let mut extra_headers: Vec<(String, String)> = provider
+        .extra_headers
+        .iter()
+        .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+        .collect();
+    if provider.id == "openrouter" {
+        let title = std::env::var("OPENROUTER_APP_TITLE")
+            .ok()
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "Argus Agent".to_owned());
+        extra_headers.push(("X-OpenRouter-Title".to_owned(), title.clone()));
+        extra_headers.push(("X-Title".to_owned(), title));
+
+        let referer = std::env::var("OPENROUTER_APP_URL")
+            .ok()
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty())
+            .or_else(|| {
+                std::env::var("DASHBOARD_URL")
+                    .ok()
+                    .map(|value| value.trim().to_owned())
+                    .filter(|value| !value.is_empty())
+            });
+        if let Some(referer) = referer {
+            extra_headers.push(("HTTP-Referer".to_owned(), referer.clone()));
+            extra_headers.push(("Referer".to_owned(), referer));
+        }
+    }
     Ok(Target {
         family: provider.compat,
         base_url: base.to_owned(),
         model: model.to_owned(),
         api_key: api_key.to_owned(),
-        extra_headers: provider.extra_headers,
+        extra_headers,
         quirks: opts.quirks.unwrap_or(provider.quirks),
         provider_routing: None,
     })
@@ -104,8 +133,8 @@ pub fn build_client() -> reqwest::Client {
 
 fn apply_auth(request: reqwest::RequestBuilder, target: &Target) -> reqwest::RequestBuilder {
     let mut keyed = request.bearer_auth(&target.api_key);
-    for (name, value) in target.extra_headers {
-        keyed = keyed.header(*name, *value);
+    for (name, value) in &target.extra_headers {
+        keyed = keyed.header(name.as_str(), value.as_str());
     }
     keyed
 }
