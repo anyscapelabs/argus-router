@@ -18,6 +18,7 @@ use api::state::AppState;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
     tracing_subscriber::fmt()
+        .with_ansi(false)
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| "info,tower_http=debug".into()),
@@ -112,6 +113,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     let app = router(auth)
+        .layer(axum::middleware::from_fn(log_request))
         .layer(TraceLayer::new_for_http().make_span_with(api::observe::redacted_span))
         .layer(cors(&settings))
         .with_state(state);
@@ -153,6 +155,25 @@ fn router(auth: Arc<BetterAuth<AppAuthSchema>>) -> Router<AppState> {
             "/v1/live/last-reply",
             axum::routing::get(gateway::ingress::live::last_reply_handler),
         )
+}
+
+async fn log_request(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let method = req.method().clone();
+    let path = req.uri().path().to_owned();
+    let start = std::time::Instant::now();
+    let response = next.run(req).await;
+    let latency_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
+    tracing::info!(
+        method = %method,
+        path = %path,
+        status = response.status().as_u16(),
+        latency_ms,
+        "request"
+    );
+    response
 }
 
 fn cors(settings: &Settings) -> CorsLayer {
