@@ -5,8 +5,6 @@ export const metadata: Metadata = {
   description: "Finish setting up your Anyscape Gateway account.",
 };
 
-export const instant = false;
-
 export default function Layout({ children }: { children: React.ReactNode }) {
   return children;
 }

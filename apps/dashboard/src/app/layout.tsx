@@ -29,8 +29,6 @@ export const metadata: Metadata = {
   manifest: "/manifest.webmanifest",
 };
 
-export const instant = false;
-
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html

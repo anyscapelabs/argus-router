@@ -5,8 +5,6 @@ export const metadata: Metadata = {
   description: "Privacy settings.",
 };
 
-export const instant = false;
-
 export default function Layout({ children }: { children: React.ReactNode }) {
   return children;
 }

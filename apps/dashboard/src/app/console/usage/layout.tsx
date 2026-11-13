@@ -5,8 +5,6 @@ export const metadata: Metadata = {
   description: "Token usage, cost, and model breakdowns.",
 };
 
-export const instant = false;
-
 export default function Layout({ children }: { children: React.ReactNode }) {
   return children;
 }

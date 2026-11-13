@@ -5,8 +5,6 @@ export const metadata: Metadata = {
   description: "Choose a plan and manage billing.",
 };
 
-export const instant = false;
-
 export default function Layout({ children }: { children: React.ReactNode }) {
   return children;
 }
