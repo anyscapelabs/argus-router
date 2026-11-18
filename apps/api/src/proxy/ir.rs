@@ -325,10 +325,11 @@ impl Errx {
 
     pub fn public_message(&self) -> String {
         match self.code {
-            ErrCode::InvalidRequest
+            ErrCode::RateLimited
             | ErrCode::DailyLimitReached
             | ErrCode::WeeklyLimitReached
-            | ErrCode::MonthlyLimitReached => self.message.clone(),
+            | ErrCode::MonthlyLimitReached
+            | ErrCode::CreditsExhausted => self.message.clone(),
             _ => "An error has occurred. Try again later.".to_owned(),
         }
     }
@@ -354,7 +355,7 @@ pub fn parse_json_lenient(raw: &str) -> serde_json::Value {
 
 #[cfg(test)]
 mod tests {
-    use super::{OpenAiParams, Params};
+    use super::{ErrCode, Errx, OpenAiParams, Params};
 
     #[test]
     fn materializes_catalog_output_limit() {
@@ -368,5 +369,31 @@ mod tests {
             ..OpenAiParams::default()
         };
         assert_eq!(Params::clamped(Some(params), 4096).max_tokens, Some(4096));
+    }
+
+    #[test]
+    fn masks_upstream_invalid_request_detail() {
+        let local = Errx::new(ErrCode::InvalidRequest, 400, "messages are required");
+        assert_eq!(
+            local.public_message(),
+            "An error has occurred. Try again later."
+        );
+
+        let upstream = Errx::new(
+            ErrCode::InvalidRequest,
+            400,
+            "the upstream provider rejected the request: {secret detail}",
+        )
+        .with_provider("provider/model");
+        assert_eq!(
+            upstream.public_message(),
+            "An error has occurred. Try again later."
+        );
+    }
+
+    #[test]
+    fn keeps_rate_limit_message() {
+        let error = Errx::new(ErrCode::RateLimited, 429, "Try again in 30 seconds");
+        assert_eq!(error.public_message(), "Try again in 30 seconds");
     }
 }
