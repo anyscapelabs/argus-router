@@ -31,7 +31,7 @@
       "only": [
         "google-vertex/global"
       ],
-      "allow_fallbacks": false,
+      "allow_fallbacks": true,
       "data_collection": "deny",
       "sort": "throughput"
     },
@@ -61,7 +61,7 @@
       "only": [
         "google-vertex/global"
       ],
-      "allow_fallbacks": false,
+      "allow_fallbacks": true,
       "data_collection": "deny",
       "sort": "throughput"
     },
@@ -91,7 +91,7 @@
       "only": [
         "google-vertex/global"
       ],
-      "allow_fallbacks": false,
+      "allow_fallbacks": true,
       "data_collection": "deny",
       "sort": "throughput"
     },
@@ -121,7 +121,7 @@
       "only": [
         "google-vertex/global"
       ],
-      "allow_fallbacks": false,
+      "allow_fallbacks": true,
       "data_collection": "deny",
       "sort": "throughput"
     },
@@ -173,7 +173,7 @@
       "only": [
         "relace/fp4"
       ],
-      "allow_fallbacks": false,
+      "allow_fallbacks": true,
       "data_collection": "deny",
       "sort": "throughput"
     },
@@ -247,7 +247,7 @@
       "only": [
         "relace/fp4"
       ],
-      "allow_fallbacks": false,
+      "allow_fallbacks": true,
       "data_collection": "deny",
       "sort": "throughput"
     },
@@ -278,7 +278,7 @@
         "coreweave/fp4",
         "parasail/fp8"
       ],
-      "allow_fallbacks": false,
+      "allow_fallbacks": true,
       "data_collection": "deny",
       "sort": "throughput"
     },
@@ -308,7 +308,7 @@
       "only": [
         "parasail/fp8"
       ],
-      "allow_fallbacks": false,
+      "allow_fallbacks": true,
       "data_collection": "deny",
       "sort": "throughput"
     },
@@ -338,7 +338,7 @@
       "only": [
         "azure"
       ],
-      "allow_fallbacks": false,
+      "allow_fallbacks": true,
       "data_collection": "deny",
       "sort": "throughput"
     },
@@ -368,7 +368,7 @@
       "only": [
         "azure"
       ],
-      "allow_fallbacks": false,
+      "allow_fallbacks": true,
       "data_collection": "deny",
       "sort": "throughput"
     },
@@ -398,7 +398,7 @@
       "only": [
         "alibaba"
       ],
-      "allow_fallbacks": false,
+      "allow_fallbacks": true,
       "data_collection": "deny",
       "sort": "throughput"
     },
@@ -428,7 +428,7 @@
       "only": [
         "alibaba"
       ],
-      "allow_fallbacks": false,
+      "allow_fallbacks": true,
       "data_collection": "deny",
       "sort": "throughput"
     },

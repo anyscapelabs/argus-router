@@ -129,32 +129,37 @@ impl Chat {
     }
 
     pub fn prompt_token_bound(&self) -> i64 {
-        let mut bound = 256u64;
+        let approx_tokens = |bytes: usize| (bytes as u64).div_ceil(4);
+        let mut bound = 64u64;
         for text in &self.system {
-            bound = bound.saturating_add(text.len() as u64);
+            bound = bound.saturating_add(approx_tokens(text.len()));
         }
         for message in &self.messages {
-            bound = bound.saturating_add(16);
+            bound = bound.saturating_add(4);
             for block in &message.blocks {
                 let size = match block {
-                    Block::Text { text } | Block::Thinking { text } => text.len() as u64,
-                    Block::Image { .. } => 65_536,
+                    Block::Text { text } | Block::Thinking { text } => approx_tokens(text.len()),
+                    Block::Image { .. } => 1_024,
                     Block::ToolUse {
                         id,
                         name,
                         input_json,
-                    } => (id.len() + name.len() + input_json.len()) as u64,
-                    Block::ToolResult { id, content, .. } => (id.len() + content.len()) as u64,
+                    } => approx_tokens(id.len() + name.len() + input_json.len()),
+                    Block::ToolResult { id, content, .. } => {
+                        approx_tokens(id.len() + content.len())
+                    }
                 };
                 bound = bound.saturating_add(size);
             }
         }
         for tool in &self.tools {
             bound = bound
-                .saturating_add(tool.name.len() as u64)
-                .saturating_add(tool.description.as_deref().map(str::len).unwrap_or(0) as u64)
-                .saturating_add(tool.schema_json.len() as u64)
-                .saturating_add(32);
+                .saturating_add(approx_tokens(tool.name.len()))
+                .saturating_add(approx_tokens(
+                    tool.description.as_deref().map(str::len).unwrap_or(0),
+                ))
+                .saturating_add(approx_tokens(tool.schema_json.len()))
+                .saturating_add(8);
         }
         bound.min(i64::MAX as u64) as i64
     }
@@ -320,7 +325,8 @@ impl Errx {
 
     pub fn public_message(&self) -> String {
         match self.code {
-            ErrCode::DailyLimitReached
+            ErrCode::InvalidRequest
+            | ErrCode::DailyLimitReached
             | ErrCode::WeeklyLimitReached
             | ErrCode::MonthlyLimitReached => self.message.clone(),
             _ => "An error has occurred. Try again later.".to_owned(),

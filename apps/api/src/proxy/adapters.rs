@@ -166,12 +166,13 @@ fn build_request(target: &Target, chat: &Chat, streaming: bool) -> Value {
             chat.tools
                 .iter()
                 .map(|tool| {
+                    let raw_schema = crate::proxy::parse_json_lenient(&tool.schema_json);
                     json!({
                         "type": "function",
                         "function": {
                             "name": tool.name,
                             "description": tool.description.clone().unwrap_or_default(),
-                            "parameters": crate::proxy::parse_json_lenient(&tool.schema_json),
+                            "parameters": sanitize_tool_schema(raw_schema),
                         },
                     })
                 })
@@ -188,6 +189,38 @@ fn build_request(target: &Target, chat: &Chat, streaming: bool) -> Value {
         });
     }
     payload
+}
+
+fn sanitize_tool_schema(schema: Value) -> Value {
+    match schema {
+        Value::Object(mut map) => {
+            for key in [
+                "$schema",
+                "$id",
+                "$defs",
+                "definitions",
+                "default",
+                "examples",
+                "additionalProperties",
+            ] {
+                map.remove(key);
+            }
+            for (_, value) in map.iter_mut() {
+                let taken = std::mem::replace(value, Value::Null);
+                *value = sanitize_tool_schema(taken);
+            }
+            if map.get("type").and_then(Value::as_str) == Some("object")
+                && !map.contains_key("properties")
+            {
+                map.insert("properties".to_owned(), json!({}));
+            }
+            Value::Object(map)
+        }
+        Value::Array(items) => {
+            Value::Array(items.into_iter().map(sanitize_tool_schema).collect())
+        }
+        other => other,
+    }
 }
 
 fn build_messages(chat: &Chat) -> Vec<Value> {
@@ -258,7 +291,7 @@ fn build_messages(chat: &Chat) -> Vec<Value> {
                     continue;
                 }
                 entry["content"] = if text.is_empty() {
-                    Value::Null
+                    json!("")
                 } else {
                     json!(text)
                 };
@@ -332,22 +365,26 @@ async fn errx_from_response(target: &Target, response: reqwest::Response) -> Err
         400 | 404 | 422 => (
             ErrCode::InvalidRequest,
             status,
-            "the upstream provider rejected the request",
+            if detail.is_empty() {
+                "the upstream provider rejected the request".to_owned()
+            } else {
+                format!("the upstream provider rejected the request: {detail}")
+            },
         ),
         408 => (
             ErrCode::Timeout,
             504,
-            "the upstream provider did not respond in time",
+            "the upstream provider did not respond in time".to_owned(),
         ),
         429 => (
             ErrCode::RateLimited,
             429,
-            "the upstream provider is temporarily rate limited",
+            "the upstream provider is temporarily rate limited".to_owned(),
         ),
         _ => (
             ErrCode::Upstream,
             502,
-            "the upstream provider request failed",
+            "the upstream provider request failed".to_owned(),
         ),
     };
     let mut errx = Errx::new(code, client_status, message).with_provider(target.model.as_str());
@@ -656,7 +693,7 @@ mod tests {
             input_json: "{\"query\":\"x\"}".to_owned(),
         }]));
         assert_eq!(messages.len(), 1);
-        assert!(messages[0]["content"].is_null());
+        assert_eq!(messages[0]["content"], json!(""));
         assert_eq!(messages[0]["tool_calls"][0]["id"], "call_1");
     }
 

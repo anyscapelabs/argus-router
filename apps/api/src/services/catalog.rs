@@ -44,6 +44,15 @@ impl Tier {
             Tier::Lite => None,
         }
     }
+
+    pub fn above(self) -> Option<Tier> {
+        match self {
+            Tier::Lite => Some(Tier::Standard),
+            Tier::Standard => Some(Tier::Premium),
+            Tier::Premium => Some(Tier::Ultra),
+            Tier::Ultra => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

@@ -1,16 +1,20 @@
-use crate::proxy::ir::{Block, Chat};
+use crate::proxy::ir::{Block, Chat, Role};
 use crate::proxy::{ErrCode, Errx};
 use crate::services::catalog::{AUTO_MODEL_ID, ModelCatalogEntry, Tier};
 
-const SMALL_PROMPT_TOKENS: i64 = 16_000;
-const LARGE_PROMPT_TOKENS: i64 = 100_000;
+const SMALL_PROMPT_TOKENS: i64 = 8_000;
+const LARGE_PROMPT_TOKENS: i64 = 64_000;
 const LARGE_OUTPUT_TOKENS: u64 = 16_000;
 const COMPLEX_MESSAGES: usize = 8;
+const MANY_TOOLS: usize = 12;
 
 #[derive(Clone, Copy, Debug)]
 pub struct RequestSignals {
     pub needs_vision: bool,
     pub needs_tools: bool,
+    pub active_tool_loop: bool,
+    pub needs_reasoning: bool,
+    pub tool_count: usize,
     pub prompt_tokens: i64,
     pub max_output_tokens: Option<u64>,
     pub messages: usize,
@@ -18,6 +22,29 @@ pub struct RequestSignals {
 
 impl RequestSignals {
     pub fn from_chat(chat: &Chat) -> Self {
+        let active_tool_loop = chat.messages.iter().any(|message| {
+            message
+                .blocks
+                .iter()
+                .any(|block| matches!(block, Block::ToolUse { .. } | Block::ToolResult { .. }))
+        });
+        let latest_user_text = chat
+            .messages
+            .iter()
+            .rev()
+            .find(|message| message.role == Role::User)
+            .map(|message| {
+                message
+                    .blocks
+                    .iter()
+                    .filter_map(|block| match block {
+                        Block::Text { text } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+            .unwrap_or_default();
         RequestSignals {
             needs_vision: chat.messages.iter().any(|message| {
                 message
@@ -26,6 +53,9 @@ impl RequestSignals {
                     .any(|block| matches!(block, Block::Image { .. }))
             }),
             needs_tools: chat.has_tools(),
+            active_tool_loop,
+            needs_reasoning: active_tool_loop || looks_complex_prompt(&latest_user_text),
+            tool_count: chat.tools.len(),
             prompt_tokens: chat.prompt_token_bound(),
             max_output_tokens: chat
                 .params
@@ -34,6 +64,31 @@ impl RequestSignals {
             messages: chat.messages.len(),
         }
     }
+}
+
+fn looks_complex_prompt(prompt: &str) -> bool {
+    let trimmed = prompt.trim();
+    if trimmed.len() >= 600 || trimmed.contains("```") {
+        return true;
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    [
+        "debug",
+        "refactor",
+        "architect",
+        "implement",
+        "analyze",
+        "analyse",
+        "compare",
+        "design",
+        "investigate",
+        "root cause",
+        "sql",
+        "patch",
+        "diff",
+    ]
+    .iter()
+    .any(|keyword| lower.contains(keyword))
 }
 
 pub fn select(
@@ -82,12 +137,39 @@ pub fn select(
         pool = fitting;
     }
     pool.sort_by(|a, b| {
-        price(a)
-            .partial_cmp(&price(b))
-            .unwrap_or(std::cmp::Ordering::Equal)
+        fit_score(b, signals)
+            .cmp(&fit_score(a, signals))
+            .then_with(|| {
+                price(a)
+                    .partial_cmp(&price(b))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
             .then_with(|| a.id.cmp(&b.id))
     });
     Ok(pool[0].clone())
+}
+
+fn fit_score(entry: &ModelCatalogEntry, signals: &RequestSignals) -> i64 {
+    let mut score = 0i64;
+    if signals.needs_reasoning && entry.capabilities.reasoning {
+        score += 40;
+    }
+    if signals.active_tool_loop && entry.capabilities.tools {
+        score += 20;
+    }
+    if entry.context >= signals.prompt_tokens.saturating_mul(2) {
+        score += 10;
+    }
+    let has_fallbacks = entry
+        .provider_routing
+        .as_ref()
+        .and_then(|routing| routing.get("allow_fallbacks"))
+        .and_then(|flag| flag.as_bool())
+        .unwrap_or(true);
+    if has_fallbacks {
+        score += 5;
+    }
+    score
 }
 
 fn tier_pool<'a>(
@@ -106,12 +188,33 @@ fn tier_pool<'a>(
         }
         tier = current.below();
     }
+    let mut above = target.above();
+    while let Some(current) = above {
+        let pool: Vec<&'a ModelCatalogEntry> = fitting
+            .iter()
+            .copied()
+            .filter(|entry| entry.tier == current)
+            .collect();
+        if !pool.is_empty() {
+            return pool;
+        }
+        above = current.above();
+    }
     fitting.to_vec()
 }
 
 fn target_tier(signals: &RequestSignals) -> Tier {
     let mut score = 0usize;
     if signals.needs_tools {
+        score += 1;
+    }
+    if signals.active_tool_loop {
+        score += 1;
+    }
+    if signals.needs_reasoning {
+        score += 1;
+    }
+    if signals.tool_count >= MANY_TOOLS {
         score += 1;
     }
     if signals.prompt_tokens > LARGE_PROMPT_TOKENS {
@@ -190,6 +293,9 @@ mod tests {
         RequestSignals {
             needs_vision: false,
             needs_tools: false,
+            active_tool_loop: false,
+            needs_reasoning: false,
+            tool_count: 0,
             prompt_tokens: 1_000,
             max_output_tokens: None,
             messages: 1,
