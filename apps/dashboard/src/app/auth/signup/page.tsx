@@ -128,11 +128,11 @@ export default function SignupPage() {
       </p>
       <p className="w-80 text-center text-xs leading-relaxed text-white/50">
         By signing up you agree to our{" "}
-        <a href="/terms" className="underline hover:text-white/80">
+        <a href="https://argus-agent.anyscapelabs.com/terms-of-service" target="_blank" rel="noopener noreferrer" className="underline hover:text-white/80">
           Terms
         </a>{" "}
         and{" "}
-        <a href="/privacy" className="underline hover:text-white/80">
+        <a href="https://argus-agent.anyscapelabs.com/privacy-policy" target="_blank" rel="noopener noreferrer" className="underline hover:text-white/80">
           Privacy
         </a>{" "}
         and to receive updates and emails from Anyscape.

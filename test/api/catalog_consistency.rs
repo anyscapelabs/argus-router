@@ -16,23 +16,12 @@ fn catalog_ids_are_unique() {
 #[test]
 fn every_catalog_entry_has_a_known_tier() {
     for entry in api::services::catalog::seed_entries() {
-        match entry.tier {
-            api::services::catalog::Tier::Free => {
-                assert!(
-                    entry.free,
-                    "model `{}` is tier free but not marked free",
-                    entry.id
-                );
-            }
-            api::services::catalog::Tier::Small | api::services::catalog::Tier::Medium => {
-                assert!(
-                    !entry.free,
-                    "model `{}` is tier {} but marked free",
-                    entry.id,
-                    entry.tier.as_str()
-                );
-            }
-        }
+        assert!(
+            !entry.free,
+            "model `{}` is tier {} but marked free",
+            entry.id,
+            entry.tier.as_str()
+        );
     }
 }
 
@@ -60,28 +49,47 @@ fn plan_tiers_expand_to_catalog_models() {
 }
 
 #[test]
-fn free_plan_contains_only_free_models() {
+fn free_plan_advertises_only_lite_pool_models() {
     let catalog = api::services::catalog::seed_entries();
     let plans = api::services::plans::expand_tiers(api::services::plans::seed_entries(), &catalog);
-    let free_by_id: std::collections::HashMap<&str, bool> = catalog
+    let tier_by_id: std::collections::HashMap<&str, &str> = catalog
         .iter()
-        .map(|entry| (entry.id.as_str(), entry.free))
+        .map(|entry| (entry.id.as_str(), entry.tier.as_str()))
         .collect();
     let free = plans
         .iter()
         .find(|plan| plan.id == api::services::app_db::FREE_PLAN_ID)
         .expect("free plan exists");
     for model in &free.models {
-        assert!(
-            free_by_id.get(model.as_str()).copied().unwrap_or(false),
-            "free plan advertises paid model `{}`",
+        if model == api::services::catalog::AUTO_MODEL_ID {
+            continue;
+        }
+        assert_eq!(
+            tier_by_id.get(model.as_str()).copied(),
+            Some("lite"),
+            "free plan advertises non-lite model `{}`",
             model
         );
     }
 }
 
 #[test]
-fn starter_pro_business_model_sets_nest() {
+fn auto_alias_is_available_on_every_plan() {
+    let catalog = api::services::catalog::seed_entries();
+    let plans = api::services::plans::expand_tiers(api::services::plans::seed_entries(), &catalog);
+    for plan in &plans {
+        assert!(
+            plan.models
+                .iter()
+                .any(|model| model == api::services::catalog::AUTO_MODEL_ID),
+            "plan `{}` does not advertise the auto router",
+            plan.id
+        );
+    }
+}
+
+#[test]
+fn starter_max_max_plus_model_sets_nest() {
     let catalog = api::services::catalog::seed_entries();
     let plans = api::services::plans::expand_tiers(api::services::plans::seed_entries(), &catalog);
     let models = |id: &str| -> HashSet<String> {
@@ -92,15 +100,15 @@ fn starter_pro_business_model_sets_nest() {
             .unwrap_or_default()
     };
     let starter = models("starter");
-    let pro = models("pro");
-    let business = models("business");
+    let max = models("max");
+    let max_plus = models("max-plus");
     assert!(
-        starter.is_subset(&pro) && !starter.is_empty(),
-        "starter models must be a subset of pro"
+        starter.is_subset(&max) && !starter.is_empty(),
+        "starter models must be a subset of max"
     );
     assert!(
-        pro.is_subset(&business),
-        "pro models must be a subset of business"
+        max.is_subset(&max_plus),
+        "max models must be a subset of max-plus"
     );
 }
 

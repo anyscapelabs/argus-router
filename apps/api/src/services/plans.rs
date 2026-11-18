@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -47,6 +48,23 @@ impl PlanLimits {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct TierLimits {
+    pub monthly_tokens: String,
+    pub weekly_tokens: String,
+}
+
+impl TierLimits {
+    pub fn monthly_tokens_count(&self) -> i64 {
+        PlanLimits::count(&self.monthly_tokens)
+    }
+
+    pub fn weekly_tokens_count(&self) -> i64 {
+        PlanLimits::count(&self.weekly_tokens)
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PlanCatalogEntry {
     pub id: String,
     pub name: String,
@@ -59,6 +77,8 @@ pub struct PlanCatalogEntry {
     pub voice_minutes: i64,
     #[serde(default)]
     pub limits: Option<PlanLimits>,
+    #[serde(default)]
+    pub tier_limits: Option<HashMap<String, TierLimits>>,
     pub tiers: Vec<String>,
     #[serde(default)]
     pub models: Vec<String>,
@@ -73,11 +93,24 @@ pub fn expand_tiers(
     catalog: &[crate::services::catalog::ModelCatalogEntry],
 ) -> Vec<PlanCatalogEntry> {
     for plan in &mut plans {
-        plan.models = catalog
-            .iter()
-            .filter(|entry| plan.tiers.iter().any(|t| t == entry.tier.as_str()))
-            .map(|entry| entry.id.clone())
-            .collect();
+        let explicit = !plan.models.is_empty();
+        if !explicit {
+            plan.models = catalog
+                .iter()
+                .filter(|entry| plan.tiers.iter().any(|t| t == entry.tier.as_str()))
+                .map(|entry| entry.id.clone())
+                .collect();
+        }
+        let auto = crate::services::catalog::AUTO_MODEL_ID;
+        if catalog.iter().any(|entry| entry.id == auto) && !plan.models.iter().any(|m| m == auto) {
+            plan.models.push(auto.to_owned());
+        }
+        if explicit {
+            plan.models.retain(|model| {
+                catalog.iter().any(|entry| &entry.id == model)
+                    || model == crate::services::catalog::AUTO_MODEL_ID
+            });
+        }
         plan.model_names = catalog
             .iter()
             .filter(|entry| plan.models.iter().any(|m| m == &entry.id))
@@ -101,4 +134,51 @@ pub fn seed_entries() -> Vec<PlanCatalogEntry> {
         }
     }
     serde_json::from_str(EMBEDDED).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn embedded_plans_parse_with_tier_limits() {
+        let plans = seed_entries();
+        assert!(plans.iter().any(|plan| plan.id == "max"));
+        assert!(plans.iter().any(|plan| plan.id == "max-plus"));
+        let max_plus = plans
+            .iter()
+            .find(|plan| plan.id == "max-plus")
+            .expect("max-plus plan");
+        let tier_limits = max_plus.tier_limits.as_ref().expect("tier limits");
+        assert_eq!(tier_limits.len(), 4);
+        let ultra = tier_limits.get("ultra").expect("ultra tier limits");
+        assert_eq!(ultra.monthly_tokens_count(), 750_000);
+        assert_eq!(ultra.weekly_tokens_count(), 220_000);
+        let premium = tier_limits.get("premium").expect("premium tier limits");
+        assert_eq!(premium.monthly_tokens_count(), 3_000_000);
+    }
+
+    #[test]
+    fn aggregate_limits_equal_tier_sums() {
+        for plan in seed_entries() {
+            let Some(tier_limits) = &plan.tier_limits else {
+                continue;
+            };
+            let limits = plan.limits.as_ref().expect("aggregate limits");
+            let tier_monthly: i64 = tier_limits.values().map(|t| t.monthly_tokens_count()).sum();
+            let tier_weekly: i64 = tier_limits.values().map(|t| t.weekly_tokens_count()).sum();
+            assert_eq!(
+                limits.monthly_tokens_count(),
+                tier_monthly,
+                "plan {} monthly mismatch",
+                plan.id
+            );
+            assert_eq!(
+                limits.weekly_tokens_count(),
+                tier_weekly,
+                "plan {} weekly mismatch",
+                plan.id
+            );
+        }
+    }
 }

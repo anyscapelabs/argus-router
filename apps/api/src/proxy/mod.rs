@@ -1,4 +1,5 @@
 pub mod adapters;
+pub mod auto;
 pub mod ir;
 pub mod service;
 pub mod sse;

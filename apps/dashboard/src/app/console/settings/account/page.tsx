@@ -6,8 +6,13 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
 import { Skeleton } from "@/components/skeleton";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { authClient } from "@/domains/auth/client";
-import { useSession, useSignOut } from "@/domains/auth/hooks";
+import {
+  useDeleteAccount,
+  useSession,
+  useSignOut,
+} from "@/domains/auth/hooks";
 import { useProfile, type Profile } from "@/domains/profile/hooks";
 import { useWorkspace } from "@/domains/workspace/hooks";
 
@@ -59,6 +64,20 @@ export default function AccountSettingsPage() {
       return;
     }
     updateName.mutate(next, { onSettled: () => setDraft(null) });
+  };
+
+  const deleteAccount = useDeleteAccount();
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deletionRequested, setDeletionRequested] = useState(false);
+
+  const requestDeletion = async () => {
+    try {
+      await deleteAccount.mutateAsync();
+      setConfirmDelete(false);
+      setDeletionRequested(true);
+    } catch {
+      setConfirmDelete(false);
+    }
   };
 
   return (
@@ -190,34 +209,63 @@ export default function AccountSettingsPage() {
               Get help with your account, billing, or other questions.
             </p>
           </div>
-          <button
-            type="button"
+          <a
+            href="https://anyscapelabs.com/forum"
+            target="_blank"
+            rel="noopener noreferrer"
             className="inline-flex shrink-0 cursor-pointer items-center rounded-sm border border-border-secondary bg-tertiary px-2 py-1 text-xs font-medium text-primary transition-colors hover:bg-white/10"
           >
             Contact support
-          </button>
+          </a>
         </div>
       </section>
 
       <h2 className="mt-6 text-sm font-medium text-primary">Delete Account</h2>
       <section className="mt-2 rounded-md border border-border-secondary bg-[#262626] p-4">
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <p className="text-sm font-medium text-primary">
-              If you no longer use Argus Agent and Gateway Console
-            </p>
-            <p className="mt-1 text-xs text-white/60">
-              This decision is permanent and can&apos;t be undone.
-            </p>
+        {deletionRequested ? (
+          <p className="text-xs leading-relaxed text-white/60">
+            We sent a confirmation email to{" "}
+            <span className="font-medium text-white">{profile.data?.email}</span>. Your
+            account is deleted once you confirm from that email.
+          </p>
+        ) : (
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <p className="text-sm font-medium text-primary">
+                If you no longer use Argus Agent and Gateway Console
+              </p>
+              <p className="mt-1 text-xs text-white/60">
+                This decision is permanent and can&apos;t be undone.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setConfirmDelete(true)}
+              disabled={deleteAccount.isPending}
+              className="inline-flex shrink-0 cursor-pointer items-center rounded-sm bg-red-500/90 px-2 py-1 text-xs font-medium text-white transition-colors hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Delete account
+            </button>
           </div>
-          <button
-            type="button"
-            className="inline-flex shrink-0 cursor-pointer items-center rounded-sm bg-red-500/90 px-2 py-1 text-xs font-medium text-white transition-colors hover:bg-red-500"
-          >
-            Delete account
-          </button>
-        </div>
+        )}
       </section>
+
+      <ConfirmDialog
+        open={confirmDelete}
+        title="Delete your account?"
+        description={
+          <>
+            This permanently deletes your account, sign-in methods and all your data.
+            We&apos;ll email{" "}
+            <span className="font-medium text-white">{profile.data?.email ?? "you"}</span>{" "}
+            a confirmation link first.
+          </>
+        }
+        confirmLabel="Email me a confirmation link"
+        isPending={deleteAccount.isPending}
+        onConfirm={requestDeletion}
+        onCancel={() => setConfirmDelete(false)}
+      />
     </div>
   );
 }

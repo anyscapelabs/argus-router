@@ -1,15 +1,18 @@
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use sqlx::Row;
 
 use super::{AppDb, GenerationReservation, GenerationReservationOutcome};
+use crate::services::plans::PlanCatalogEntry;
 
 impl AppDb {
     pub async fn reserve_generation(
         &self,
         user_id: &str,
         plan_id: &str,
+        tier: Option<&str>,
         force_credits: bool,
         desired_output_tokens: u64,
         prompt_token_bound: i64,
@@ -47,10 +50,13 @@ impl AppDb {
             .await?;
         }
 
-        let quota = sqlx::query("SELECT monthly_tokens, weekly_tokens FROM plans WHERE id = $1")
-            .bind(plan_id)
-            .fetch_optional(tx.as_mut())
-            .await?;
+        let quota = sqlx::query(
+            "SELECT monthly_tokens, weekly_tokens, payload::text AS payload
+             FROM plans WHERE id = $1",
+        )
+        .bind(plan_id)
+        .fetch_optional(tx.as_mut())
+        .await?;
         let monthly_limit = quota
             .as_ref()
             .and_then(|row| row.try_get::<i64, _>("monthly_tokens").ok())
@@ -59,6 +65,22 @@ impl AppDb {
             .as_ref()
             .and_then(|row| row.try_get::<i64, _>("weekly_tokens").ok())
             .unwrap_or(0);
+        let tier_limits: Option<HashMap<String, (i64, i64)>> = quota
+            .as_ref()
+            .and_then(|row| row.try_get::<String, _>("payload").ok())
+            .and_then(|payload| serde_json::from_str::<PlanCatalogEntry>(&payload).ok())
+            .and_then(|entry| entry.tier_limits)
+            .map(|limits| {
+                limits
+                    .into_iter()
+                    .map(|(name, tier)| {
+                        (
+                            name,
+                            (tier.monthly_tokens_count(), tier.weekly_tokens_count()),
+                        )
+                    })
+                    .collect()
+            });
         let used = sqlx::query(
             "SELECT
                COALESCE(SUM(input_tokens + output_tokens)
@@ -84,13 +106,57 @@ impl AppDb {
         let desired_output = desired_output_tokens.clamp(1, i64::MAX as u64) as i64;
         let monthly_used = used.try_get::<i64, _>("monthly").unwrap_or(0) + reserved;
         let weekly_used = used.try_get::<i64, _>("weekly").unwrap_or(0) + reserved;
-        let monthly_room = remaining(monthly_limit, monthly_used);
+        let (tier_monthly_room, tier_weekly_room) = match (&tier_limits, tier) {
+            (Some(limits), Some(tier_name)) if limits.contains_key(tier_name) => {
+                let tier_row = sqlx::query(
+                    "SELECT
+                       COALESCE(SUM(u.input_tokens + u.output_tokens)
+                         FILTER (WHERE u.created_at >= date_trunc('month', CURRENT_TIMESTAMP)), 0)::bigint
+                           AS monthly,
+                       COALESCE(SUM(u.input_tokens + u.output_tokens)
+                         FILTER (WHERE u.created_at >= date_trunc('week', CURRENT_TIMESTAMP)), 0)::bigint
+                           AS weekly
+                     FROM usage_logs u
+                     LEFT JOIN model_catalog m ON m.id = u.model
+                     WHERE u.user_id = $1 AND (m.payload->>'tier') = $2",
+                )
+                .bind(user_id)
+                .bind(tier_name)
+                .fetch_one(tx.as_mut())
+                .await?;
+                let tier_reserved = sqlx::query_scalar::<_, i64>(
+                    "SELECT COALESCE(SUM(reserved_tokens), 0)::bigint
+                     FROM generation_reservations
+                     WHERE user_id = $1 AND expires_at > NOW() AND tier = $2",
+                )
+                .bind(user_id)
+                .bind(tier_name)
+                .fetch_one(tx.as_mut())
+                .await?;
+                let (tier_monthly, tier_weekly) = limits
+                    .get(tier_name)
+                    .copied()
+                    .unwrap_or((0, 0));
+                (
+                    Some(remaining(
+                        tier_monthly,
+                        tier_row.try_get::<i64, _>("monthly").unwrap_or(0) + tier_reserved,
+                    )),
+                    Some(remaining(
+                        tier_weekly,
+                        tier_row.try_get::<i64, _>("weekly").unwrap_or(0) + tier_reserved,
+                    )),
+                )
+            }
+            _ => (None, None),
+        };
+        let monthly_room = min_opt(remaining(monthly_limit, monthly_used), tier_monthly_room);
         if monthly_room <= prompt_tokens {
             tx.rollback().await?;
             return Ok(GenerationReservationOutcome::MonthlyExhausted);
         }
         let monthly_output = monthly_room - prompt_tokens;
-        let weekly_room = remaining(weekly_limit, weekly_used);
+        let weekly_room = min_opt(remaining(weekly_limit, weekly_used), tier_weekly_room);
         let weekly_output = weekly_room.saturating_sub(prompt_tokens);
         let mut credits_paid = force_credits || weekly_output <= 0;
         let mut output_tokens = desired_output.min(monthly_output);
@@ -145,14 +211,15 @@ impl AppDb {
         let id = next_reservation_id();
         sqlx::query(
             "INSERT INTO generation_reservations
-               (id, user_id, reserved_tokens, held_micros, credits_paid, expires_at)
-             VALUES ($1, $2, $3, $4, $5, NOW() + INTERVAL '2 hours')",
+               (id, user_id, reserved_tokens, held_micros, credits_paid, tier, expires_at)
+             VALUES ($1, $2, $3, $4, $5, $6, NOW() + INTERVAL '2 hours')",
         )
         .bind(&id)
         .bind(user_id)
         .bind(prompt_tokens.saturating_add(output_tokens))
         .bind(held_micros)
         .bind(credits_paid)
+        .bind(tier)
         .execute(tx.as_mut())
         .await?;
         tx.commit().await?;
@@ -329,6 +396,13 @@ fn remaining(limit: i64, used: i64) -> i64 {
         i64::MAX
     } else {
         limit.saturating_sub(used)
+    }
+}
+
+fn min_opt(value: i64, cap: Option<i64>) -> i64 {
+    match cap {
+        Some(cap) => value.min(cap),
+        None => value,
     }
 }
 

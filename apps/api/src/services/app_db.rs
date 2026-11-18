@@ -11,7 +11,7 @@ mod plans;
 mod quota;
 mod settings;
 
-pub use billing::{SubscriptionRow, SubscriptionView};
+pub use billing::{AutoRechargeView, SubscriptionRow, SubscriptionView};
 
 #[derive(Clone)]
 pub struct AppDb {

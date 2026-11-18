@@ -31,15 +31,16 @@ fn free_plan_matches_expected_budget() {
         .find(|plan| plan.id == api::services::app_db::FREE_PLAN_ID)
         .expect("free plan exists");
     let limits = free.limits.as_ref().expect("free plan limits");
-    assert_eq!(limits.monthly_tokens_count(), 20_000_000);
-    assert_eq!(limits.weekly_tokens_count(), 5_000_000);
-    assert_eq!(limits.daily_requests_count(), 50);
+    assert_eq!(limits.monthly_tokens_count(), 5_000_000);
+    assert_eq!(limits.weekly_tokens_count(), 1_500_000);
+    assert_eq!(limits.daily_requests_count(), 100);
 }
 
 #[test]
 fn paid_plan_request_limits_keep_digit_separators() {
     let plans = api::services::plans::seed_entries();
-    for id in ["pro", "business"] {
+    let expected = [("starter", 500), ("max", 2_000), ("max-plus", 4_000)];
+    for (id, requests) in expected {
         let plan = plans
             .iter()
             .find(|plan| plan.id == id)
@@ -49,7 +50,7 @@ fn paid_plan_request_limits_keep_digit_separators() {
                 .as_ref()
                 .expect("paid plan limits")
                 .daily_requests_count(),
-            3_400
+            requests
         );
     }
 }

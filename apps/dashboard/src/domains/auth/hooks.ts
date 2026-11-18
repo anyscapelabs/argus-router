@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
 import { authClient, dashboardPath } from "./client";
+import { API_ROUTES } from "@/config/api";
 
 const SESSION_KEY = ["auth", "session"] as const;
 
@@ -158,6 +159,47 @@ export function useSignOut() {
     onError: (error) => {
       void queryClient.invalidateQueries({ queryKey: SESSION_KEY });
       toast.error(error.message);
+    },
+  });
+}
+
+type DeleteUserResponse = { success?: boolean; message?: string };
+
+async function requestDeleteAccount(body: { token?: string } = {}) {
+  const response = await fetch(`${API_ROUTES.auth}/delete-user`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify(body),
+  });
+  const data = (await response.json().catch(() => null)) as DeleteUserResponse | null;
+  if (!response.ok) {
+    throw new Error(data?.message ?? "Account deletion request failed");
+  }
+  if (!data?.success) {
+    throw new Error(data?.message ?? "Account deletion request failed");
+  }
+  return data;
+}
+
+export function useDeleteAccount() {
+  return useMutation({
+    mutationFn: () => requestDeleteAccount(),
+    onSuccess: () => {
+      toast.success("Deletion confirmation email sent — check your inbox");
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+}
+
+export function useConfirmAccountDeletion() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (token: string) => requestDeleteAccount({ token }),
+    onSuccess: () => {
+      queryClient.clear();
     },
   });
 }

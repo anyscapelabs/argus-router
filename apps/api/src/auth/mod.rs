@@ -9,7 +9,7 @@ use std::sync::Arc;
 use better_auth::plugins::oauth::{OAuthPlugin, OAuthProvider};
 use better_auth::plugins::{
     ApiKeyPlugin, EmailPasswordPlugin, EmailVerificationPlugin, OrganizationPlugin,
-    SessionManagementPlugin,
+    SessionManagementPlugin, UserManagementPlugin,
 };
 use better_auth::seaorm::sea_orm::ConnectionTrait;
 use better_auth::seaorm::{Database, DatabaseConnection, SeaOrmStore};
@@ -186,6 +186,13 @@ pub async fn build_auth(
         .plugin(SessionManagementPlugin::new())
         .plugin(OrganizationPlugin::new().creator_role(DEFAULT_WORKSPACE_ROLE))
         .plugin(api_keys.clone())
+        .plugin(
+            UserManagementPlugin::new()
+                .delete_token_expires_in(chrono::Duration::hours(1))
+                .send_delete_account_verification(Arc::new(
+                    verification::ResendDeleteAccountSender::new(settings, ::reqwest::Client::new()),
+                )),
+        )
         .build()
         .await?;
 

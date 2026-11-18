@@ -1,6 +1,7 @@
 use crate::proxy::adapters::{self, EventStream, TargetOptions};
+use crate::proxy::auto::RequestSignals;
 use crate::proxy::ir::{Chat, ErrCode, Errx, Turn};
-use crate::services::catalog::{CatalogCache, ModelCatalogEntry};
+use crate::services::catalog::{AUTO_MODEL_ID, CatalogCache, ModelCatalogEntry};
 use crate::services::providers::{self, Provider};
 
 pub struct Resolved {
@@ -17,6 +18,25 @@ pub fn resolve(cache: &CatalogCache, model_id: &str) -> Result<Resolved, Errx> {
             format!("no model named `{model_id}` is published"),
         )
     })?;
+    finish_resolve(entry)
+}
+
+pub fn resolve_request(
+    cache: &CatalogCache,
+    model_id: &str,
+    chat: &Chat,
+    allowlist: &[String],
+) -> Result<Resolved, Errx> {
+    if model_id == AUTO_MODEL_ID {
+        let signals = RequestSignals::from_chat(chat);
+        let entry = super::auto::select(&cache.snapshot(), allowlist, &signals)?;
+        finish_resolve(entry)
+    } else {
+        resolve(cache, model_id)
+    }
+}
+
+fn finish_resolve(entry: ModelCatalogEntry) -> Result<Resolved, Errx> {
     let provider = providers::lookup(&entry.provider).ok_or_else(|| {
         Errx::new(
             ErrCode::Upstream,

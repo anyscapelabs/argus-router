@@ -326,6 +326,34 @@ impl AppDb {
         .await;
 
         sqlx::query(
+            "CREATE TABLE IF NOT EXISTS auto_recharge (
+                user_id TEXT PRIMARY KEY,
+                enabled BOOLEAN NOT NULL DEFAULT FALSE,
+                amount_cents BIGINT NOT NULL CHECK (amount_cents > 0),
+                threshold_micros BIGINT NOT NULL CHECK (threshold_micros >= 0),
+                consecutive_failures INT NOT NULL DEFAULT 0,
+                last_attempt_at TIMESTAMPTZ,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )",
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            "ALTER TABLE generation_reservations ADD COLUMN IF NOT EXISTS tier TEXT",
+        )
+        .execute(&self.pool)
+        .await?;
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS billing_plan_products (
+                plan_id TEXT PRIMARY KEY,
+                product_id TEXT NOT NULL UNIQUE,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )",
+        )
+        .execute(&self.pool)
+        .await?;
+        sqlx::query(
             "CREATE TABLE IF NOT EXISTS webhook_events (
                 webhook_id TEXT PRIMARY KEY,
                 processed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()

@@ -166,11 +166,11 @@ export default function OnboardingPage() {
       </section>
 
       <p className="absolute inset-x-0 bottom-6 text-center text-xs text-white/50">
-        <a href="/terms" className="underline hover:text-white/80">
+        <a href="https://argus-agent.anyscapelabs.com/terms-of-service" target="_blank" rel="noopener noreferrer" className="underline hover:text-white/80">
           Terms and conditions
         </a>
         {" · "}
-        <a href="/privacy" className="underline hover:text-white/80">
+        <a href="https://argus-agent.anyscapelabs.com/privacy-policy" target="_blank" rel="noopener noreferrer" className="underline hover:text-white/80">
           Privacy
         </a>
       </p>

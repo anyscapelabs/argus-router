@@ -128,6 +128,37 @@ impl Chat {
         !self.tools.is_empty()
     }
 
+    pub fn prompt_token_bound(&self) -> i64 {
+        let mut bound = 256u64;
+        for text in &self.system {
+            bound = bound.saturating_add(text.len() as u64);
+        }
+        for message in &self.messages {
+            bound = bound.saturating_add(16);
+            for block in &message.blocks {
+                let size = match block {
+                    Block::Text { text } | Block::Thinking { text } => text.len() as u64,
+                    Block::Image { .. } => 65_536,
+                    Block::ToolUse {
+                        id,
+                        name,
+                        input_json,
+                    } => (id.len() + name.len() + input_json.len()) as u64,
+                    Block::ToolResult { id, content, .. } => (id.len() + content.len()) as u64,
+                };
+                bound = bound.saturating_add(size);
+            }
+        }
+        for tool in &self.tools {
+            bound = bound
+                .saturating_add(tool.name.len() as u64)
+                .saturating_add(tool.description.as_deref().map(str::len).unwrap_or(0) as u64)
+                .saturating_add(tool.schema_json.len() as u64)
+                .saturating_add(32);
+        }
+        bound.min(i64::MAX as u64) as i64
+    }
+
     pub fn append_system(&mut self, text: String) {
         self.system.push(text);
     }

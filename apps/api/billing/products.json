@@ -1,11 +1,8 @@
 {
   "subscriptions": [
-    { "planId": "starter", "productId": "pdt_0NrnCdC1GdaqRLbWeeAAb" },
-    { "planId": "pro", "productId": "pdt_0NrnD20boBOFdQVNU2LJS" },
-    { "planId": "business", "productId": "pdt_0NrnDEg2hTIvaCQYlAJ4e" }
+    { "planId": "starter", "priceUsd": 3, "productId": "pdt_0NeOZ8dsxO6i412Yk9CvT" },
+    { "planId": "max", "priceUsd": 9, "productId": "pdt_0NsC0j4bhAhbmwReQmfec" },
+    { "planId": "max-plus", "priceUsd": 15, "productId": "pdt_0NsC18JPzW0wYk8kmcXEZ" }
   ],
-  "creditPacks": [
-    { "id": "credits-5", "label": "$5 credits", "priceUsd": 5, "creditsMicros": 5000000, "productId": "pdt_0NrnDajiGiLMaVKrneW7K" },
-    { "id": "credits-20", "label": "$20 credits", "priceUsd": 20, "creditsMicros": 20000000, "productId": "pdt_0NrnDjcC9jhp0kDsZtMMg" }
-  ]
+  "creditPacks": []
 }

@@ -69,3 +69,43 @@ export async function getInvoices(): Promise<{ invoices: BillingInvoice[] }> {
 export function invoiceDownloadUrl(paymentId: string): string {
   return `${API_ROUTES.billingInvoices}/${paymentId}/download`;
 }
+
+export type PaymentMethod = {
+  id: string;
+  brand?: string;
+  lastFour?: string;
+  expiryMonth?: number;
+  expiryYear?: number;
+};
+
+export async function getPaymentMethods(): Promise<{ paymentMethods: PaymentMethod[] }> {
+  return apiFetch<{ paymentMethods: PaymentMethod[] }>(API_ROUTES.billingPaymentMethods);
+}
+
+export async function setupPaymentMethod(): Promise<{ url: string; mode: string }> {
+  return apiFetch<{ url: string; mode: string }>(API_ROUTES.billingPaymentMethodSetup, {
+    method: "POST",
+  });
+}
+
+export type AutoRecharge = {
+  enabled: boolean;
+  amountCents: number;
+  thresholdMicros: number;
+  disabledByFailures: boolean;
+};
+
+export async function getAutoRecharge(): Promise<AutoRecharge> {
+  return apiFetch<AutoRecharge>(API_ROUTES.billingAutoRecharge);
+}
+
+export async function updateAutoRecharge(request: {
+  enabled: boolean;
+  amountUsd?: number;
+  thresholdUsd?: number;
+}): Promise<AutoRecharge> {
+  return apiFetch<AutoRecharge>(API_ROUTES.billingAutoRecharge, {
+    method: "PUT",
+    body: request,
+  });
+}

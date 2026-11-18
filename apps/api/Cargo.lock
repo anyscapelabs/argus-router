@@ -162,6 +162,7 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "better-auth",
+ "better-auth-api",
  "better-auth-seaorm",
  "chrono",
  "dotenvy",

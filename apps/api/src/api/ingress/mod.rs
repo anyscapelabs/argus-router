@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use crate::proxy::ErrCode;
 use crate::proxy::Errx;
-use crate::proxy::ir::{Block, Chat, Event};
+use crate::proxy::ir::{Chat, Event};
 use crate::services::app_db::{GenerationReservation, GenerationReservationOutcome, QuotaCheck};
 use crate::services::catalog::ModelCatalogEntry;
 use crate::services::usage::UsageRow;
@@ -299,6 +299,7 @@ async fn reserve_generation(
         .reserve_generation(
             user_id,
             plan,
+            Some(entry.tier.as_str()),
             force_credits,
             desired_output,
             prompt_tokens,
@@ -315,11 +316,17 @@ async fn reserve_generation(
         GenerationReservationOutcome::MonthlyExhausted => {
             Err(limit_error(state, LimitWindow::Monthly, 0, 0).await)
         }
-        GenerationReservationOutcome::CreditsExhausted => Err(Errx::new(
-            ErrCode::CreditsExhausted,
-            402,
-            "included usage is exhausted and no prepaid credits remain",
-        )),
+        GenerationReservationOutcome::CreditsExhausted => {
+            tokio::spawn(crate::api::v1::billing::try_auto_recharge(
+                state.clone(),
+                user_id.to_owned(),
+            ));
+            Err(Errx::new(
+                ErrCode::CreditsExhausted,
+                402,
+                "included usage is exhausted and no prepaid credits remain",
+            ))
+        }
     }
 }
 
@@ -337,6 +344,10 @@ async fn reserve_credit_operation(
         GenerationReservationOutcome::Reserved(reservation) => reservation,
         GenerationReservationOutcome::CreditsExhausted
         | GenerationReservationOutcome::MonthlyExhausted => {
+            tokio::spawn(crate::api::v1::billing::try_auto_recharge(
+                state.clone(),
+                user_id.to_owned(),
+            ));
             return Err(Errx::new(
                 ErrCode::CreditsExhausted,
                 402,
@@ -348,34 +359,7 @@ async fn reserve_credit_operation(
 }
 
 fn prompt_token_bound(chat: &Chat, context: i64) -> i64 {
-    let mut bound = 256u64;
-    for text in &chat.system {
-        bound = bound.saturating_add(text.len() as u64);
-    }
-    for message in &chat.messages {
-        bound = bound.saturating_add(16);
-        for block in &message.blocks {
-            let size = match block {
-                Block::Text { text } | Block::Thinking { text } => text.len() as u64,
-                Block::Image { .. } => 65_536,
-                Block::ToolUse {
-                    id,
-                    name,
-                    input_json,
-                } => (id.len() + name.len() + input_json.len()) as u64,
-                Block::ToolResult { id, content, .. } => (id.len() + content.len()) as u64,
-            };
-            bound = bound.saturating_add(size);
-        }
-    }
-    for tool in &chat.tools {
-        bound = bound
-            .saturating_add(tool.name.len() as u64)
-            .saturating_add(tool.description.as_deref().map(str::len).unwrap_or(0) as u64)
-            .saturating_add(tool.schema_json.len() as u64)
-            .saturating_add(32);
-    }
-    bound.min(context.max(1) as u64) as i64
+    chat.prompt_token_bound().min(context.max(1))
 }
 
 async fn settle_generation_usage(
@@ -538,7 +522,8 @@ pub async fn openai_chat_completions(
         }
     };
 
-    let resolved = match service::resolve(&state.catalog, &model) {
+    let resolved = match service::resolve_request(&state.catalog, &model, &chat, &principal.allowlist)
+    {
         Ok(resolved) => resolved,
         Err(item) => {
             state.usage.record(UsageRow {
@@ -558,6 +543,7 @@ pub async fn openai_chat_completions(
             return openai::error_response(item);
         }
     };
+    let model = resolved.entry.id().to_owned();
 
     if let Err(item) = service::guard_entitlement(&resolved, &principal.allowlist) {
         state.usage.record(UsageRow {
@@ -940,7 +926,8 @@ pub async fn gemini_models_action(
             return gemini::error_response(item);
         }
     };
-    let resolved = match service::resolve(&state.catalog, &model) {
+    let resolved = match service::resolve_request(&state.catalog, &model, &chat, &principal.allowlist)
+    {
         Ok(resolved) => resolved,
         Err(item) => {
             state.usage.record(UsageRow {
@@ -960,6 +947,7 @@ pub async fn gemini_models_action(
             return gemini::error_response(item);
         }
     };
+    let model = resolved.entry.id().to_owned();
     if let Err(item) = service::guard_entitlement(&resolved, &principal.allowlist) {
         state.usage.record(UsageRow {
             key_id: Some(principal.key_id.clone()),

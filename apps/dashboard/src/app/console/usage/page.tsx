@@ -8,6 +8,13 @@ import { EmptyState } from "@/components/empty-state";
 import { SkeletonRows } from "@/components/skeleton-rows";
 import { formatTokenCount } from "@/lib/usage-format";
 import { useUsage, useUsageSummary } from "@/domains/usage/hooks";
+import {
+  useAutoRecharge,
+  useBilling,
+  usePaymentMethodSetup,
+  usePaymentMethods,
+  useUpdateAutoRecharge,
+} from "@/domains/billing/hooks";
 import type { UsageRange } from "@/domains/usage/api";
 
 const UsageChart = dynamic(
@@ -21,6 +28,57 @@ export default function UsagePage() {
 
   const usage = useUsage({ range: logRange });
   const summary = useUsageSummary({ range: logRange });
+  const billing = useBilling();
+  const billingConfigured = billing.data?.billingConfigured ?? false;
+  const paymentMethods = usePaymentMethods(billingConfigured);
+  const autoRecharge = useAutoRecharge(billingConfigured);
+  const paymentMethodSetup = usePaymentMethodSetup();
+  const updateAutoRecharge = useUpdateAutoRecharge();
+  const savedCard = paymentMethods.data?.paymentMethods[0];
+  const rechargeSettings = autoRecharge.data;
+  const [rechargeOpen, setRechargeOpen] = useState(false);
+  const [rechargeAmount, setRechargeAmount] = useState("");
+  const [rechargeThreshold, setRechargeThreshold] = useState("");
+  const rechargeAmountValue = Number(rechargeAmount);
+  const rechargeThresholdValue = Number(rechargeThreshold);
+  const rechargeAmountValid =
+    Number.isFinite(rechargeAmountValue) &&
+    rechargeAmountValue >= 3 &&
+    rechargeAmountValue <= 1000;
+  const rechargeThresholdValid =
+    Number.isFinite(rechargeThresholdValue) &&
+    rechargeThresholdValue >= 0.5 &&
+    rechargeThresholdValue <= 25;
+  const rechargeSubmitDisabled =
+    updateAutoRecharge.isPending ||
+    !rechargeAmountValid ||
+    !rechargeThresholdValid;
+  const openRechargeDialog = () => {
+    setRechargeAmount(
+      rechargeSettings?.amountCents
+        ? (rechargeSettings.amountCents / 100).toString()
+        : "10",
+    );
+    setRechargeThreshold(
+      rechargeSettings?.thresholdMicros
+        ? (rechargeSettings.thresholdMicros / 1_000_000).toString()
+        : "5",
+    );
+    setRechargeOpen(true);
+  };
+  const submitRecharge = () => {
+    updateAutoRecharge.mutate(
+      {
+        enabled: true,
+        amountUsd: Math.round(rechargeAmountValue * 100) / 100,
+        thresholdUsd: Math.round(rechargeThresholdValue * 100) / 100,
+      },
+      { onSuccess: () => setRechargeOpen(false) },
+    );
+  };
+  const turnOffRecharge = () => {
+    updateAutoRecharge.mutate({ enabled: false });
+  };
   const usageError = summary.isError || usage.isError;
   const usageErrorMessage =
     (summary.isError ? summary.error?.message : undefined) ??
@@ -91,25 +149,153 @@ export default function UsagePage() {
         <div className="flex items-center justify-between">
           <div>
             <p className="text-xs font-medium text-white/60">Credit balance</p>
-            <p className="mt-1 text-2xl font-medium text-primary">$0.00</p>
+            <p className="mt-1 text-2xl font-medium text-primary">
+              {billing.isLoading
+                ? "—"
+                : `$${((billing.data?.creditBalanceMicros ?? 0) / 1_000_000).toFixed(2)}`}
+            </p>
+            {savedCard && (
+              <p className="mt-1 text-xs text-white/50">
+                {savedCard.brand ?? "Card"} ending in {savedCard.lastFour ?? "••••"}
+              </p>
+            )}
           </div>
-          <button
-            type="button"
-            className="cursor-pointer rounded-sm bg-accent px-3 py-1.5 text-xs font-medium text-background transition-colors hover:opacity-90"
-          >
-            Add Payment Method
-          </button>
+          {billingConfigured && (
+            <button
+              type="button"
+              disabled={paymentMethodSetup.isPending}
+              onClick={() => paymentMethodSetup.mutate()}
+              className="cursor-pointer rounded-sm bg-accent px-3 py-1.5 text-xs font-medium text-background transition-colors hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              Add Payment Method
+            </button>
+          )}
         </div>
-        <div className="mt-3 flex items-center justify-between border-t border-border-secondary pt-3">
-          <p className="text-xs font-medium text-white/60">Auto recharge</p>
-          <button
-            type="button"
-            className="cursor-pointer text-xs text-accent transition-colors hover:opacity-80"
-          >
-            Set up
-          </button>
-        </div>
+        {billingConfigured && (
+          <div className="mt-3 flex items-center justify-between border-t border-border-secondary pt-3">
+            <div>
+              <p className="text-xs font-medium text-white/60">Auto recharge</p>
+              <p className="mt-1 text-xs text-white/50">
+                {rechargeSettings?.enabled
+                  ? `On — charges $${(rechargeSettings.amountCents / 100).toFixed(2)} when the balance drops below $${(rechargeSettings.thresholdMicros / 1_000_000).toFixed(2)}.`
+                  : rechargeSettings?.disabledByFailures
+                    ? "Off — disabled after repeated declined payments. Set up again to re-enable."
+                    : "Off — automatically charges a saved card when credits run low."}
+              </p>
+            </div>
+            <div className="flex shrink-0 gap-2">
+              {rechargeSettings?.enabled && (
+                <button
+                  type="button"
+                  disabled={updateAutoRecharge.isPending}
+                  onClick={turnOffRecharge}
+                  className="cursor-pointer text-xs text-white/60 transition-colors hover:text-primary disabled:opacity-60"
+                >
+                  Turn off
+                </button>
+              )}
+              <button
+                type="button"
+                disabled={paymentMethodSetup.isPending}
+                onClick={openRechargeDialog}
+                className="cursor-pointer text-xs text-accent transition-colors hover:opacity-80 disabled:opacity-60"
+              >
+                {rechargeSettings?.enabled ? "Edit" : "Set up"}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
+
+      {rechargeOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          onClick={() => {
+            if (!updateAutoRecharge.isPending) setRechargeOpen(false);
+          }}
+          role="presentation"
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Set up auto recharge"
+            className="w-full max-w-md rounded-md border border-border-secondary bg-[#262626] p-4 shadow-lg"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-sm font-medium text-primary">Auto recharge</h2>
+            <p className="mt-1 text-xs text-white/50">
+              We&apos;ll charge a saved card to top up your credits automatically.
+            </p>
+
+            <div className="mt-4">
+              <label className="text-xs font-medium uppercase tracking-wide text-white/45">
+                Recharge amount ($3–$1,000)
+              </label>
+              <div className="mt-1 flex items-center rounded-sm border border-border-secondary bg-tertiary px-2.5 py-1.5">
+                <span className="text-sm text-white/50">$</span>
+                <input
+                  type="number"
+                  min="3"
+                  max="1000"
+                  step="1"
+                  value={rechargeAmount}
+                  onChange={(e) => setRechargeAmount(e.target.value)}
+                  className="w-full bg-transparent text-sm text-primary outline-none"
+                  aria-label="Recharge amount in dollars"
+                />
+              </div>
+            </div>
+
+            <div className="mt-3">
+              <label className="text-xs font-medium uppercase tracking-wide text-white/45">
+                Recharge when balance drops below ($0.50–$25)
+              </label>
+              <div className="mt-1 flex items-center rounded-sm border border-border-secondary bg-tertiary px-2.5 py-1.5">
+                <span className="text-sm text-white/50">$</span>
+                <input
+                  type="number"
+                  min="0.5"
+                  max="25"
+                  step="0.5"
+                  value={rechargeThreshold}
+                  onChange={(e) => setRechargeThreshold(e.target.value)}
+                  className="w-full bg-transparent text-sm text-primary outline-none"
+                  aria-label="Threshold balance in dollars"
+                />
+              </div>
+            </div>
+
+            {!rechargeAmountValid && rechargeAmount !== "" && (
+              <p className="mt-2 text-xs text-red-300">
+                Amount must be between $3 and $1,000.
+              </p>
+            )}
+            {!rechargeThresholdValid && rechargeThreshold !== "" && (
+              <p className="mt-2 text-xs text-red-300">
+                Threshold must be between $0.50 and $25.
+              </p>
+            )}
+
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setRechargeOpen(false)}
+                className="cursor-pointer rounded-sm border border-border-secondary px-3 py-1.5 text-xs font-medium text-primary transition-colors hover:bg-white/5"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={rechargeSubmitDisabled}
+                onClick={submitRecharge}
+                className="cursor-pointer rounded-sm bg-accent px-3 py-1.5 text-xs font-medium text-background transition-colors hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {updateAutoRecharge.isPending ? "Saving…" : "Save"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-3">
         <div className="min-w-0 overflow-hidden rounded-md border border-border-secondary bg-[#262626] p-2">

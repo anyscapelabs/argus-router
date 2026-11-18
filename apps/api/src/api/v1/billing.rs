@@ -30,6 +30,9 @@ pub fn router() -> Router<AppState> {
         .route("/webhook", post(webhook))
         .route("/invoices", get(invoices))
         .route("/invoices/{payment_id}/download", get(invoice_download))
+        .route("/payment-methods", get(payment_methods))
+        .route("/payment-methods/setup", post(payment_method_setup))
+        .route("/auto-recharge", get(auto_recharge_status).put(update_auto_recharge))
 }
 
 #[derive(Serialize)]
@@ -86,13 +89,24 @@ async fn summary(
         .map(|pack| CreditPackView::from_pack(pack, billing_configured))
         .collect();
     let available_plan_ids = if billing_configured {
-        state
+        let mut available_plan_ids: Vec<String> = state
             .billing_catalog
             .subscriptions
             .iter()
             .filter(|item| !item.product_id.is_empty())
             .map(|item| item.plan_id.clone())
-            .collect()
+            .collect();
+        for plan_id in state
+            .app_db
+            .mapped_plan_products()
+            .await
+            .map_err(database_problem)?
+        {
+            if !available_plan_ids.contains(&plan_id) {
+                available_plan_ids.push(plan_id);
+            }
+        }
+        available_plan_ids
     } else {
         Vec::new()
     };
@@ -121,8 +135,8 @@ struct RedirectResponse {
     checkout_url: String,
 }
 
-const MIN_CUSTOM_CREDIT_CENTS: i64 = 100;
-const MAX_CUSTOM_CREDIT_CENTS: i64 = 50_000;
+const MIN_CUSTOM_CREDIT_CENTS: i64 = 300;
+const MAX_CUSTOM_CREDIT_CENTS: i64 = 100_000;
 
 fn custom_amount_cents(amount_usd: f64) -> Option<i64> {
     if !amount_usd.is_finite() {
@@ -144,6 +158,44 @@ struct CheckoutTarget {
     checkout_key: String,
     product_id: String,
     metadata: Value,
+}
+
+async fn subscription_product_for_checkout(
+    state: &AppState,
+    dodo: &DodoClient,
+    plan_id: &str,
+) -> Result<String, ApiProblem> {
+    if let Some(product_id) = state
+        .app_db
+        .plan_product_of(plan_id)
+        .await
+        .map_err(database_problem)?
+    {
+        return Ok(product_id);
+    }
+    if let Some(product_id) = state.billing_catalog.subscription_product(plan_id) {
+        return Ok(product_id.to_owned());
+    }
+    let entry = state
+        .billing_catalog
+        .subscription_entry(plan_id)
+        .filter(|entry| entry.price_usd > 0)
+        .ok_or_else(|| billing_product_problem("plan"))?;
+    let product_id = dodo
+        .create_subscription_product(
+            plan_id,
+            &format!("Argus {plan_id} Subscription"),
+            entry.price_usd * 100,
+            json!({ "argus_plan_id": plan_id }),
+        )
+        .await
+        .map_err(|error| provider_problem("subscription product", error))?;
+    state
+        .app_db
+        .upsert_plan_product(plan_id, &product_id)
+        .await
+        .map_err(database_problem)?;
+    Ok(product_id)
 }
 
 async fn checkout(
@@ -179,13 +231,10 @@ async fn checkout(
                     ));
                 }
             }
-            let product_id = state
-                .billing_catalog
-                .subscription_product(plan_id)
-                .ok_or_else(|| billing_product_problem("plan"))?;
+            let product_id = subscription_product_for_checkout(&state, dodo, plan_id).await?;
             CheckoutTarget {
                 checkout_key: format!("plan:{user_id}:{plan_id}"),
-                product_id: product_id.to_owned(),
+                product_id,
                 metadata: json!({ "argus_user_id": user_id, "argus_plan_id": plan_id }),
             }
         }
@@ -206,44 +255,10 @@ async fn checkout(
                 problem(
                     StatusCode::BAD_REQUEST,
                     "INVALID_AMOUNT",
-                    "Custom credit amounts must be between $1 and $500.",
+                    "Custom credit amounts must be between $3 and $1,000.",
                 )
             })?;
-            let product_id = match state
-                .app_db
-                .credit_product_of_amount(cents)
-                .await
-                .map_err(database_problem)?
-            {
-                Some(product_id) => product_id,
-                None => {
-                    let product_id = dodo
-                        .create_credit_product(
-                            &credit_product_name(cents),
-                            cents,
-                            json!({ "argus_credit_amount_cents": cents }),
-                        )
-                        .await
-                        .map_err(|error| provider_problem("credit product", error))?;
-                    state
-                        .app_db
-                        .upsert_credit_product(cents, &product_id)
-                        .await
-                        .map_err(database_problem)?;
-                    state
-                        .app_db
-                        .credit_product_of_amount(cents)
-                        .await
-                        .map_err(database_problem)?
-                        .ok_or_else(|| {
-                            problem(
-                                StatusCode::INTERNAL_SERVER_ERROR,
-                                "BILLING_DATABASE",
-                                "The credit product mapping could not be loaded.",
-                            )
-                        })?
-                }
-            };
+            let product_id = ensure_credit_product_id(&state, dodo, cents).await?;
             CheckoutTarget {
                 checkout_key: format!("credits:{user_id}:{cents}"),
                 product_id,
@@ -356,6 +371,402 @@ async fn billing_customer_id_of(state: &AppState, user_id: &str) -> Result<Strin
             )
         })
 }
+
+async fn ensure_credit_product_id(
+    state: &AppState,
+    dodo: &DodoClient,
+    cents: i64,
+) -> Result<String, ApiProblem> {
+    if let Some(product_id) = state
+        .app_db
+        .credit_product_of_amount(cents)
+        .await
+        .map_err(database_problem)?
+    {
+        return Ok(product_id);
+    }
+    let product_id = dodo
+        .create_credit_product(
+            &credit_product_name(cents),
+            cents,
+            json!({ "argus_credit_amount_cents": cents }),
+        )
+        .await
+        .map_err(|error| provider_problem("credit product", error))?;
+    state
+        .app_db
+        .upsert_credit_product(cents, &product_id)
+        .await
+        .map_err(database_problem)?;
+    state
+        .app_db
+        .credit_product_of_amount(cents)
+        .await
+        .map_err(database_problem)?
+        .ok_or_else(|| {
+            problem(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "BILLING_DATABASE",
+                "The credit product mapping could not be loaded.",
+            )
+        })
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PaymentMethodView {
+    id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    brand: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_four: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    expiry_month: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    expiry_year: Option<i64>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PaymentMethodList {
+    payment_methods: Vec<PaymentMethodView>,
+}
+
+async fn payment_methods(
+    State(state): State<AppState>,
+    session: CurrentSession<AppAuthSchema>,
+) -> Result<AxumJson<PaymentMethodList>, ApiProblem> {
+    let user_id = user_id(&session)?;
+    let dodo = dodo_client(&state)?;
+    let Some(customer_id) = state
+        .app_db
+        .billing_customer_id(&user_id)
+        .await
+        .map_err(database_problem)?
+    else {
+        return Ok(AxumJson(PaymentMethodList {
+            payment_methods: Vec::new(),
+        }));
+    };
+    let methods = dodo
+        .list_payment_methods(&customer_id)
+        .await
+        .map_err(|error| provider_problem("payment method lookup", error))?;
+    let payment_methods = methods
+        .iter()
+        .filter(|method| method.is_card())
+        .filter_map(|method| {
+            let id = method.card_id()?.to_owned();
+            Some(PaymentMethodView {
+                id,
+                brand: method.card_network.clone(),
+                last_four: method.card_last_four.clone(),
+                expiry_month: method.card_expiry_month,
+                expiry_year: method.card_expiry_year,
+            })
+        })
+        .collect();
+    Ok(AxumJson(PaymentMethodList { payment_methods }))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PaymentMethodSetup {
+    url: String,
+    mode: &'static str,
+}
+
+async fn payment_method_setup(
+    State(state): State<AppState>,
+    session: CurrentSession<AppAuthSchema>,
+) -> Result<AxumJson<PaymentMethodSetup>, ApiProblem> {
+    let user_id = user_id(&session)?;
+    let dodo = dodo_client(&state)?;
+    let return_url = state.settings.dodo_return_url.clone().unwrap_or_else(|| {
+        format!(
+            "{}/console/settings/billing",
+            state.settings.dashboard_url
+        )
+    });
+    let customer_id = ensure_customer(&state, dodo, &session, &user_id).await?;
+    if let Some(subscription_id) = state
+        .app_db
+        .subscription_id_of(&user_id)
+        .await
+        .map_err(database_problem)?
+    {
+        let url = dodo
+            .subscription_payment_method_link(&subscription_id, &return_url)
+            .await;
+        match url {
+            Ok(url) => {
+                return Ok(AxumJson(PaymentMethodSetup {
+                    url,
+                    mode: "subscription",
+                }))
+            }
+            Err(error) => {
+                tracing::warn!(%error, "subscription payment-method link failed; falling back to portal");
+            }
+        }
+    }
+    let portal_url = dodo
+        .create_portal(&customer_id, &return_url)
+        .await
+        .map_err(|error| provider_problem("customer portal", error))?;
+    Ok(AxumJson(PaymentMethodSetup {
+        url: portal_url,
+        mode: "portal",
+    }))
+}
+
+const MAX_AUTO_RECHARGE_THRESHOLD_CENTS: i64 = 2_500;
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AutoRechargeRequest {
+    enabled: bool,
+    amount_usd: Option<f64>,
+    threshold_usd: Option<f64>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AutoRechargeResponse {
+    enabled: bool,
+    amount_cents: i64,
+    threshold_micros: i64,
+    disabled_by_failures: bool,
+}
+
+impl AutoRechargeResponse {
+    fn from_view(view: crate::services::app_db::AutoRechargeView) -> Self {
+        Self {
+            enabled: view.enabled,
+            amount_cents: view.amount_cents,
+            threshold_micros: view.threshold_micros,
+            disabled_by_failures: view.disabled_by_failures,
+        }
+    }
+}
+
+async fn auto_recharge_status(
+    State(state): State<AppState>,
+    session: CurrentSession<AppAuthSchema>,
+) -> Result<AxumJson<AutoRechargeResponse>, ApiProblem> {
+    let user_id = user_id(&session)?;
+    let view = state
+        .app_db
+        .auto_recharge_of(&user_id)
+        .await
+        .map_err(database_problem)?;
+    Ok(AxumJson(match view {
+        Some(view) => AutoRechargeResponse::from_view(view),
+        None => AutoRechargeResponse {
+            enabled: false,
+            amount_cents: 0,
+            threshold_micros: 0,
+            disabled_by_failures: false,
+        },
+    }))
+}
+
+async fn update_auto_recharge(
+    State(state): State<AppState>,
+    session: CurrentSession<AppAuthSchema>,
+    AxumJson(request): AxumJson<AutoRechargeRequest>,
+) -> Result<AxumJson<AutoRechargeResponse>, ApiProblem> {
+    let user_id = user_id(&session)?;
+    if !request.enabled {
+        state
+            .app_db
+            .upsert_auto_recharge(&user_id, false, 0, 0)
+            .await
+            .map_err(database_problem)?;
+        return Ok(AxumJson(AutoRechargeResponse {
+            enabled: false,
+            amount_cents: 0,
+            threshold_micros: 0,
+            disabled_by_failures: false,
+        }));
+    }
+    let amount_cents = request
+        .amount_usd
+        .and_then(custom_amount_cents)
+        .ok_or_else(|| {
+            problem(
+                StatusCode::BAD_REQUEST,
+                "INVALID_AMOUNT",
+                "Auto-recharge amounts must be between $3 and $1,000.",
+            )
+        })?;
+    let threshold_cents = request
+        .threshold_usd
+        .filter(|value| value.is_finite() && *value > 0.0)
+        .map(|value| (value * 100.0).round() as i64)
+        .filter(|cents| *cents >= 50 && *cents <= MAX_AUTO_RECHARGE_THRESHOLD_CENTS)
+        .ok_or_else(|| {
+            problem(
+                StatusCode::BAD_REQUEST,
+                "INVALID_THRESHOLD",
+                "The auto-recharge threshold must be between $0.50 and $25.",
+            )
+        })?;
+    state
+        .app_db
+        .upsert_auto_recharge(&user_id, true, amount_cents, threshold_cents * 10_000)
+        .await
+        .map_err(database_problem)?;
+    let view = state
+        .app_db
+        .auto_recharge_of(&user_id)
+        .await
+        .map_err(database_problem)?
+        .ok_or_else(|| {
+            problem(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "BILLING_DATABASE",
+                "Auto-recharge settings could not be loaded.",
+            )
+        })?;
+    Ok(AxumJson(AutoRechargeResponse::from_view(view)))
+}
+
+/// Fired when a request is denied for lack of credits. Attempts one automatic
+/// charge of a saved card for the configured amount; credits land via the
+/// `payment.succeeded` webhook.
+pub async fn try_auto_recharge(state: AppState, user_id: String) {
+    if let Err(error) = attempt_auto_recharge(&state, &user_id).await {
+        tracing::info!(%user_id, %error, "auto-recharge attempt skipped");
+    }
+}
+
+async fn attempt_auto_recharge(state: &AppState, user_id: &str) -> Result<(), String> {
+    let Some(dodo) = state.dodo.as_ref() else {
+        return Err("billing is not configured".to_owned());
+    };
+    let mut amount_cents = 0;
+    let mut threshold_micros = 0;
+    let claimed = state
+        .app_db
+        .claim_auto_recharge(user_id, &mut amount_cents, &mut threshold_micros)
+        .await
+        .map_err(|error| error.to_string())?;
+    if !claimed {
+        return Err("auto-recharge is not eligible right now".to_owned());
+    }
+    let outcome = charge_auto_recharge(state, dodo, user_id, amount_cents, threshold_micros).await;
+    match outcome {
+        Ok(()) => {
+            if let Err(error) = state.app_db.record_auto_recharge_success(user_id).await {
+                tracing::error!(%error, "auto-recharge success bookkeeping failed");
+            }
+            Ok(())
+        }
+        Err(AutoRechargeError::Transient(error)) => {
+            let _ = state.app_db.release_auto_recharge_claim(user_id).await;
+            Err(error)
+        }
+        Err(AutoRechargeError::NoSavedCard) => {
+            let _ = state.app_db.release_auto_recharge_claim(user_id).await;
+            Err("no saved card available for auto-recharge".to_owned())
+        }
+        Err(AutoRechargeError::Declined(error)) => {
+            match state.app_db.record_auto_recharge_failure(user_id).await {
+                Ok(disabled) if disabled => {
+                    tracing::warn!(user_id, "auto-recharge disabled after repeated declines");
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    tracing::error!(%error, "auto-recharge failure bookkeeping failed");
+                }
+            }
+            Err(error)
+        }
+    }
+}
+
+enum AutoRechargeError {
+    Transient(String),
+    Declined(String),
+    NoSavedCard,
+}
+
+async fn charge_auto_recharge(
+    state: &AppState,
+    dodo: &DodoClient,
+    user_id: &str,
+    amount_cents: i64,
+    threshold_micros: i64,
+) -> Result<(), AutoRechargeError> {
+    let balance = state
+        .app_db
+        .credit_balance(user_id)
+        .await
+        .map_err(|error| AutoRechargeError::Transient(error.to_string()))?;
+    if balance > threshold_micros {
+        return Err(AutoRechargeError::Transient(
+            "balance is above the threshold".to_owned(),
+        ));
+    }
+    let Some(customer_id) = state
+        .app_db
+        .billing_customer_id(user_id)
+        .await
+        .map_err(|error| AutoRechargeError::Transient(error.to_string()))?
+    else {
+        return Err(AutoRechargeError::Transient(
+            "no billing customer exists for this account".to_owned(),
+        ));
+    };
+    let methods = dodo
+        .list_payment_methods(&customer_id)
+        .await
+        .map_err(|error| AutoRechargeError::Transient(error.to_string()))?;
+    let card = methods
+        .iter()
+        .filter(|method| method.is_card())
+        .find_map(|method| method.card_id())
+        .ok_or(AutoRechargeError::NoSavedCard)?;
+    let address = dodo
+        .customer_billing_address(&customer_id)
+        .await
+        .map_err(|error| AutoRechargeError::Transient(error.to_string()))?;
+    let country = address
+        .country
+        .filter(|country| !country.is_empty())
+        .ok_or(AutoRechargeError::NoSavedCard)?;
+    let product_id = ensure_credit_product_id(state, dodo, amount_cents)
+        .await
+        .map_err(|problem| AutoRechargeError::Transient(format!("{problem:?}")))?;
+    let idempotency_key = format!(
+        "argus-auto-recharge-{user_id}-{amount_cents}-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    );
+    dodo.charge_saved_payment_method(
+        &customer_id,
+        &product_id,
+        card,
+        &country,
+        address.zipcode.as_deref(),
+        json!({
+            "argus_user_id": user_id,
+            "argus_credit_amount_cents": amount_cents,
+            "argus_auto_recharge": true
+        }),
+        &idempotency_key,
+    )
+    .await
+    .map_err(|error| match error.status() {
+        Some(status) if status.is_client_error() => AutoRechargeError::Declined(error.to_string()),
+        _ => AutoRechargeError::Transient(error.to_string()),
+    })?;
+    Ok(())
+}
+
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -583,10 +994,54 @@ async fn process_webhook(state: &AppState, payload: &Value) -> Result<(), String
         )
         .await
     } else if event_type == "payment.succeeded" {
-        grant_purchased_credits(state, data).await
+        grant_purchased_credits(state, data).await?;
+        if data
+            .pointer("/metadata/argus_auto_recharge")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            if let Some(user_id) = data
+                .pointer("/metadata/argus_user_id")
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty())
+                && let Err(error) = state.app_db.record_auto_recharge_success(user_id).await
+            {
+                tracing::error!(%error, "auto-recharge success bookkeeping failed");
+            }
+        }
+        Ok(())
+    } else if event_type == "payment.failed" {
+        record_auto_recharge_webhook_failure(state, data).await
     } else {
         Ok(())
     }
+}
+
+async fn record_auto_recharge_webhook_failure(
+    state: &AppState,
+    data: &Value,
+) -> Result<(), String> {
+    if !data
+        .pointer("/metadata/argus_auto_recharge")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return Ok(());
+    }
+    let user_id = data
+        .pointer("/metadata/argus_user_id")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "failed auto-recharge payment has no user metadata".to_owned())?;
+    let disabled = state
+        .app_db
+        .record_auto_recharge_failure(user_id)
+        .await
+        .map_err(|error| error.to_string())?;
+    if disabled {
+        tracing::warn!(user_id, "auto-recharge disabled after repeated declines");
+    }
+    Ok(())
 }
 
 pub async fn reconcile_subscriptions(state: &AppState) {
@@ -708,10 +1163,17 @@ async fn sync_subscription(
             .await
             .map_err(|error| error.to_string())?;
     }
-    let plan_id = state
+    let static_plan = state
         .billing_catalog
         .plan_for_product(product_id)
-        .map(str::to_owned)
+        .map(str::to_owned);
+    let db_plan = state
+        .app_db
+        .plan_for_product(product_id)
+        .await
+        .map_err(|error| error.to_string())?;
+    let plan_id = static_plan
+        .or(db_plan)
         .or_else(|| existing.as_ref().map(|item| item.1.clone()))
         .ok_or_else(|| format!("no plan is configured for Dodo product `{product_id}`"))?;
     let next_billing_date = data.get("next_billing_date").and_then(Value::as_str);
@@ -1045,18 +1507,18 @@ mod tests {
 
     #[test]
     fn accepts_custom_amounts_in_range() {
-        assert_eq!(custom_amount_cents(1.0), Some(100));
+        assert_eq!(custom_amount_cents(3.0), Some(300));
         assert_eq!(custom_amount_cents(5.0), Some(500));
         assert_eq!(custom_amount_cents(5.5), Some(550));
-        assert_eq!(custom_amount_cents(499.999), Some(50_000));
-        assert_eq!(custom_amount_cents(500.0), Some(50_000));
+        assert_eq!(custom_amount_cents(999.999), Some(100_000));
+        assert_eq!(custom_amount_cents(1000.0), Some(100_000));
     }
 
     #[test]
     fn rejects_custom_amounts_out_of_range() {
         assert_eq!(custom_amount_cents(0.0), None);
-        assert_eq!(custom_amount_cents(0.99), None);
-        assert_eq!(custom_amount_cents(500.01), None);
+        assert_eq!(custom_amount_cents(2.99), None);
+        assert_eq!(custom_amount_cents(1000.01), None);
         assert_eq!(custom_amount_cents(f64::NAN), None);
         assert_eq!(custom_amount_cents(f64::INFINITY), None);
     }

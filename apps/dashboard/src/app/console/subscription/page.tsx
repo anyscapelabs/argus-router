@@ -39,13 +39,15 @@ export default function SubscriptionPage() {
             Manage your plan and billing details.
           </p>
         </div>
-        <button
-          type="button"
+        <a
+          href="https://anyscapelabs.com/lab"
+          target="_blank"
+          rel="noopener noreferrer"
           className="inline-flex h-fit shrink-0 cursor-pointer items-center gap-1 rounded-sm border border-border-secondary bg-tertiary px-2 py-1 text-xs font-medium text-primary transition-colors hover:bg-white/10"
         >
           Learn more
           <FiExternalLink className="size-3" />
-        </button>
+        </a>
       </div>
 
       {plansQuery.isError && (

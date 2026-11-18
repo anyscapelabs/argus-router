@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, RwLock};
 
+pub const AUTO_MODEL_ID: &str = "argus/auto";
+
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Compat {
@@ -18,17 +20,28 @@ impl Compat {
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Tier {
-    Free,
-    Small,
-    Medium,
+    Lite,
+    Standard,
+    Premium,
+    Ultra,
 }
 
 impl Tier {
     pub fn as_str(self) -> &'static str {
         match self {
-            Tier::Free => "free",
-            Tier::Small => "small",
-            Tier::Medium => "medium",
+            Tier::Lite => "lite",
+            Tier::Standard => "standard",
+            Tier::Premium => "premium",
+            Tier::Ultra => "ultra",
+        }
+    }
+
+    pub fn below(self) -> Option<Tier> {
+        match self {
+            Tier::Ultra => Some(Tier::Premium),
+            Tier::Premium => Some(Tier::Standard),
+            Tier::Standard => Some(Tier::Lite),
+            Tier::Lite => None,
         }
     }
 }
