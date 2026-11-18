@@ -152,20 +152,62 @@ impl CatalogCache {
 const EMBEDDED: &str = include_str!("../../catalog/models.json");
 
 pub fn seed_entries() -> Vec<ModelCatalogEntry> {
-    let body = if let Ok(path) = std::env::var("CATALOG_PATH") {
-        if !path.trim().is_empty() {
-            std::fs::read_to_string(path.trim()).unwrap_or_else(|_| EMBEDDED.to_owned())
-        } else {
-            EMBEDDED.to_owned()
-        }
-    } else {
-        EMBEDDED.to_owned()
-    };
-    let mut entries = from_json(&body);
+    let mut entries = load_override().unwrap_or_else(embedded_catalog);
     entries.sort_by(|a, b| a.id.cmp(&b.id));
     entries
 }
 
-fn from_json(body: &str) -> Vec<ModelCatalogEntry> {
-    serde_json::from_str(body).unwrap_or_default()
+fn embedded_catalog() -> Vec<ModelCatalogEntry> {
+    parse_catalog(EMBEDDED, "embedded")
+}
+
+fn load_override() -> Option<Vec<ModelCatalogEntry>> {
+    let path = std::env::var("CATALOG_PATH")
+        .ok()
+        .map(|path| path.trim().to_owned())
+        .filter(|path| !path.is_empty())?;
+    let body = match std::fs::read_to_string(&path) {
+        Ok(body) => body,
+        Err(error) => {
+            tracing::warn!(%error, path, "catalog override unreadable — using embedded catalog");
+            return None;
+        }
+    };
+    let entries = parse_catalog(&body, &path);
+    if entries.is_empty() {
+        tracing::warn!(
+            path,
+            "catalog override has no usable models — using embedded catalog"
+        );
+        return None;
+    }
+    Some(entries)
+}
+
+fn parse_catalog(body: &str, source: &str) -> Vec<ModelCatalogEntry> {
+    match serde_json::from_str(body) {
+        Ok(entries) => entries,
+        Err(error) => {
+            tracing::warn!(%error, source, "catalog json rejected");
+            Vec::new()
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn embedded_catalog_parses() {
+        let entries = embedded_catalog();
+        assert!(!entries.is_empty());
+        assert!(entries.iter().all(|entry| !entry.id.is_empty()));
+    }
+
+    #[test]
+    fn seed_entries_are_sorted_by_id() {
+        let entries = seed_entries();
+        assert!(entries.windows(2).all(|pair| pair[0].id <= pair[1].id));
+    }
 }

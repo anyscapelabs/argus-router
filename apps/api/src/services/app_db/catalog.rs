@@ -45,14 +45,19 @@ impl AppDb {
                 .await?;
         }
 
-        let rows = sqlx::query("SELECT payload::text AS payload FROM model_catalog ORDER BY id")
-            .fetch_all(&self.pool)
-            .await?;
+        let rows =
+            sqlx::query("SELECT id, payload::text AS payload FROM model_catalog ORDER BY id")
+                .fetch_all(&self.pool)
+                .await?;
         let mut parsed = Vec::new();
         for row in &rows {
+            let id: String = row.try_get("id")?;
             let text: String = row.try_get("payload")?;
-            if let Ok(entry) = serde_json::from_str::<ModelCatalogEntry>(&text) {
-                parsed.push(entry);
+            match serde_json::from_str::<ModelCatalogEntry>(&text) {
+                Ok(entry) => parsed.push(entry),
+                Err(error) => {
+                    tracing::warn!(%error, %id, "skipping unreadable model_catalog row");
+                }
             }
         }
         Ok(parsed)
