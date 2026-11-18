@@ -39,12 +39,14 @@ function Toggle({
   on,
   busy,
   disabled,
+  disabledReason,
   label,
   onClick,
 }: {
   on: boolean;
   busy?: boolean;
   disabled?: boolean;
+  disabledReason?: string;
   label: string;
   onClick: () => void;
 }) {
@@ -53,6 +55,7 @@ function Toggle({
       type="button"
       onClick={onClick}
       disabled={busy || disabled}
+      title={disabled ? disabledReason : undefined}
       className={`relative inline-block h-5 w-9 rounded-full transition-colors ${
         disabled ? "cursor-not-allowed opacity-40" : "cursor-pointer"
       } ${on ? "bg-[#3b82f6]" : "bg-white/20"} ${busy ? "opacity-50" : ""}`}
@@ -108,7 +111,8 @@ export default function ModelsPage() {
             <div>
               <h2 className="text-sm font-medium text-primary">Models</h2>
               <p className="mt-1 text-xs text-white/60">
-                Only enabled models are available to members. Prices per 1M tokens unless noted.
+                Every catalog model is listed. Only models included in your plan can be
+                enabled. Prices per 1M tokens unless noted.
               </p>
             </div>
             <div className="relative">
@@ -240,6 +244,12 @@ export default function ModelsPage() {
               <span className="text-xs text-white/80">{rows.length}</span>
             </div>
             <div className="flex items-center justify-between">
+              <span className="text-xs text-white/60">In your plan</span>
+              <span className="text-xs text-white/80">
+                {rows.filter((m) => m.inPlan).length}
+              </span>
+            </div>
+            <div className="flex items-center justify-between">
               <span className="text-xs text-white/60">Enabled</span>
               <span className="text-xs text-white/80">
                 {rows.filter((m) => m.enabled).length}
@@ -284,6 +294,20 @@ function Row({
               Free
             </span>
           )}
+          <span
+            className="rounded-sm border border-border-secondary px-1 py-0.5 text-[10px] uppercase tracking-wide text-white/40"
+            title={`${capitalize(model.tier)} tier`}
+          >
+            {model.tier}
+          </span>
+          {!model.inPlan && (
+            <span
+              className="rounded-sm bg-white/10 px-1 py-0.5 text-[10px] text-white/70"
+              title="Not included in your plan"
+            >
+              Upgrade
+            </span>
+          )}
         </div>
         <div className="mt-0.5 text-[11px] text-white/40">{model.id}</div>
       </td>
@@ -314,12 +338,14 @@ function Row({
       <td className="px-2 py-2 text-white/70">{price(model.pricing.cacheRead)}</td>
       <td className="px-2 py-2 text-white/70">{price(model.pricing.cacheWrite)}</td>
       <td className="px-2 py-1">
-       <Toggle
-                     on={model.enabled}
-                     busy={busy}
-                     label={`Toggle ${model.name}`}
-                     onClick={onToggle}
-                   />
+        <Toggle
+          on={model.enabled}
+          busy={busy}
+          disabled={!model.inPlan}
+          disabledReason="Not included in your plan"
+          label={`Toggle ${model.name}`}
+          onClick={onToggle}
+        />
       </td>
     </tr>
   );

@@ -93,10 +93,11 @@ pub struct ModelView {
     pub free: bool,
     pub tier: Tier,
     pub enabled: bool,
+    pub in_plan: bool,
 }
 
 impl ModelCatalogEntry {
-    pub fn view(&self, enabled: bool) -> ModelView {
+    pub fn view(&self, enabled: bool, in_plan: bool) -> ModelView {
         ModelView {
             id: self.id.clone(),
             name: self.name.clone(),
@@ -109,6 +110,7 @@ impl ModelCatalogEntry {
             free: self.free,
             tier: self.tier,
             enabled,
+            in_plan,
         }
     }
 

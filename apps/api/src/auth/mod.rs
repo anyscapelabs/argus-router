@@ -188,6 +188,7 @@ pub async fn build_auth(
         .plugin(api_keys.clone())
         .plugin(
             UserManagementPlugin::new()
+                .delete_user_enabled(true)
                 .delete_token_expires_in(chrono::Duration::hours(1))
                 .send_delete_account_verification(Arc::new(
                     verification::ResendDeleteAccountSender::new(settings, ::reqwest::Client::new()),

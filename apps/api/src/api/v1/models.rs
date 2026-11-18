@@ -42,11 +42,23 @@ async fn list_models(
                 "An error has occurred. Try again later.",
             )
         })?;
+    let plan_allowlist = state.app_db.allowlist_of(&plan).await.map_err(|_error| {
+        problem(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "ALLOWLIST_LOOKUP",
+            "An error has occurred. Try again later.",
+        )
+    })?;
     let models: Vec<ModelView> = state
         .catalog
         .snapshot()
         .iter()
-        .map(|entry| entry.view(allowlist.iter().any(|allowed| allowed == entry.id())))
+        .map(|entry| {
+            entry.view(
+                allowlist.iter().any(|allowed| allowed == entry.id()),
+                plan_allowlist.iter().any(|allowed| allowed == entry.id()),
+            )
+        })
         .collect();
     Ok(AxumJson(serde_json::json!({
         "plan": plan,

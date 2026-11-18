@@ -14,6 +14,8 @@ export type ModelPricing = {
   cacheWrite: string | null;
 };
 
+export type ModelTier = "lite" | "standard" | "premium" | "ultra";
+
 export type ModelView = {
   id: string;
   name: string;
@@ -24,7 +26,9 @@ export type ModelView = {
   capabilities: ModelCapabilities;
   pricing: ModelPricing;
   free: boolean;
+  tier: ModelTier;
   enabled: boolean;
+  inPlan: boolean;
 };
 
 export type ModelsResult = {
