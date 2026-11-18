@@ -257,7 +257,11 @@ fn build_messages(chat: &Chat) -> Vec<Value> {
                 if text.is_empty() && tool_calls.is_empty() {
                     continue;
                 }
-                entry["content"] = json!(text);
+                entry["content"] = if text.is_empty() {
+                    Value::Null
+                } else {
+                    json!(text)
+                };
                 if !tool_calls.is_empty() {
                     entry["tool_calls"] = Value::Array(tool_calls);
                 }
@@ -315,8 +319,15 @@ async fn errx_from_response(target: &Target, response: reqwest::Response) -> Err
             .ok()
             .and_then(|raw| raw.trim().parse::<u64>().ok())
     });
-    drop(response);
-    tracing::warn!(status, request_id = ?request_id, model = %target.model, "upstream provider rejected a request");
+    let body = response.text().await.unwrap_or_default();
+    let detail: String = body.trim().chars().take(1024).collect();
+    tracing::warn!(
+        status,
+        request_id = ?request_id,
+        model = %target.model,
+        detail = %detail,
+        "upstream provider rejected a request"
+    );
     let (code, client_status, message) = match status {
         400 | 404 | 422 => (
             ErrCode::InvalidRequest,
@@ -616,8 +627,54 @@ pub async fn chat_once(
 mod tests {
     use serde_json::json;
 
-    use super::{decode_nonstream, parse_finish_reason};
-    use crate::proxy::ir::FinishReason;
+    use super::{build_messages, decode_nonstream, parse_finish_reason};
+    use crate::proxy::ir::{Block, Chat, FinishReason, Message, Params, Role, ToolChoice};
+
+    fn assistant_chat(blocks: Vec<Block>) -> Chat {
+        Chat {
+            system: Vec::new(),
+            messages: vec![Message {
+                role: Role::Assistant,
+                blocks,
+            }],
+            tools: Vec::new(),
+            tool_choice: ToolChoice::Auto,
+            params: Params {
+                max_tokens: None,
+                temperature: None,
+                top_p: None,
+                stop: Vec::new(),
+            },
+        }
+    }
+
+    #[test]
+    fn tool_only_assistant_turn_sends_null_content() {
+        let messages = build_messages(&assistant_chat(vec![Block::ToolUse {
+            id: "call_1".to_owned(),
+            name: "search_tools".to_owned(),
+            input_json: "{\"query\":\"x\"}".to_owned(),
+        }]));
+        assert_eq!(messages.len(), 1);
+        assert!(messages[0]["content"].is_null());
+        assert_eq!(messages[0]["tool_calls"][0]["id"], "call_1");
+    }
+
+    #[test]
+    fn assistant_text_survives_a_tool_call_turn() {
+        let messages = build_messages(&assistant_chat(vec![
+            Block::Text {
+                text: "one moment".to_owned(),
+            },
+            Block::ToolUse {
+                id: "call_1".to_owned(),
+                name: "search_tools".to_owned(),
+                input_json: "{}".to_owned(),
+            },
+        ]));
+        assert_eq!(messages[0]["content"], json!("one moment"));
+        assert_eq!(messages[0]["tool_calls"][0]["id"], "call_1");
+    }
 
     #[test]
     fn keeps_nonstream_length_finish_reason() {
