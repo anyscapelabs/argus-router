@@ -26,7 +26,6 @@
       "deepseek/deepseek-v4.1-flash-1017",
       "minimax/minimax-m3.1-flash",
       "qwen/qwen3.8-flash",
-      "xiaomi/mimo-v2.6-flash",
       "openai/gpt-6-luna"
     ]
   },
@@ -62,7 +61,6 @@
       "deepseek/deepseek-v4.1-flash-1017",
       "minimax/minimax-m3.1-flash",
       "qwen/qwen3.8-flash",
-      "xiaomi/mimo-v2.6-flash",
       "openai/gpt-6-luna",
       "anthropic/claude-haiku-5.5",
       "minimax/minimax-m3",
@@ -108,7 +106,6 @@
       "deepseek/deepseek-v4.1-flash-1017",
       "minimax/minimax-m3.1-flash",
       "qwen/qwen3.8-flash",
-      "xiaomi/mimo-v2.6-flash",
       "openai/gpt-6-luna",
       "anthropic/claude-haiku-5.5",
       "minimax/minimax-m3",
@@ -165,7 +162,6 @@
       "deepseek/deepseek-v4.1-flash-1017",
       "minimax/minimax-m3.1-flash",
       "qwen/qwen3.8-flash",
-      "xiaomi/mimo-v2.6-flash",
       "openai/gpt-6-luna",
       "anthropic/claude-haiku-5.5",
       "minimax/minimax-m3",

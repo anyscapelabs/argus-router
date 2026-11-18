@@ -471,36 +471,6 @@
     "tier": "premium"
   },
   {
-    "id": "xiaomi/mimo-v2.6-flash",
-    "name": "MiMo-V2.6 Flash",
-    "compat": "openai",
-    "provider": "openrouter",
-    "upstream_model": "xiaomi/mimo-v2.6-flash",
-    "provider_routing": {
-      "only": [
-        "cohere"
-      ],
-      "allow_fallbacks": false,
-      "data_collection": "deny",
-      "sort": "throughput"
-    },
-    "context": 1048576,
-    "max_output": 65536,
-    "capabilities": {
-      "tools": true,
-      "vision": true,
-      "reasoning": true
-    },
-    "pricing": {
-      "input": "0.14",
-      "output": "0.28",
-      "cache_read": "0.014",
-      "cache_write": null
-    },
-    "free": false,
-    "tier": "lite"
-  },
-  {
     "id": "z-ai/glm-5.3",
     "name": "GLM 5.3",
     "compat": "openai",
