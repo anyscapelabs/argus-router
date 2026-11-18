@@ -4,6 +4,7 @@ use sqlx::PgPool;
 mod billing;
 mod catalog;
 mod generation;
+mod metrics;
 mod migrate;
 mod models;
 mod onboarding;

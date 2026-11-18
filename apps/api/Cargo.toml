@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+aws-config = "1"
+aws-sdk-cloudwatch = "1"
 axum = { version = "0.8", features = ["ws"] }
 tokio-tungstenite = { version = "0.26", default-features = false, features = ["rustls-tls-webpki-roots", "connect", "handshake"] }
 async-trait = "0.1.89"

@@ -92,6 +92,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         db: database,
     };
 
+    if settings.cloudwatch_metrics {
+        services::metrics::spawn_user_gauge(
+            state.app_db.clone(),
+            settings.cloudwatch_region.clone(),
+        );
+    }
+
     let maintenance_state = state.clone();
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(60 * 60));

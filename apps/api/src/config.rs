@@ -21,6 +21,8 @@ pub struct Settings {
     pub dodo_test_mode: bool,
     pub dodo_return_url: Option<String>,
     pub extra_allowed_origins: Vec<String>,
+    pub cloudwatch_metrics: bool,
+    pub cloudwatch_region: String,
     admin_user_ids: HashSet<String>,
     pub db_max_connections: u32,
     admin_emails: HashSet<String>,
@@ -51,6 +53,17 @@ impl Settings {
             .and_then(|v| v.parse().ok())
             .filter(|n| *n > 0 && *n <= 100)
             .unwrap_or(10);
+        let cloudwatch_metrics = env::var("CLOUDWATCH_METRICS")
+            .map(|value| {
+                matches!(
+                    value.trim().to_ascii_lowercase().as_str(),
+                    "1" | "true" | "yes"
+                )
+            })
+            .unwrap_or(false);
+        let cloudwatch_region = env::var("CLOUDWATCH_REGION")
+            .or_else(|_| env::var("AWS_REGION"))
+            .unwrap_or_else(|_| "eu-north-1".to_owned());
         Self {
             secret,
             base_url: env::var("BETTER_AUTH_URL")
@@ -88,6 +101,8 @@ impl Settings {
                 .ok()
                 .filter(|v| !v.is_empty()),
             extra_allowed_origins,
+            cloudwatch_metrics,
+            cloudwatch_region,
             admin_user_ids: parse_set("ADMIN_USER_IDS"),
             admin_emails: parse_set("ADMIN_EMAILS"),
             db_max_connections,

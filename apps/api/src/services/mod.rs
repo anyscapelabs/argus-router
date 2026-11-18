@@ -4,6 +4,7 @@ pub mod cache;
 pub mod catalog;
 pub mod dodo;
 pub mod email;
+pub mod metrics;
 pub mod plans;
 pub mod providers;
 pub mod search;
