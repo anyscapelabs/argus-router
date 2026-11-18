@@ -135,6 +135,14 @@ impl AppDb {
             .await
     }
 
+    pub async fn clear_billing_customer(&self, user_id: &str) -> Result<(), sqlx::Error> {
+        sqlx::query("DELETE FROM billing_customers WHERE user_id = $1")
+            .bind(user_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     pub async fn billing_user_of_customer(
         &self,
         customer_id: &str,
@@ -580,7 +588,8 @@ impl AppDb {
         sqlx::query(
             "INSERT INTO billing_credit_products (amount_cents, product_id)
              VALUES ($1, $2)
-             ON CONFLICT (amount_cents) DO NOTHING",
+             ON CONFLICT (amount_cents) DO UPDATE
+               SET product_id = EXCLUDED.product_id",
         )
         .bind(amount_cents)
         .bind(product_id)

@@ -171,10 +171,32 @@ async fn subscription_product_for_checkout(
         .await
         .map_err(database_problem)?
     {
-        return Ok(product_id);
+        if dodo
+            .product_exists(&product_id)
+            .await
+            .map_err(|error| provider_problem("plan product lookup", error))?
+        {
+            return Ok(product_id);
+        }
+        tracing::warn!(
+            %plan_id,
+            %product_id,
+            "stored plan product is unknown to the payment provider; creating a new one"
+        );
     }
     if let Some(product_id) = state.billing_catalog.subscription_product(plan_id) {
-        return Ok(product_id.to_owned());
+        if dodo
+            .product_exists(product_id)
+            .await
+            .map_err(|error| provider_problem("plan product lookup", error))?
+        {
+            return Ok(product_id.to_owned());
+        }
+        tracing::warn!(
+            %plan_id,
+            %product_id,
+            "catalog plan product is unknown to the payment provider; creating a new one"
+        );
     }
     let entry = state
         .billing_catalog
@@ -292,20 +314,37 @@ async fn checkout(
         CheckoutClaim::Claimed => {}
     }
     let outcome = async {
-        let customer_id = ensure_customer(&state, dodo, &session, &user_id).await?;
         let return_url = state.settings.dodo_return_url.clone().unwrap_or_else(|| {
             format!("{}/console/settings/billing", state.settings.dashboard_url)
         });
-        let checkout_url = dodo
+        let idempotency_key = format!("argus-checkout-{}", target.checkout_key);
+        let customer_id = ensure_customer(&state, dodo, &session, &user_id).await?;
+        let checkout = dodo
             .create_checkout(
                 &customer_id,
                 &target.product_id,
                 &return_url,
-                target.metadata,
-                &format!("argus-checkout-{}", target.checkout_key),
+                target.metadata.clone(),
+                &idempotency_key,
             )
-            .await
-            .map_err(|error| provider_problem("checkout session", error))?;
+            .await;
+        let checkout_url = match checkout {
+            Ok(checkout_url) => checkout_url,
+            Err(error) if error.is_missing_customer() => {
+                let customer_id =
+                    forcibly_recreate_customer(&state, dodo, &session, &user_id).await?;
+                dodo.create_checkout(
+                    &customer_id,
+                    &target.product_id,
+                    &return_url,
+                    target.metadata.clone(),
+                    &idempotency_key,
+                )
+                .await
+                .map_err(|error| provider_problem("checkout session", error))?
+            }
+            Err(error) => return Err(provider_problem("checkout session", error)),
+        };
         Ok::<String, ApiProblem>(checkout_url)
     }
     .await;
@@ -350,10 +389,18 @@ async fn portal(
         state.settings.dodo_return_url.clone().unwrap_or_else(|| {
             format!("{}/console/settings/billing", state.settings.dashboard_url)
         });
-    let portal_url = dodo
-        .create_portal(&customer_id, &return_url)
-        .await
-        .map_err(|error| provider_problem("customer portal", error))?;
+    let portal = dodo.create_portal(&customer_id, &return_url).await;
+    let portal_url = match portal {
+        Ok(portal_url) => portal_url,
+        Err(error) if error.is_missing_customer() => {
+            let customer_id =
+                forcibly_recreate_customer(&state, &dodo, &session, &user_id).await?;
+            dodo.create_portal(&customer_id, &return_url)
+                .await
+                .map_err(|error| provider_problem("customer portal", error))?
+        }
+        Err(error) => return Err(provider_problem("customer portal", error)),
+    };
     Ok(AxumJson(PortalResponse { portal_url }))
 }
 
@@ -383,7 +430,18 @@ async fn ensure_credit_product_id(
         .await
         .map_err(database_problem)?
     {
-        return Ok(product_id);
+        if dodo
+            .product_exists(&product_id)
+            .await
+            .map_err(|error| provider_problem("credit product lookup", error))?
+        {
+            return Ok(product_id);
+        }
+        tracing::warn!(
+            %cents,
+            %product_id,
+            "stored credit product is unknown to the payment provider; creating a new one"
+        );
     }
     let product_id = dodo
         .create_credit_product(
@@ -448,10 +506,25 @@ async fn payment_methods(
             payment_methods: Vec::new(),
         }));
     };
-    let methods = dodo
-        .list_payment_methods(&customer_id)
-        .await
-        .map_err(|error| provider_problem("payment method lookup", error))?;
+    let methods = match dodo.list_payment_methods(&customer_id).await {
+        Ok(methods) => methods,
+        Err(error) if error.is_missing_customer() => {
+            tracing::warn!(
+                %user_id,
+                %customer_id,
+                "billing customer is unknown to the payment provider; clearing it"
+            );
+            state
+                .app_db
+                .clear_billing_customer(&user_id)
+                .await
+                .map_err(database_problem)?;
+            return Ok(AxumJson(PaymentMethodList {
+                payment_methods: Vec::new(),
+            }));
+        }
+        Err(error) => return Err(provider_problem("payment method lookup", error)),
+    };
     let payment_methods = methods
         .iter()
         .filter(|method| method.is_card())
@@ -510,10 +583,18 @@ async fn payment_method_setup(
             }
         }
     }
-    let portal_url = dodo
-        .create_portal(&customer_id, &return_url)
-        .await
-        .map_err(|error| provider_problem("customer portal", error))?;
+    let portal = dodo.create_portal(&customer_id, &return_url).await;
+    let portal_url = match portal {
+        Ok(portal_url) => portal_url,
+        Err(error) if error.is_missing_customer() => {
+            let customer_id =
+                forcibly_recreate_customer(&state, dodo, &session, &user_id).await?;
+            dodo.create_portal(&customer_id, &return_url)
+                .await
+                .map_err(|error| provider_problem("customer portal", error))?
+        }
+        Err(error) => return Err(provider_problem("customer portal", error)),
+    };
     Ok(AxumJson(PaymentMethodSetup {
         url: portal_url,
         mode: "portal",
@@ -719,10 +800,19 @@ async fn charge_auto_recharge(
             "no billing customer exists for this account".to_owned(),
         ));
     };
-    let methods = dodo
-        .list_payment_methods(&customer_id)
-        .await
-        .map_err(|error| AutoRechargeError::Transient(error.to_string()))?;
+    let methods = match dodo.list_payment_methods(&customer_id).await {
+        Ok(methods) => methods,
+        Err(error) if error.is_missing_customer() => {
+            tracing::warn!(
+                %user_id,
+                %customer_id,
+                "billing customer is unknown to the payment provider; clearing it"
+            );
+            let _ = state.app_db.clear_billing_customer(user_id).await;
+            return Err(AutoRechargeError::NoSavedCard);
+        }
+        Err(error) => return Err(AutoRechargeError::Transient(error.to_string())),
+    };
     let card = methods
         .iter()
         .filter(|method| method.is_card())
@@ -802,10 +892,25 @@ async fn invoices(
     else {
         return Ok(AxumJson(InvoiceList { invoices: Vec::new() }));
     };
-    let payments = dodo
-        .list_payments(&customer_id)
-        .await
-        .map_err(|error| provider_problem("payment history", error))?;
+    let payments = match dodo.list_payments(&customer_id).await {
+        Ok(payments) => payments,
+        Err(error) if error.is_missing_customer() => {
+            tracing::warn!(
+                %user_id,
+                %customer_id,
+                "billing customer is unknown to the payment provider; clearing it"
+            );
+            state
+                .app_db
+                .clear_billing_customer(&user_id)
+                .await
+                .map_err(database_problem)?;
+            return Ok(AxumJson(InvoiceList {
+                invoices: Vec::new(),
+            }));
+        }
+        Err(error) => return Err(provider_problem("payment history", error)),
+    };
     let invoices = payments
         .into_iter()
         .map(|payment| {
@@ -924,6 +1029,24 @@ async fn ensure_customer(
         .await
         .map_err(database_problem)?;
     Ok(customer_id)
+}
+
+async fn forcibly_recreate_customer(
+    state: &AppState,
+    dodo: &Arc<DodoClient>,
+    session: &CurrentSession<AppAuthSchema>,
+    user_id: &str,
+) -> Result<String, ApiProblem> {
+    tracing::warn!(
+        %user_id,
+        "billing customer is unknown to the payment provider; recreating it"
+    );
+    state
+        .app_db
+        .clear_billing_customer(user_id)
+        .await
+        .map_err(database_problem)?;
+    ensure_customer(state, dodo, session, user_id).await
 }
 
 async fn webhook(

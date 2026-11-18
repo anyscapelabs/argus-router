@@ -189,6 +189,11 @@ impl DodoError {
     pub fn status(&self) -> Option<StatusCode> {
         self.status
     }
+
+    pub fn is_missing_customer(&self) -> bool {
+        self.status == Some(StatusCode::NOT_FOUND)
+            && self.message.to_lowercase().contains("customer")
+    }
 }
 
 impl fmt::Display for DodoError {
@@ -377,6 +382,27 @@ impl DodoClient {
         .await
     }
 
+    pub async fn product_exists(&self, product_id: &str) -> Result<bool, DodoError> {
+        let response = self
+            .http
+            .get(format!("{}/products/{}", self.base_url, product_id))
+            .bearer_auth(&self.api_key)
+            .send()
+            .await
+            .map_err(DodoError::request)?;
+        let status = response.status();
+        if status.is_success() {
+            return Ok(true);
+        }
+        if status == StatusCode::NOT_FOUND {
+            return Ok(false);
+        }
+        Err(DodoError::response(
+            status,
+            response.text().await.unwrap_or_default(),
+        ))
+    }
+
     pub async fn invoice_pdf(&self, payment_id: &str) -> Result<Vec<u8>, DodoError> {
         let response = self
             .http
@@ -537,5 +563,35 @@ impl DodoClient {
             .payment_link
             .filter(|url| !url.is_empty())
             .ok_or_else(|| DodoError::invalid("Dodo Payments returned no payment link"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_customer_404_is_recognised() {
+        let error = DodoError::response(
+            StatusCode::NOT_FOUND,
+            r#"{"code":"NOT_FOUND","message":"Customer cus_123 not found"}"#.to_owned(),
+        );
+        assert!(error.is_missing_customer());
+    }
+
+    #[test]
+    fn other_404_is_not_a_missing_customer() {
+        let error = DodoError::response(
+            StatusCode::NOT_FOUND,
+            r#"{"code":"NOT_FOUND","message":"Product pdt_123 not found"}"#.to_owned(),
+        );
+        assert!(!error.is_missing_customer());
+    }
+
+    #[test]
+    fn customer_error_with_other_status_is_not_missing() {
+        let error =
+            DodoError::response(StatusCode::BAD_REQUEST, "Customer is invalid".to_owned());
+        assert!(!error.is_missing_customer());
     }
 }
