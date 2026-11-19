@@ -299,7 +299,39 @@ pub(super) async fn handle_socket(
                                     .into(),
                                 ))
                                 .await;
+                            // Fix C: close and re-open the upstream connection instead of
+                            // sleeping with the upstream socket dangling (zombie connection).
+                            let _ = upstream_sender.close().await;
                             tokio::time::sleep(Duration::from_secs(retry_secs.min(60))).await;
+                            // Reconnect upstream after the sleep.
+                            let new_upstream = match connect_async(&google_url).await {
+                                Ok((stream, _)) => stream,
+                                Err(err) => {
+                                    tracing::error!(%err, "failed to reconnect to Google Live after rate limit");
+                                    let _ = client_sender
+                                        .send(Message::Text(
+                                            serde_json::json!({
+                                                "error": {
+                                                    "code": "UPSTREAM_ERROR",
+                                                    "message": "An error has occurred. Try again later."
+                                                }
+                                            })
+                                            .to_string()
+                                            .into(),
+                                        ))
+                                        .await;
+                                    let _ = client_sender
+                                        .send(Message::Close(Some(axum::extract::ws::CloseFrame {
+                                            code: 1011,
+                                            reason: "upstream reconnect failed".into(),
+                                        })))
+                                        .await;
+                                    break;
+                                }
+                            };
+                            let (new_sender, new_receiver) = new_upstream.split();
+                            upstream_sender = new_sender;
+                            upstream_receiver = new_receiver;
                             continue;
                         }
 
@@ -317,6 +349,15 @@ pub(super) async fn handle_socket(
                                     .into(),
                                 ))
                                 .await;
+                            // Fix A: send a proper WebSocket close frame so the client
+                            // knows the session ended abnormally (code 1011 = internal error).
+                            let _ = client_sender
+                                .send(Message::Close(Some(axum::extract::ws::CloseFrame {
+                                    code: 1011,
+                                    reason: "upstream error".into(),
+                                })))
+                                .await;
+                            let _ = upstream_sender.close().await;
                             break;
                         }
 
@@ -369,6 +410,26 @@ pub(super) async fn handle_socket(
                     }
                     None => {
                         tracing::info!(%user_id, "Google Live upstream closed without a close frame");
+                        // Fix B: notify the client that upstream dropped the connection so the
+                        // UI can show an error instead of hanging silently.
+                        let _ = client_sender
+                            .send(Message::Text(
+                                serde_json::json!({
+                                    "error": {
+                                        "code": "UPSTREAM_DISCONNECTED",
+                                        "message": "The voice session was disconnected. Please try again."
+                                    }
+                                })
+                                .to_string()
+                                .into(),
+                            ))
+                            .await;
+                        let _ = client_sender
+                            .send(Message::Close(Some(axum::extract::ws::CloseFrame {
+                                code: 1001,
+                                reason: "upstream disconnected".into(),
+                            })))
+                            .await;
                         break;
                     }
                 }

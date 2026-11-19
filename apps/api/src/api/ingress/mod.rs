@@ -438,6 +438,264 @@ fn cost_usd(entry: &ModelCatalogEntry, input: i64, output: i64, cache_read: i64)
         / 1_000_000.0
 }
 
+// ─── LLM Gateway forwarding ───────────────────────────────────────────────────
+//
+// When LLM_GATEWAY_URL + LLM_GATEWAY_KEY are set the Rust gateway acts as a
+// pure auth/quota/billing layer: it validates the principal, checks quotas,
+// makes a billing reservation, then forwards the RAW request body to LiteLLM.
+// LiteLLM owns ALL LLM concerns: routing, provider selection, retries,
+// fallbacks, OpenAI-compat translation, OpenRouter API calls.
+//
+// Token counts for billing settlement come from the `x-litellm-response-cost`
+// and `x-litellm-*-tokens` headers that LiteLLM adds to every response.
+
+#[allow(clippy::too_many_arguments)]
+async fn forward_to_llm_gateway(
+    client: &reqwest::Client,
+    gw_url: &str,
+    gw_key: &str,
+    payload: Value,
+    state: AppState,
+    principal: Principal,
+    model: String,
+    entry: ModelCatalogEntry,
+    reservation: GenerationReservation,
+    start: Instant,
+) -> Response {
+    use axum::body::Body;
+    use axum::http::header;
+
+    let url = format!("{gw_url}/v1/chat/completions");
+    let streaming = payload
+        .get("stream")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    let req = client
+        .post(&url)
+        .bearer_auth(gw_key)
+        .header(header::CONTENT_TYPE, "application/json")
+        // Forward user/plan metadata so LiteLLM can log them
+        .header("x-argus-user-id", &principal.user_id)
+        .header("x-argus-plan", &principal.plan)
+        .json(&payload);
+
+    let upstream = match req.send().await {
+        Ok(r) => r,
+        Err(err) => {
+            tracing::error!(%err, "LLM gateway connection failed");
+            let item = Errx::new(ErrCode::Upstream, 502, "LLM gateway is unreachable");
+            let row = UsageRow {
+                key_id: Some(principal.key_id.clone()),
+                user_id: Some(principal.user_id.clone()),
+                plan_id: Some(principal.plan.clone()),
+                model: model.clone(),
+                provider: Some("llm-gateway".to_owned()),
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_read_tokens: 0,
+                cost_usd: 0.0,
+                status: 502,
+                latency_ms: Some(start.elapsed().as_millis() as i64),
+                error_code: Some("gateway_unreachable".to_owned()),
+            };
+            let _ = settle_generation_usage(&state.usage, &reservation.id, row).await;
+            return openai::error_response(item);
+        }
+    };
+
+    let gw_status = upstream.status();
+
+    // Extract billing info from LiteLLM response headers before we consume the body.
+    // LiteLLM sets these on every response:
+    //   x-litellm-response-cost        → total cost in USD (float string)
+    //   x-litellm-prompt-tokens        → input token count
+    //   x-litellm-completion-tokens    → output token count
+    // Extract billing header values immediately (before moving upstream body).
+    let gw_input_tokens: i64 = upstream
+        .headers()
+        .get("x-litellm-prompt-tokens")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    let gw_output_tokens: i64 = upstream
+        .headers()
+        .get("x-litellm-completion-tokens")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    let gw_cost: f64 = upstream
+        .headers()
+        .get("x-litellm-response-cost")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0.0);
+
+    if !gw_status.is_success() {
+        // Gateway returned an error — relay it, settle billing as 0 cost.
+        let body_bytes = upstream.bytes().await.unwrap_or_default();
+        let status_u16 = gw_status.as_u16();
+        let err_code = if status_u16 == 429 { "rate_limited" } else { "upstream_error" };
+        let row = UsageRow {
+            key_id: Some(principal.key_id.clone()),
+            user_id: Some(principal.user_id.clone()),
+            plan_id: Some(principal.plan.clone()),
+            model: model.clone(),
+            provider: Some("llm-gateway".to_owned()),
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_read_tokens: 0,
+            cost_usd: 0.0,
+            status: status_u16 as i32,
+            latency_ms: Some(start.elapsed().as_millis() as i64),
+            error_code: Some(err_code.to_owned()),
+        };
+        let _ = settle_generation_usage(&state.usage, &reservation.id, row).await;
+        // Forward the gateway error body as-is so the client gets a proper OpenAI error shape.
+        return (
+            axum::http::StatusCode::from_u16(status_u16).unwrap_or(axum::http::StatusCode::BAD_GATEWAY),
+            [(header::CONTENT_TYPE, "application/json")],
+            body_bytes,
+        )
+            .into_response();
+    }
+
+    // ── Success path: stream body bytes through to client ─────────────────────
+    // For streaming responses we pipe the SSE byte stream directly — no parsing.
+    // For non-streaming we buffer the full JSON and forward it.
+    // In both cases we settle billing after the response is complete, using
+    // the token counts from the LiteLLM response headers (already captured above).
+
+    let key_id = principal.key_id.clone();
+    let user_id = principal.user_id.clone();
+    let plan = principal.plan.clone();
+    let usage_rec = state.usage.clone();
+    let reservation_id = reservation.id.clone();
+    let held_micros = reservation.held_micros;
+    let entry_clone = entry.clone();
+
+    if streaming {
+        // Pipe SSE bytes directly to client, then settle billing.
+        let byte_stream = upstream.bytes_stream();
+        let (settle_tx, settle_rx) = tokio::sync::oneshot::channel::<()>();
+
+        // Spawn a task that waits for the stream to complete then settles.
+        tokio::spawn(async move {
+            // Wait for the stream to end (signalled by settle_tx being dropped).
+            let _ = settle_rx.await;
+            let input_tokens = gw_input_tokens;
+            let output_tokens = gw_output_tokens;
+            let cost = if gw_cost > 0.0 {
+                gw_cost
+            } else if held_micros > 0 {
+                held_micros as f64 / 1_000_000.0
+            } else {
+                cost_usd(&entry_clone, input_tokens, output_tokens, 0)
+            };
+            let row = UsageRow {
+                key_id: Some(key_id),
+                user_id: Some(user_id),
+                plan_id: Some(plan),
+                model,
+                provider: Some("llm-gateway".to_owned()),
+                input_tokens,
+                output_tokens,
+                cache_read_tokens: 0,
+                cost_usd: cost,
+                status: 200,
+                latency_ms: Some(start.elapsed().as_millis() as i64),
+                error_code: None,
+            };
+            if let Err(err) = settle_generation_usage(&usage_rec, &reservation_id, row).await {
+                tracing::error!(%err, reservation_id, "generation settlement failed (streaming gateway)");
+            }
+        });
+
+        // Wrap the byte stream so we can signal completion via settle_tx.
+        let wrapped = async_stream::stream! {
+            let mut inner = byte_stream;
+            while let Some(chunk) = inner.next().await {
+                yield chunk;
+            }
+            // Dropping settle_tx signals the billing task.
+            drop(settle_tx);
+        };
+
+        (
+            axum::http::StatusCode::OK,
+            [
+                (header::CONTENT_TYPE, "text/event-stream"),
+                (header::CACHE_CONTROL, "no-cache"),
+                (axum::http::header::HeaderName::from_static("x-accel-buffering"), "no"),
+            ],
+            Body::from_stream(wrapped),
+        )
+            .into_response()
+    } else {
+        // Non-streaming: buffer full response body, settle billing, forward.
+        let body_bytes = match upstream.bytes().await {
+            Ok(b) => b,
+            Err(err) => {
+                tracing::error!(%err, "failed to read LLM gateway response body");
+                let row = UsageRow {
+                    key_id: Some(key_id),
+                    user_id: Some(user_id),
+                    plan_id: Some(plan),
+                    model,
+                    provider: Some("llm-gateway".to_owned()),
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    cache_read_tokens: 0,
+                    cost_usd: 0.0,
+                    status: 502,
+                    latency_ms: Some(start.elapsed().as_millis() as i64),
+                    error_code: Some("gateway_body_read_failed".to_owned()),
+                };
+                let _ = settle_generation_usage(&usage_rec, &reservation_id, row).await;
+                return openai::error_response(Errx::new(
+                    ErrCode::Upstream,
+                    502,
+                    "failed to read LLM gateway response",
+                ));
+            }
+        };
+
+        let input_tokens = gw_input_tokens;
+        let output_tokens = gw_output_tokens;
+        let cost = if gw_cost > 0.0 {
+            gw_cost
+        } else if held_micros > 0 {
+            held_micros as f64 / 1_000_000.0
+        } else {
+            cost_usd(&entry_clone, input_tokens, output_tokens, 0)
+        };
+        let row = UsageRow {
+            key_id: Some(key_id),
+            user_id: Some(user_id),
+            plan_id: Some(plan),
+            model,
+            provider: Some("llm-gateway".to_owned()),
+            input_tokens,
+            output_tokens,
+            cache_read_tokens: 0,
+            cost_usd: cost,
+            status: 200,
+            latency_ms: Some(start.elapsed().as_millis() as i64),
+            error_code: None,
+        };
+        if let Err(err) = settle_generation_usage(&usage_rec, &reservation_id, row).await {
+            tracing::error!(%err, reservation_id, "generation settlement failed (non-streaming gateway)");
+        }
+
+        (
+            axum::http::StatusCode::OK,
+            [(header::CONTENT_TYPE, "application/json")],
+            body_bytes,
+        )
+            .into_response()
+    }
+}
+
 pub async fn openai_chat_completions(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -445,8 +703,9 @@ pub async fn openai_chat_completions(
 ) -> Response {
     let start = Instant::now();
 
+    // ── 1. Auth ────────────────────────────────────────────────────────────
     let principal = match authenticate(&state, &headers).await {
-        Ok(principal) => principal,
+        Ok(p) => p,
         Err(item) => {
             state.usage.record(UsageRow {
                 key_id: None,
@@ -466,83 +725,96 @@ pub async fn openai_chat_completions(
         }
     };
 
+    // ── 2. Parse model from raw JSON (no IR) ───────────────────────────────
     let payload: Value = match serde_json::from_slice(&body) {
-        Ok(payload) => payload,
-        Err(error) => {
-            let item = Errx::new(
+        Ok(v) => v,
+        Err(e) => {
+            return openai::error_response(Errx::new(
                 ErrCode::InvalidRequest,
                 400,
-                format!("the request body is not valid JSON: {error}"),
-            );
-            return openai::error_response(item);
+                format!("the request body is not valid JSON: {e}"),
+            ));
         }
     };
-    let model_for_log = payload_model(&payload);
+    let model_id = payload_model(&payload);
 
-    let credits_paid = match enforce_plan_quotas(&state, &principal.user_id, &principal.plan).await
-    {
-        Ok(credits_paid) => credits_paid,
-        Err(item) => {
-            state.usage.record(UsageRow {
-                key_id: Some(principal.key_id.clone()),
-                user_id: Some(principal.user_id.clone()),
-                plan_id: Some(principal.plan.clone()),
-                model: model_for_log.clone(),
-                provider: None,
-                input_tokens: 0,
-                output_tokens: 0,
-                cache_read_tokens: 0,
-                cost_usd: 0.0,
-                status: item.status as i32,
-                latency_ms: Some(start.elapsed().as_millis() as i64),
-                error_code: Some(item.code.as_str().to_owned()),
-            });
-            return openai::error_response(item);
-        }
-    };
+    // ── 3. Quota check ─────────────────────────────────────────────────────
+    let credits_paid =
+        match enforce_plan_quotas(&state, &principal.user_id, &principal.plan).await {
+            Ok(cp) => cp,
+            Err(item) => {
+                state.usage.record(UsageRow {
+                    key_id: Some(principal.key_id.clone()),
+                    user_id: Some(principal.user_id.clone()),
+                    plan_id: Some(principal.plan.clone()),
+                    model: model_id.clone(),
+                    provider: None,
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    cache_read_tokens: 0,
+                    cost_usd: 0.0,
+                    status: item.status as i32,
+                    latency_ms: Some(start.elapsed().as_millis() as i64),
+                    error_code: Some(item.code.as_str().to_owned()),
+                });
+                return openai::error_response(item);
+            }
+        };
 
-    let (model, mut chat) = match openai::parse(&payload) {
-        Ok(found) => found,
-        Err(item) => {
-            state.usage.record(UsageRow {
-                key_id: Some(principal.key_id.clone()),
-                user_id: Some(principal.user_id.clone()),
-                plan_id: Some(principal.plan.clone()),
-                model: model_for_log,
-                provider: None,
-                input_tokens: 0,
-                output_tokens: 0,
-                cache_read_tokens: 0,
-                cost_usd: 0.0,
-                status: item.status as i32,
-                latency_ms: Some(start.elapsed().as_millis() as i64),
-                error_code: Some(item.code.as_str().to_owned()),
-            });
-            return openai::error_response(item);
+    // ── 4. Resolve catalog entry (allowlist + billing estimates only) ───────
+    // We still look up the catalog entry to: (a) check entitlement, (b) get
+    // pricing for the billing reservation, (c) clamp max_tokens.
+    // We do NOT parse the full chat IR — that is the LLM gateway's job.
+    let resolved = {
+        // Parse only enough to run auto-routing signals when model == argus/auto.
+        // For non-auto models this is a simple catalog lookup.
+        let (_, chat_for_resolve) = match openai::parse(&payload) {
+            Ok(found) => found,
+            Err(item) => {
+                state.usage.record(UsageRow {
+                    key_id: Some(principal.key_id.clone()),
+                    user_id: Some(principal.user_id.clone()),
+                    plan_id: Some(principal.plan.clone()),
+                    model: model_id.clone(),
+                    provider: None,
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    cache_read_tokens: 0,
+                    cost_usd: 0.0,
+                    status: item.status as i32,
+                    latency_ms: Some(start.elapsed().as_millis() as i64),
+                    error_code: Some(item.code.as_str().to_owned()),
+                });
+                return openai::error_response(item);
+            }
+        };
+        match service::resolve_request(
+            &state.catalog,
+            &model_id,
+            &chat_for_resolve,
+            &principal.allowlist,
+        ) {
+            Ok(r) => r,
+            Err(item) => {
+                state.usage.record(UsageRow {
+                    key_id: Some(principal.key_id.clone()),
+                    user_id: Some(principal.user_id.clone()),
+                    plan_id: Some(principal.plan.clone()),
+                    model: model_id.clone(),
+                    provider: None,
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    cache_read_tokens: 0,
+                    cost_usd: 0.0,
+                    status: item.status as i32,
+                    latency_ms: Some(start.elapsed().as_millis() as i64),
+                    error_code: Some(item.code.as_str().to_owned()),
+                });
+                return openai::error_response(item);
+            }
         }
     };
-
-    let resolved = match service::resolve_request(&state.catalog, &model, &chat, &principal.allowlist)
-    {
-        Ok(resolved) => resolved,
-        Err(item) => {
-            state.usage.record(UsageRow {
-                key_id: Some(principal.key_id.clone()),
-                user_id: Some(principal.user_id.clone()),
-                plan_id: Some(principal.plan.clone()),
-                model: model.clone(),
-                provider: None,
-                input_tokens: 0,
-                output_tokens: 0,
-                cache_read_tokens: 0,
-                cost_usd: 0.0,
-                status: item.status as i32,
-                latency_ms: Some(start.elapsed().as_millis() as i64),
-                error_code: Some(item.code.as_str().to_owned()),
-            });
-            return openai::error_response(item);
-        }
-    };
+    // The resolved model id is now concrete (auto → actual model).
     let model = resolved.entry.id().to_owned();
 
     if let Err(item) = service::guard_entitlement(&resolved, &principal.allowlist) {
@@ -551,7 +823,7 @@ pub async fn openai_chat_completions(
             user_id: Some(principal.user_id.clone()),
             plan_id: Some(principal.plan.clone()),
             model: model.clone(),
-            provider: Some(resolved.provider.id.to_owned()),
+            provider: None,
             input_tokens: 0,
             output_tokens: 0,
             cache_read_tokens: 0,
@@ -562,25 +834,40 @@ pub async fn openai_chat_completions(
         });
         return openai::error_response(item);
     }
-    openai::clamp_params(&mut chat, resolved.entry.max_output);
+
+    // ── 5. Billing reservation ─────────────────────────────────────────────
+    // Build a minimal chat stub just to get a prompt-token estimate for the
+    // reservation; the full IR parsing happens inside the LLM gateway.
+    let mut chat_for_billing = match openai::parse(&payload) {
+        Ok((_, c)) => c,
+        Err(_) => {
+            // Unreachable: we already parsed successfully above. Fallback.
+            return openai::error_response(Errx::new(
+                ErrCode::InvalidRequest,
+                400,
+                "the request body is not valid JSON",
+            ));
+        }
+    };
+    openai::clamp_params(&mut chat_for_billing, resolved.entry.max_output);
     let reservation = match reserve_generation(
         &state,
         &principal.user_id,
         &principal.plan,
         credits_paid,
-        &mut chat,
+        &mut chat_for_billing,
         &resolved.entry,
     )
     .await
     {
-        Ok(reservation) => reservation,
+        Ok(r) => r,
         Err(item) => {
             state.usage.record(UsageRow {
                 key_id: Some(principal.key_id.clone()),
                 user_id: Some(principal.user_id.clone()),
                 plan_id: Some(principal.plan.clone()),
                 model: model.clone(),
-                provider: Some(resolved.provider.id.to_owned()),
+                provider: None,
                 input_tokens: 0,
                 output_tokens: 0,
                 cache_read_tokens: 0,
@@ -593,12 +880,6 @@ pub async fn openai_chat_completions(
         }
     };
 
-    let streaming = payload
-        .get("stream")
-        .and_then(|found| found.as_bool())
-        .unwrap_or(false);
-    let turn_state = openai::StreamState::new(model.clone());
-    let client = shared_client();
     if let Err(error) = state
         .app_db
         .mark_generation_dispatched(&reservation.id)
@@ -610,7 +891,7 @@ pub async fn openai_chat_completions(
             user_id: Some(principal.user_id.clone()),
             plan_id: Some(principal.plan.clone()),
             model: model.clone(),
-            provider: Some(resolved.provider.id.to_owned()),
+            provider: Some("llm-gateway".to_owned()),
             input_tokens: 0,
             output_tokens: 0,
             cache_read_tokens: 0,
@@ -626,6 +907,51 @@ pub async fn openai_chat_completions(
             "generation dispatch failed",
         ));
     }
+
+    // ── 6. If LLM gateway is configured, forward raw request ────────────────
+    // The gateway owns ALL LLM concerns: routing, provider compat, retries,
+    // fallbacks, OpenRouter API calls. Rust only validates + bills.
+    if let (Some(gw_url), Some(gw_key)) = (
+        state.settings.llm_gateway_url.clone(),
+        state.settings.llm_gateway_key.clone(),
+    ) {
+        // Rewrite the model field in the payload to the resolved concrete model
+        // so LiteLLM receives the actual model name, not "argus/auto".
+        let mut fwd_payload = payload.clone();
+        fwd_payload["model"] = serde_json::Value::String(model.clone());
+
+        return forward_to_llm_gateway(
+            &shared_client(),
+            &gw_url,
+            &gw_key,
+            fwd_payload,
+            state,
+            principal,
+            model,
+            resolved.entry,
+            reservation,
+            start,
+        )
+        .await;
+    }
+
+    // ── 7. Fallback: direct OpenRouter path (no LLM gateway configured) ─────
+    // This path is kept as a fallback so the gateway works standalone while
+    // the LLM gateway is being deployed. It is intentionally identical to the
+    // previous implementation so existing behaviour is preserved.
+    let streaming = payload
+        .get("stream")
+        .and_then(|found| found.as_bool())
+        .unwrap_or(false);
+    let turn_state = openai::StreamState::new(model.clone());
+    let client = shared_client();
+    // Re-parse fully for the direct path.
+    let (_, chat) = match openai::parse(&payload) {
+        Ok(found) => found,
+        Err(item) => return openai::error_response(item),
+    };
+    let mut chat = chat;
+    openai::clamp_params(&mut chat, resolved.entry.max_output);
 
     if streaming {
         let (tx, rx) = tokio::sync::mpsc::channel::<Result<Event, Errx>>(64);

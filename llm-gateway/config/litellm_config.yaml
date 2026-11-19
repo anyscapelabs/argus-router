@@ -1,0 +1,236 @@
+# Argus LLM Gateway — LiteLLM Proxy Configuration
+# All models route through OpenRouter (single API key)
+# This service sits behind the Rust gateway and only accepts internal service key calls
+#
+# Model IDs match exactly what's in apps/api/catalog/models.json (upstream_model field).
+# OpenRouter accepts the model slug directly — no extra prefix needed beyond "openrouter/".
+
+model_list:
+  # ─── argus/auto pool ───────────────────────────────────────────────────────
+  # The Rust gateway's auto router resolves which catalog model to use, then
+  # forwards that resolved model name here. The LLM Gateway receives the FINAL
+  # model id (e.g. "openai/gpt-6-luna"), not "argus/auto".
+  #
+  # However, if you ever call the LLM gateway directly with "argus/auto",
+  # LiteLLM will round-robin across the pool below as a fallback mechanism.
+
+  - model_name: argus/auto
+    litellm_params:
+      model: openrouter/openai/gpt-6-luna
+      api_key: os.environ/OPENROUTER_API_KEY
+      api_base: https://openrouter.ai/api/v1
+    model_info:
+      id: gpt-6-luna-auto
+      max_tokens: 16384
+
+  - model_name: argus/auto
+    litellm_params:
+      model: openrouter/deepseek/deepseek-v4.1-flash-1017
+      api_key: os.environ/OPENROUTER_API_KEY
+      api_base: https://openrouter.ai/api/v1
+    model_info:
+      id: deepseek-flash-auto
+      max_tokens: 65536
+
+  - model_name: argus/auto
+    litellm_params:
+      model: openrouter/minimax/minimax-m3.1-flash
+      api_key: os.environ/OPENROUTER_API_KEY
+      api_base: https://openrouter.ai/api/v1
+    model_info:
+      id: minimax-flash-auto
+      max_tokens: 32768
+
+  - model_name: argus/auto
+    litellm_params:
+      model: openrouter/qwen/qwen3.8-flash
+      api_key: os.environ/OPENROUTER_API_KEY
+      api_base: https://openrouter.ai/api/v1
+    model_info:
+      id: qwen-flash-auto
+      max_tokens: 32768
+
+  # ─── Free / Lite tier models (from catalog + allowlist) ────────────────────
+  - model_name: openai/gpt-6-luna
+    litellm_params:
+      model: openrouter/openai/gpt-6-luna
+      api_key: os.environ/OPENROUTER_API_KEY
+      api_base: https://openrouter.ai/api/v1
+    model_info:
+      max_tokens: 16384
+
+  - model_name: deepseek/deepseek-v4.1-flash-1017
+    litellm_params:
+      model: openrouter/deepseek/deepseek-v4.1-flash-1017
+      api_key: os.environ/OPENROUTER_API_KEY
+      api_base: https://openrouter.ai/api/v1
+    model_info:
+      max_tokens: 65536
+
+  - model_name: minimax/minimax-m3.1-flash
+    litellm_params:
+      model: openrouter/minimax/minimax-m3.1-flash
+      api_key: os.environ/OPENROUTER_API_KEY
+      api_base: https://openrouter.ai/api/v1
+    model_info:
+      max_tokens: 32768
+
+  - model_name: qwen/qwen3.8-flash
+    litellm_params:
+      model: openrouter/qwen/qwen3.8-flash
+      api_key: os.environ/OPENROUTER_API_KEY
+      api_base: https://openrouter.ai/api/v1
+    model_info:
+      max_tokens: 32768
+
+  - model_name: z-ai/glm-5.3-flash
+    litellm_params:
+      model: openrouter/z-ai/glm-5.3-flash
+      api_key: os.environ/OPENROUTER_API_KEY
+      api_base: https://openrouter.ai/api/v1
+    model_info:
+      max_tokens: 32768
+
+  - model_name: anthropic/claude-haiku-5.5
+    litellm_params:
+      model: openrouter/anthropic/claude-haiku-5.5
+      api_key: os.environ/OPENROUTER_API_KEY
+      api_base: https://openrouter.ai/api/v1
+    model_info:
+      max_tokens: 64000
+
+  # ─── Standard tier ─────────────────────────────────────────────────────────
+  - model_name: deepseek/deepseek-v4-pro
+    litellm_params:
+      model: openrouter/deepseek/deepseek-v4-pro
+      api_key: os.environ/OPENROUTER_API_KEY
+      api_base: https://openrouter.ai/api/v1
+    model_info:
+      max_tokens: 65536
+
+  - model_name: google/gemini-3.8-flash
+    litellm_params:
+      model: openrouter/google/gemini-3.8-flash
+      api_key: os.environ/OPENROUTER_API_KEY
+      api_base: https://openrouter.ai/api/v1
+    model_info:
+      max_tokens: 65536
+
+  - model_name: minimax/minimax-m3
+    litellm_params:
+      model: openrouter/minimax/minimax-m3
+      api_key: os.environ/OPENROUTER_API_KEY
+      api_base: https://openrouter.ai/api/v1
+    model_info:
+      max_tokens: 32768
+
+  - model_name: z-ai/glm-5.3
+    litellm_params:
+      model: openrouter/z-ai/glm-5.3
+      api_key: os.environ/OPENROUTER_API_KEY
+      api_base: https://openrouter.ai/api/v1
+    model_info:
+      max_tokens: 32768
+
+  # ─── Premium tier ──────────────────────────────────────────────────────────
+  - model_name: anthropic/claude-sonnet-5.5
+    litellm_params:
+      model: openrouter/anthropic/claude-sonnet-5.5
+      api_key: os.environ/OPENROUTER_API_KEY
+      api_base: https://openrouter.ai/api/v1
+    model_info:
+      max_tokens: 64000
+
+  - model_name: google/gemini-4-carbon
+    litellm_params:
+      model: openrouter/google/gemini-4-carbon
+      api_key: os.environ/OPENROUTER_API_KEY
+      api_base: https://openrouter.ai/api/v1
+    model_info:
+      max_tokens: 65536
+
+  - model_name: moonshotai/kimi-k3.1-pro
+    litellm_params:
+      model: openrouter/moonshotai/kimi-k3.1-pro
+      api_key: os.environ/OPENROUTER_API_KEY
+      api_base: https://openrouter.ai/api/v1
+    model_info:
+      max_tokens: 32768
+
+  - model_name: openai/gpt-6.1-sol
+    litellm_params:
+      model: openrouter/openai/gpt-6.1-sol
+      api_key: os.environ/OPENROUTER_API_KEY
+      api_base: https://openrouter.ai/api/v1
+    model_info:
+      max_tokens: 32768
+
+  - model_name: qwen/qwen3.8-max
+    litellm_params:
+      model: openrouter/qwen/qwen3.8-max
+      api_key: os.environ/OPENROUTER_API_KEY
+      api_base: https://openrouter.ai/api/v1
+    model_info:
+      max_tokens: 32768
+
+  - model_name: x-ai/grok-4.7
+    litellm_params:
+      model: openrouter/x-ai/grok-4.7
+      api_key: os.environ/OPENROUTER_API_KEY
+      api_base: https://openrouter.ai/api/v1
+    model_info:
+      max_tokens: 32768
+
+  # ─── Ultra tier ────────────────────────────────────────────────────────────
+  - model_name: anthropic/claude-fable-5.2
+    litellm_params:
+      model: openrouter/anthropic/claude-fable-5.2
+      api_key: os.environ/OPENROUTER_API_KEY
+      api_base: https://openrouter.ai/api/v1
+    model_info:
+      max_tokens: 64000
+
+  - model_name: anthropic/claude-opus-5.5
+    litellm_params:
+      model: openrouter/anthropic/claude-opus-5.5
+      api_key: os.environ/OPENROUTER_API_KEY
+      api_base: https://openrouter.ai/api/v1
+    model_info:
+      max_tokens: 64000
+
+router_settings:
+  routing_strategy: least-busy
+  num_retries: 3
+  retry_after: 2
+  allowed_fails: 2
+  cooldown_time: 60
+  # If the resolved model fails, fall back through the lite tier
+  fallbacks:
+    - openai/gpt-6-luna:
+        - deepseek/deepseek-v4.1-flash-1017
+        - qwen/qwen3.8-flash
+        - z-ai/glm-5.3-flash
+    - deepseek/deepseek-v4.1-flash-1017:
+        - openai/gpt-6-luna
+        - qwen/qwen3.8-flash
+    - argus/auto:
+        - openai/gpt-6-luna
+        - deepseek/deepseek-v4.1-flash-1017
+        - qwen/qwen3.8-flash
+
+litellm_settings:
+  drop_params: true
+  request_timeout: 120
+  streaming_timeout: 120
+  set_verbose: false
+  json_logs: true
+  # Emit token counts + cost on every response so the Rust gateway can settle
+  # billing without parsing the response body.
+  add_response_headers: true
+
+general_settings:
+  master_key: os.environ/LITELLM_INTERNAL_KEY
+  disable_spend_logs: true
+  disable_error_logs: false
+  store_model_in_db: false
+  allow_requests_on_db_fail: true

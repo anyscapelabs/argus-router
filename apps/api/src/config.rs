@@ -26,6 +26,12 @@ pub struct Settings {
     admin_user_ids: HashSet<String>,
     pub db_max_connections: u32,
     admin_emails: HashSet<String>,
+    /// URL of the internal LLM gateway (e.g. http://localhost:4000).
+    /// When set, all chat completion requests are forwarded here instead of
+    /// going directly to OpenRouter.
+    pub llm_gateway_url: Option<String>,
+    /// Internal bearer key expected by the LLM gateway (LITELLM_INTERNAL_KEY).
+    pub llm_gateway_key: Option<String>,
 }
 
 impl Settings {
@@ -106,6 +112,13 @@ impl Settings {
             admin_user_ids: parse_set("ADMIN_USER_IDS"),
             admin_emails: parse_set("ADMIN_EMAILS"),
             db_max_connections,
+            llm_gateway_url: env::var("LLM_GATEWAY_URL")
+                .ok()
+                .map(|v| v.trim_end_matches('/').to_owned())
+                .filter(|v| !v.is_empty()),
+            llm_gateway_key: env::var("LLM_GATEWAY_KEY")
+                .ok()
+                .filter(|v| !v.is_empty()),
         }
     }
 
