@@ -151,14 +151,6 @@ fn router(auth: Arc<BetterAuth<AppAuthSchema>>) -> Router<AppState> {
             axum::routing::post(gateway::ingress::search_endpoint),
         )
         .route(
-            "/v1beta/models/{model_action}",
-            axum::routing::post(gateway::ingress::gemini_models_action),
-        )
-        .route(
-            "/v1beta/models",
-            axum::routing::get(gateway::ingress::gemini_models),
-        )
-        .route(
             "/v1/live",
             axum::routing::get(gateway::ingress::live::live_websocket_handler),
         )

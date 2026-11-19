@@ -15,7 +15,7 @@ $EDITOR .env   # set OPENROUTER_API_KEY and LITELLM_INTERNAL_KEY
 bash scripts/start.sh
 ```
 
-The gateway will be available at **http://localhost:4000** (dev) or on the internal Docker network `argus-internal` (prod).
+Locally the gateway is available at **http://localhost:4000**. In production it runs on a dedicated EC2 instance reachable only from the API instance over the private VPC network.
 
 ---
 

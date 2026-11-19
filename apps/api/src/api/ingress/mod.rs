@@ -1,4 +1,3 @@
-pub mod gemini;
 pub mod live;
 pub mod openai;
 
@@ -7,9 +6,7 @@ use better_auth::plugins::api_key::VerifyApiKey;
 
 use std::time::{Duration, Instant};
 
-use crate::proxy::ErrCode;
-use crate::proxy::Errx;
-use crate::proxy::ir::{Chat, Event};
+use crate::error::{ErrCode, Errx};
 use crate::services::app_db::{GenerationReservation, GenerationReservationOutcome, QuotaCheck};
 use crate::services::catalog::ModelCatalogEntry;
 use crate::services::usage::UsageRow;
@@ -139,13 +136,7 @@ pub(crate) async fn enforce_plan_quotas(
         .await
         .map_err(|_| db_error("the token usage lookup"))?;
     if quota.monthly_tokens > 0 && monthly >= quota.monthly_tokens {
-        return Err(limit_error(
-            state,
-            LimitWindow::Monthly,
-            quota.monthly_tokens,
-            monthly,
-        )
-        .await);
+        return Err(limit_error(state, LimitWindow::Monthly, quota.monthly_tokens, monthly).await);
     }
     let weekly_exceeded = quota.weekly_tokens > 0 && weekly >= quota.weekly_tokens;
     if daily_exceeded || weekly_exceeded {
@@ -156,13 +147,9 @@ pub(crate) async fn enforce_plan_quotas(
             .map_err(|_| db_error("the credit balance lookup"))?;
         if balance <= 0 {
             if weekly_exceeded && !daily_exceeded {
-                return Err(limit_error(
-                    state,
-                    LimitWindow::Weekly,
-                    quota.weekly_tokens,
-                    weekly,
-                )
-                .await);
+                return Err(
+                    limit_error(state, LimitWindow::Weekly, quota.weekly_tokens, weekly).await,
+                );
             }
             return Err(limit_error(
                 state,
@@ -223,8 +210,12 @@ async fn limit_error(state: &AppState, window: LimitWindow, quota: i64, used: i6
             );
         }
     };
-    Errx::new(window.code(), 429, limit_message(window, quota, used, reset))
-        .with_retry_after(reset_seconds_left(reset))
+    Errx::new(
+        window.code(),
+        429,
+        limit_message(window, quota, used, reset),
+    )
+    .with_retry_after(reset_seconds_left(reset))
 }
 
 fn window_label(window: LimitWindow) -> &'static str {
@@ -250,10 +241,7 @@ fn limit_message(
 
 fn reset_seconds_left(reset: chrono::DateTime<chrono::Utc>) -> u64 {
     let now = chrono::Utc::now();
-    reset
-        .signed_duration_since(now)
-        .num_seconds()
-        .max(0) as u64
+    reset.signed_duration_since(now).num_seconds().max(0) as u64
 }
 
 fn humanize_duration(total_seconds: u64) -> String {
@@ -269,15 +257,20 @@ fn humanize_duration(total_seconds: u64) -> String {
     }
 }
 
-async fn reserve_generation(
+async fn reserve_gateway_generation(
     state: &AppState,
     user_id: &str,
     plan: &str,
     force_credits: bool,
-    chat: &mut Chat,
+    payload: &Value,
+    body_len: usize,
     entry: &ModelCatalogEntry,
 ) -> Result<GenerationReservation, Errx> {
-    let prompt_tokens = prompt_token_bound(chat, entry.context);
+    // This bound is intentionally format-agnostic: Rust does not parse chat
+    // messages once the LLM gateway owns protocol compatibility.
+    let prompt_tokens = i64::try_from(body_len.div_ceil(3))
+        .unwrap_or(i64::MAX)
+        .max(1);
     let context_room = entry.context.saturating_sub(prompt_tokens);
     if context_room <= 0 {
         return Err(Errx::new(
@@ -286,10 +279,11 @@ async fn reserve_generation(
             "the request is too large for the model context window",
         ));
     }
-    let desired_output = chat
-        .params
-        .max_tokens
+    let desired_output = ["max_completion_tokens", "max_tokens"]
+        .iter()
+        .find_map(|name| payload.get(name).and_then(Value::as_u64))
         .unwrap_or(entry.max_output.max(1) as u64)
+        .min(entry.max_output.max(1) as u64)
         .min(context_room as u64)
         .max(1);
     let input_price = entry.pricing.input.parse::<f64>().unwrap_or(0.0);
@@ -309,10 +303,7 @@ async fn reserve_generation(
         .await
         .map_err(|_| Errx::new(ErrCode::Upstream, 500, "generation reservation failed"))?;
     match outcome {
-        GenerationReservationOutcome::Reserved(reservation) => {
-            chat.params.max_tokens = Some(reservation.max_output_tokens);
-            Ok(reservation)
-        }
+        GenerationReservationOutcome::Reserved(reservation) => Ok(reservation),
         GenerationReservationOutcome::MonthlyExhausted => {
             Err(limit_error(state, LimitWindow::Monthly, 0, 0).await)
         }
@@ -358,10 +349,6 @@ async fn reserve_credit_operation(
     Ok(reservation)
 }
 
-fn prompt_token_bound(chat: &Chat, context: i64) -> i64 {
-    chat.prompt_token_bound().min(context.max(1))
-}
-
 async fn settle_generation_usage(
     usage: &crate::services::usage::UsageRecorder,
     reservation_id: &str,
@@ -383,29 +370,21 @@ async fn settle_generation_usage(
 fn shared_client() -> reqwest::Client {
     static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
     CLIENT
-        .get_or_init(crate::proxy::adapters::build_client)
+        .get_or_init(|| {
+            reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .connect_timeout(Duration::from_secs(10))
+                .build()
+                .expect("static client configuration")
+        })
         .clone()
 }
 
-pub(crate) fn new_id(prefix: &str) -> String {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|since| since.as_nanos())
-        .unwrap_or(0);
-    format!("{}-{:x}", prefix, nanos)
-}
-
-use std::pin::Pin;
-
-use axum::extract::{Path, State};
+use axum::extract::State;
 use axum::http::StatusCode;
-use axum::response::sse::{Event as SseFrame, KeepAlive, Sse};
 use axum::response::{IntoResponse, Json, Response};
-use futures_util::{Stream, StreamExt};
+use futures_util::StreamExt;
 use serde_json::Value;
-
-use crate::proxy::adapters::EventStream;
-use crate::proxy::service;
 
 fn payload_model(payload: &Value) -> String {
     payload
@@ -445,16 +424,59 @@ fn cost_usd(entry: &ModelCatalogEntry, input: i64, output: i64, cache_read: i64)
 // makes a billing reservation, then forwards the RAW request body to LiteLLM.
 // LiteLLM owns ALL LLM concerns: routing, provider selection, retries,
 // fallbacks, OpenAI-compat translation, OpenRouter API calls.
-//
-// Token counts for billing settlement come from the `x-litellm-response-cost`
-// and `x-litellm-*-tokens` headers that LiteLLM adds to every response.
+
+#[derive(Clone, Copy, Debug, Default)]
+struct UsageSnapshot {
+    input_tokens: i64,
+    output_tokens: i64,
+    cache_read_tokens: i64,
+    cost_usd: f64,
+}
+
+fn usage_from_response(value: &Value) -> UsageSnapshot {
+    let Some(usage) = value.get("usage").filter(|found| found.is_object()) else {
+        return UsageSnapshot::default();
+    };
+    let Some(input_tokens) = usage.get("prompt_tokens").and_then(Value::as_i64) else {
+        return UsageSnapshot::default();
+    };
+    UsageSnapshot {
+        input_tokens,
+        output_tokens: usage
+            .get("completion_tokens")
+            .and_then(Value::as_i64)
+            .unwrap_or(0),
+        cache_read_tokens: usage
+            .pointer("/prompt_tokens_details/cached_tokens")
+            .and_then(Value::as_i64)
+            .or_else(|| usage.get("cached_tokens").and_then(Value::as_i64))
+            .unwrap_or(0),
+        cost_usd: usage
+            .get("cost")
+            .and_then(Value::as_f64)
+            .or_else(|| usage.get("response_cost").and_then(Value::as_f64))
+            .unwrap_or(0.0),
+    }
+}
+
+fn usage_from_sse_line(line: &[u8]) -> Option<UsageSnapshot> {
+    let text = std::str::from_utf8(line).ok()?;
+    let data = text.trim().strip_prefix("data:")?.trim();
+    if data == "[DONE]" {
+        return None;
+    }
+    let value: Value = serde_json::from_str(data).ok()?;
+    let found = usage_from_response(&value);
+    (found.input_tokens > 0 || found.output_tokens > 0).then_some(found)
+}
 
 #[allow(clippy::too_many_arguments)]
 async fn forward_to_llm_gateway(
     client: &reqwest::Client,
     gw_url: &str,
     gw_key: &str,
-    payload: Value,
+    body: axum::body::Bytes,
+    streaming: bool,
     state: AppState,
     principal: Principal,
     model: String,
@@ -466,11 +488,6 @@ async fn forward_to_llm_gateway(
     use axum::http::header;
 
     let url = format!("{gw_url}/v1/chat/completions");
-    let streaming = payload
-        .get("stream")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-
     let req = client
         .post(&url)
         .bearer_auth(gw_key)
@@ -478,7 +495,7 @@ async fn forward_to_llm_gateway(
         // Forward user/plan metadata so LiteLLM can log them
         .header("x-argus-user-id", &principal.user_id)
         .header("x-argus-plan", &principal.plan)
-        .json(&payload);
+        .body(body);
 
     let upstream = match req.send().await {
         Ok(r) => r,
@@ -506,24 +523,8 @@ async fn forward_to_llm_gateway(
 
     let gw_status = upstream.status();
 
-    // Extract billing info from LiteLLM response headers before we consume the body.
-    // LiteLLM sets these on every response:
-    //   x-litellm-response-cost        → total cost in USD (float string)
-    //   x-litellm-prompt-tokens        → input token count
-    //   x-litellm-completion-tokens    → output token count
-    // Extract billing header values immediately (before moving upstream body).
-    let gw_input_tokens: i64 = upstream
-        .headers()
-        .get("x-litellm-prompt-tokens")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(0);
-    let gw_output_tokens: i64 = upstream
-        .headers()
-        .get("x-litellm-completion-tokens")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(0);
+    // Token usage and cost come from the response body (JSON or final SSE
+    // usage chunk). The cost header is only a non-streaming fallback.
     let gw_cost: f64 = upstream
         .headers()
         .get("x-litellm-response-cost")
@@ -535,7 +536,11 @@ async fn forward_to_llm_gateway(
         // Gateway returned an error — relay it, settle billing as 0 cost.
         let body_bytes = upstream.bytes().await.unwrap_or_default();
         let status_u16 = gw_status.as_u16();
-        let err_code = if status_u16 == 429 { "rate_limited" } else { "upstream_error" };
+        let err_code = if status_u16 == 429 {
+            "rate_limited"
+        } else {
+            "upstream_error"
+        };
         let row = UsageRow {
             key_id: Some(principal.key_id.clone()),
             user_id: Some(principal.user_id.clone()),
@@ -553,19 +558,15 @@ async fn forward_to_llm_gateway(
         let _ = settle_generation_usage(&state.usage, &reservation.id, row).await;
         // Forward the gateway error body as-is so the client gets a proper OpenAI error shape.
         return (
-            axum::http::StatusCode::from_u16(status_u16).unwrap_or(axum::http::StatusCode::BAD_GATEWAY),
+            axum::http::StatusCode::from_u16(status_u16)
+                .unwrap_or(axum::http::StatusCode::BAD_GATEWAY),
             [(header::CONTENT_TYPE, "application/json")],
             body_bytes,
         )
             .into_response();
     }
 
-    // ── Success path: stream body bytes through to client ─────────────────────
-    // For streaming responses we pipe the SSE byte stream directly — no parsing.
-    // For non-streaming we buffer the full JSON and forward it.
-    // In both cases we settle billing after the response is complete, using
-    // the token counts from the LiteLLM response headers (already captured above).
-
+    // ── Success path: forward body bytes unchanged, settle from usage ────────
     let key_id = principal.key_id.clone();
     let user_id = principal.user_id.clone();
     let plan = principal.plan.clone();
@@ -575,22 +576,22 @@ async fn forward_to_llm_gateway(
     let entry_clone = entry.clone();
 
     if streaming {
-        // Pipe SSE bytes directly to client, then settle billing.
         let byte_stream = upstream.bytes_stream();
-        let (settle_tx, settle_rx) = tokio::sync::oneshot::channel::<()>();
+        let (usage_tx, usage_rx) = tokio::sync::oneshot::channel::<UsageSnapshot>();
 
-        // Spawn a task that waits for the stream to complete then settles.
         tokio::spawn(async move {
-            // Wait for the stream to end (signalled by settle_tx being dropped).
-            let _ = settle_rx.await;
-            let input_tokens = gw_input_tokens;
-            let output_tokens = gw_output_tokens;
-            let cost = if gw_cost > 0.0 {
-                gw_cost
+            let reported = usage_rx.await.unwrap_or_default();
+            let cost = if reported.cost_usd > 0.0 {
+                reported.cost_usd
             } else if held_micros > 0 {
                 held_micros as f64 / 1_000_000.0
             } else {
-                cost_usd(&entry_clone, input_tokens, output_tokens, 0)
+                cost_usd(
+                    &entry_clone,
+                    reported.input_tokens,
+                    reported.output_tokens,
+                    reported.cache_read_tokens,
+                )
             };
             let row = UsageRow {
                 key_id: Some(key_id),
@@ -598,9 +599,9 @@ async fn forward_to_llm_gateway(
                 plan_id: Some(plan),
                 model,
                 provider: Some("llm-gateway".to_owned()),
-                input_tokens,
-                output_tokens,
-                cache_read_tokens: 0,
+                input_tokens: reported.input_tokens,
+                output_tokens: reported.output_tokens,
+                cache_read_tokens: reported.cache_read_tokens,
                 cost_usd: cost,
                 status: 200,
                 latency_ms: Some(start.elapsed().as_millis() as i64),
@@ -611,14 +612,29 @@ async fn forward_to_llm_gateway(
             }
         });
 
-        // Wrap the byte stream so we can signal completion via settle_tx.
         let wrapped = async_stream::stream! {
             let mut inner = byte_stream;
-            while let Some(chunk) = inner.next().await {
-                yield chunk;
+            let mut buffer: Vec<u8> = Vec::new();
+            let mut reported = UsageSnapshot::default();
+            while let Some(item) = inner.next().await {
+                match item {
+                    Ok(chunk) => {
+                        buffer.extend_from_slice(&chunk);
+                        while let Some(end) = buffer.iter().position(|byte| *byte == b'\n') {
+                            let line: Vec<u8> = buffer.drain(..=end).collect();
+                            if let Some(found) = usage_from_sse_line(&line) {
+                                reported = found;
+                            }
+                        }
+                        yield Ok::<_, reqwest::Error>(chunk);
+                    }
+                    Err(error) => yield Err(error),
+                }
             }
-            // Dropping settle_tx signals the billing task.
-            drop(settle_tx);
+            if let Some(found) = usage_from_sse_line(&buffer) {
+                reported = found;
+            }
+            let _ = usage_tx.send(reported);
         };
 
         (
@@ -626,7 +642,10 @@ async fn forward_to_llm_gateway(
             [
                 (header::CONTENT_TYPE, "text/event-stream"),
                 (header::CACHE_CONTROL, "no-cache"),
-                (axum::http::header::HeaderName::from_static("x-accel-buffering"), "no"),
+                (
+                    axum::http::header::HeaderName::from_static("x-accel-buffering"),
+                    "no",
+                ),
             ],
             Body::from_stream(wrapped),
         )
@@ -660,14 +679,22 @@ async fn forward_to_llm_gateway(
             }
         };
 
-        let input_tokens = gw_input_tokens;
-        let output_tokens = gw_output_tokens;
-        let cost = if gw_cost > 0.0 {
+        let reported = serde_json::from_slice::<Value>(&body_bytes)
+            .map(|value| usage_from_response(&value))
+            .unwrap_or_default();
+        let cost = if reported.cost_usd > 0.0 {
+            reported.cost_usd
+        } else if gw_cost > 0.0 {
             gw_cost
         } else if held_micros > 0 {
             held_micros as f64 / 1_000_000.0
         } else {
-            cost_usd(&entry_clone, input_tokens, output_tokens, 0)
+            cost_usd(
+                &entry_clone,
+                reported.input_tokens,
+                reported.output_tokens,
+                reported.cache_read_tokens,
+            )
         };
         let row = UsageRow {
             key_id: Some(key_id),
@@ -675,9 +702,9 @@ async fn forward_to_llm_gateway(
             plan_id: Some(plan),
             model,
             provider: Some("llm-gateway".to_owned()),
-            input_tokens,
-            output_tokens,
-            cache_read_tokens: 0,
+            input_tokens: reported.input_tokens,
+            output_tokens: reported.output_tokens,
+            cache_read_tokens: reported.cache_read_tokens,
             cost_usd: cost,
             status: 200,
             latency_ms: Some(start.elapsed().as_millis() as i64),
@@ -739,85 +766,61 @@ pub async fn openai_chat_completions(
     let model_id = payload_model(&payload);
 
     // ── 3. Quota check ─────────────────────────────────────────────────────
-    let credits_paid =
-        match enforce_plan_quotas(&state, &principal.user_id, &principal.plan).await {
-            Ok(cp) => cp,
-            Err(item) => {
-                state.usage.record(UsageRow {
-                    key_id: Some(principal.key_id.clone()),
-                    user_id: Some(principal.user_id.clone()),
-                    plan_id: Some(principal.plan.clone()),
-                    model: model_id.clone(),
-                    provider: None,
-                    input_tokens: 0,
-                    output_tokens: 0,
-                    cache_read_tokens: 0,
-                    cost_usd: 0.0,
-                    status: item.status as i32,
-                    latency_ms: Some(start.elapsed().as_millis() as i64),
-                    error_code: Some(item.code.as_str().to_owned()),
-                });
-                return openai::error_response(item);
-            }
-        };
-
-    // ── 4. Resolve catalog entry (allowlist + billing estimates only) ───────
-    // We still look up the catalog entry to: (a) check entitlement, (b) get
-    // pricing for the billing reservation, (c) clamp max_tokens.
-    // We do NOT parse the full chat IR — that is the LLM gateway's job.
-    let resolved = {
-        // Parse only enough to run auto-routing signals when model == argus/auto.
-        // For non-auto models this is a simple catalog lookup.
-        let (_, chat_for_resolve) = match openai::parse(&payload) {
-            Ok(found) => found,
-            Err(item) => {
-                state.usage.record(UsageRow {
-                    key_id: Some(principal.key_id.clone()),
-                    user_id: Some(principal.user_id.clone()),
-                    plan_id: Some(principal.plan.clone()),
-                    model: model_id.clone(),
-                    provider: None,
-                    input_tokens: 0,
-                    output_tokens: 0,
-                    cache_read_tokens: 0,
-                    cost_usd: 0.0,
-                    status: item.status as i32,
-                    latency_ms: Some(start.elapsed().as_millis() as i64),
-                    error_code: Some(item.code.as_str().to_owned()),
-                });
-                return openai::error_response(item);
-            }
-        };
-        match service::resolve_request(
-            &state.catalog,
-            &model_id,
-            &chat_for_resolve,
-            &principal.allowlist,
-        ) {
-            Ok(r) => r,
-            Err(item) => {
-                state.usage.record(UsageRow {
-                    key_id: Some(principal.key_id.clone()),
-                    user_id: Some(principal.user_id.clone()),
-                    plan_id: Some(principal.plan.clone()),
-                    model: model_id.clone(),
-                    provider: None,
-                    input_tokens: 0,
-                    output_tokens: 0,
-                    cache_read_tokens: 0,
-                    cost_usd: 0.0,
-                    status: item.status as i32,
-                    latency_ms: Some(start.elapsed().as_millis() as i64),
-                    error_code: Some(item.code.as_str().to_owned()),
-                });
-                return openai::error_response(item);
-            }
+    let credits_paid = match enforce_plan_quotas(&state, &principal.user_id, &principal.plan).await
+    {
+        Ok(cp) => cp,
+        Err(item) => {
+            state.usage.record(UsageRow {
+                key_id: Some(principal.key_id.clone()),
+                user_id: Some(principal.user_id.clone()),
+                plan_id: Some(principal.plan.clone()),
+                model: model_id.clone(),
+                provider: None,
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_read_tokens: 0,
+                cost_usd: 0.0,
+                status: item.status as i32,
+                latency_ms: Some(start.elapsed().as_millis() as i64),
+                error_code: Some(item.code.as_str().to_owned()),
+            });
+            return openai::error_response(item);
         }
     };
-    // The resolved model id is now concrete (auto → actual model).
-    let model = resolved.entry.id().to_owned();
 
-    if let Err(item) = service::guard_entitlement(&resolved, &principal.allowlist) {
+    // ── 4. Validate the requested model without resolving or rewriting it ───
+    let entry = match state.catalog.find(&model_id) {
+        Some(entry) => entry,
+        None => {
+            let item = Errx::new(
+                ErrCode::NotFound,
+                404,
+                format!("no model named `{model_id}` is published"),
+            );
+            state.usage.record(UsageRow {
+                key_id: Some(principal.key_id.clone()),
+                user_id: Some(principal.user_id.clone()),
+                plan_id: Some(principal.plan.clone()),
+                model: model_id.clone(),
+                provider: None,
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_read_tokens: 0,
+                cost_usd: 0.0,
+                status: item.status as i32,
+                latency_ms: Some(start.elapsed().as_millis() as i64),
+                error_code: Some(item.code.as_str().to_owned()),
+            });
+            return openai::error_response(item);
+        }
+    };
+    let model = entry.id().to_owned();
+    if !principal.allowlist.iter().any(|allowed| allowed == &model) {
+        let item = Errx::new(
+            ErrCode::Forbidden,
+            403,
+            format!("model `{model}` is not enabled for your plan"),
+        );
         state.usage.record(UsageRow {
             key_id: Some(principal.key_id.clone()),
             user_id: Some(principal.user_id.clone()),
@@ -835,28 +838,45 @@ pub async fn openai_chat_completions(
         return openai::error_response(item);
     }
 
-    // ── 5. Billing reservation ─────────────────────────────────────────────
-    // Build a minimal chat stub just to get a prompt-token estimate for the
-    // reservation; the full IR parsing happens inside the LLM gateway.
-    let mut chat_for_billing = match openai::parse(&payload) {
-        Ok((_, c)) => c,
-        Err(_) => {
-            // Unreachable: we already parsed successfully above. Fallback.
-            return openai::error_response(Errx::new(
-                ErrCode::InvalidRequest,
-                400,
-                "the request body is not valid JSON",
-            ));
+    // ── 5. Require the internal router ──────────────────────────────────────
+    let (gw_url, gw_key) = match (
+        state.settings.llm_gateway_url.clone(),
+        state.settings.llm_gateway_key.clone(),
+    ) {
+        (Some(url), Some(key)) => (url, key),
+        _ => {
+            let item = Errx::new(
+                ErrCode::ProviderUnconfigured,
+                503,
+                "the internal LLM gateway is not configured",
+            );
+            state.usage.record(UsageRow {
+                key_id: Some(principal.key_id.clone()),
+                user_id: Some(principal.user_id.clone()),
+                plan_id: Some(principal.plan.clone()),
+                model: model.clone(),
+                provider: Some("llm-gateway".to_owned()),
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_read_tokens: 0,
+                cost_usd: 0.0,
+                status: item.status as i32,
+                latency_ms: Some(start.elapsed().as_millis() as i64),
+                error_code: Some(item.code.as_str().to_owned()),
+            });
+            return openai::error_response(item);
         }
     };
-    openai::clamp_params(&mut chat_for_billing, resolved.entry.max_output);
-    let reservation = match reserve_generation(
+
+    // ── 6. Billing reservation ─────────────────────────────────────────────
+    let reservation = match reserve_gateway_generation(
         &state,
         &principal.user_id,
         &principal.plan,
         credits_paid,
-        &mut chat_for_billing,
-        &resolved.entry,
+        &payload,
+        body.len(),
+        &entry,
     )
     .await
     {
@@ -908,717 +928,25 @@ pub async fn openai_chat_completions(
         ));
     }
 
-    // ── 6. If LLM gateway is configured, forward raw request ────────────────
-    // The gateway owns ALL LLM concerns: routing, provider compat, retries,
-    // fallbacks, OpenRouter API calls. Rust only validates + bills.
-    if let (Some(gw_url), Some(gw_key)) = (
-        state.settings.llm_gateway_url.clone(),
-        state.settings.llm_gateway_key.clone(),
-    ) {
-        // Rewrite the model field in the payload to the resolved concrete model
-        // so LiteLLM receives the actual model name, not "argus/auto".
-        let mut fwd_payload = payload.clone();
-        fwd_payload["model"] = serde_json::Value::String(model.clone());
-
-        return forward_to_llm_gateway(
-            &shared_client(),
-            &gw_url,
-            &gw_key,
-            fwd_payload,
-            state,
-            principal,
-            model,
-            resolved.entry,
-            reservation,
-            start,
-        )
-        .await;
-    }
-
-    // ── 7. Fallback: direct OpenRouter path (no LLM gateway configured) ─────
-    // This path is kept as a fallback so the gateway works standalone while
-    // the LLM gateway is being deployed. It is intentionally identical to the
-    // previous implementation so existing behaviour is preserved.
+    // ── 7. Forward the original request bytes unchanged ────────────────────
     let streaming = payload
         .get("stream")
-        .and_then(|found| found.as_bool())
+        .and_then(Value::as_bool)
         .unwrap_or(false);
-    let turn_state = openai::StreamState::new(model.clone());
-    let client = shared_client();
-    // Re-parse fully for the direct path.
-    let (_, chat) = match openai::parse(&payload) {
-        Ok(found) => found,
-        Err(item) => return openai::error_response(item),
-    };
-    let mut chat = chat;
-    openai::clamp_params(&mut chat, resolved.entry.max_output);
-
-    if streaming {
-        let (tx, rx) = tokio::sync::mpsc::channel::<Result<Event, Errx>>(64);
-        let key_id = principal.key_id.clone();
-        let user_id = principal.user_id.clone();
-        let plan = principal.plan.clone();
-        let model_rec = model.clone();
-        let provider_rec = resolved.provider.id.to_owned();
-        let entry = resolved.entry.clone();
-        let usage_rec = state.usage.clone();
-        let reservation_id = reservation.id;
-        let reserved_tokens = reservation.reserved_tokens;
-        let held_micros = reservation.held_micros;
-        let chat_for_task = chat;
-        let resolved_for_task = resolved;
-        tokio::spawn(async move {
-            let mut input_tokens = 0i64;
-            let mut output_tokens = 0i64;
-            let mut cache_read_tokens = 0i64;
-            let mut status = 200i32;
-            let mut error_code: Option<String> = None;
-            let mut usage_reported = false;
-            let mut generated_output = false;
-            let mut conservative_settlement = false;
-            match service::stream_chat(&client, &resolved_for_task, chat_for_task).await {
-                Ok(mut stream) => {
-                    let mut client_gone = false;
-                    loop {
-                        let next = if client_gone {
-                            match tokio::time::timeout(Duration::from_secs(120), stream.next())
-                                .await
-                            {
-                                Ok(next) => next,
-                                Err(_) => break,
-                            }
-                        } else {
-                            stream.next().await
-                        };
-                        let Some(item) = next else { break };
-                        match &item {
-                            Ok(Event::Usage {
-                                input_tokens: i,
-                                output_tokens: o,
-                                cache_read_tokens: c,
-                            }) => {
-                                usage_reported = true;
-                                input_tokens = *i;
-                                output_tokens = *o;
-                                cache_read_tokens = *c;
-                            }
-                            Err(err) => {
-                                status = err.status as i32;
-                                error_code = Some(err.code.as_str().to_owned());
-                            }
-                            Ok(
-                                Event::TextDelta(_)
-                                | Event::ThinkingDelta(_)
-                                | Event::ToolUseStart { .. }
-                                | Event::ToolUseDelta { .. },
-                            ) => generated_output = true,
-                            _ => {}
-                        }
-                        if !client_gone && tx.send(item).await.is_err() {
-                            client_gone = true;
-                            error_code.get_or_insert_with(|| "client_disconnected".to_owned());
-                        }
-                    }
-                }
-                Err(err) => {
-                    status = err.status as i32;
-                    error_code = Some(err.code.as_str().to_owned());
-                    let _ = tx.send(Err(err)).await;
-                }
-            }
-            if !usage_reported && (status == 200 || generated_output) {
-                conservative_settlement = true;
-                tracing::warn!(model = %model_rec, "streamed response finished without usage; settling the full reservation");
-                input_tokens = reserved_tokens;
-                output_tokens = 0;
-                cache_read_tokens = 0;
-                status = 502;
-                error_code = Some("upstream_usage_missing".to_owned());
-                let _ = tx
-                    .send(Err(Errx::new(
-                        ErrCode::Upstream,
-                        502,
-                        "the upstream provider omitted usage data",
-                    )))
-                    .await;
-            }
-            let latency = start.elapsed().as_millis() as i64;
-            let cost = if conservative_settlement && held_micros > 0 {
-                held_micros as f64 / 1_000_000.0
-            } else {
-                cost_usd(&entry, input_tokens, output_tokens, cache_read_tokens)
-            };
-            let row = UsageRow {
-                key_id: Some(key_id),
-                user_id: Some(user_id),
-                plan_id: Some(plan),
-                model: model_rec,
-                provider: Some(provider_rec),
-                input_tokens,
-                output_tokens,
-                cache_read_tokens,
-                cost_usd: cost,
-                status,
-                latency_ms: Some(latency),
-                error_code,
-            };
-            if let Err(error) = settle_generation_usage(&usage_rec, &reservation_id, row).await {
-                tracing::error!(%error, reservation_id, "generation settlement failed");
-                let _ = tx
-                    .send(Err(Errx::new(
-                        ErrCode::Upstream,
-                        500,
-                        "generation settlement failed",
-                    )))
-                    .await;
-            }
-        });
-        let events = async_stream::stream! {
-            let mut rx = rx;
-            while let Some(item) = rx.recv().await {
-                yield item;
-            }
-        };
-        sse_turn(Box::pin(events), turn_state).into_response()
-    } else {
-        match service::finish_chat(&client, &resolved, chat).await {
-            Ok(turn) => {
-                let latency = start.elapsed().as_millis() as i64;
-                let missing_usage = !turn.usage_reported;
-                let (input_tokens, output_tokens, cache_read_tokens, cost, status, error_code) =
-                    if missing_usage {
-                        (
-                            reservation.reserved_tokens,
-                            0,
-                            0,
-                            reservation.held_micros as f64 / 1_000_000.0,
-                            502,
-                            Some("upstream_usage_missing".to_owned()),
-                        )
-                    } else {
-                        (
-                            turn.usage.input_tokens,
-                            turn.usage.output_tokens,
-                            turn.usage.cache_read_tokens,
-                            cost_usd(
-                                &resolved.entry,
-                                turn.usage.input_tokens,
-                                turn.usage.output_tokens,
-                                turn.usage.cache_read_tokens,
-                            ),
-                            200,
-                            None,
-                        )
-                    };
-                let row = UsageRow {
-                    key_id: Some(principal.key_id.clone()),
-                    user_id: Some(principal.user_id.clone()),
-                    plan_id: Some(principal.plan.clone()),
-                    model: model.clone(),
-                    provider: Some(resolved.provider.id.to_owned()),
-                    input_tokens,
-                    output_tokens,
-                    cache_read_tokens,
-                    cost_usd: cost,
-                    status,
-                    latency_ms: Some(latency),
-                    error_code,
-                };
-                if let Err(error) =
-                    settle_generation_usage(&state.usage, &reservation.id, row).await
-                {
-                    tracing::error!(%error, reservation_id = reservation.id, "generation settlement failed");
-                    return openai::error_response(Errx::new(
-                        ErrCode::Upstream,
-                        500,
-                        "generation settlement failed",
-                    ));
-                }
-                if missing_usage {
-                    return openai::error_response(Errx::new(
-                        ErrCode::Upstream,
-                        502,
-                        "the upstream provider omitted usage data",
-                    ));
-                }
-                (StatusCode::OK, Json(openai::completion(&turn_state, &turn))).into_response()
-            }
-            Err(item) => {
-                let row = UsageRow {
-                    key_id: Some(principal.key_id.clone()),
-                    user_id: Some(principal.user_id.clone()),
-                    plan_id: Some(principal.plan.clone()),
-                    model: model.clone(),
-                    provider: Some(resolved.provider.id.to_owned()),
-                    input_tokens: 0,
-                    output_tokens: 0,
-                    cache_read_tokens: 0,
-                    cost_usd: 0.0,
-                    status: item.status as i32,
-                    latency_ms: Some(start.elapsed().as_millis() as i64),
-                    error_code: Some(item.code.as_str().to_owned()),
-                };
-                if let Err(error) =
-                    settle_generation_usage(&state.usage, &reservation.id, row).await
-                {
-                    tracing::error!(%error, reservation_id = reservation.id, "generation settlement failed");
-                }
-                openai::error_response(item)
-            }
-        }
-    }
-}
-
-pub async fn gemini_models_action(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Path(model_action): Path<String>,
-    body: axum::body::Bytes,
-) -> Response {
-    let start = Instant::now();
-    let (model, streaming) = match gemini::split_path(&model_action) {
-        Ok(found) => found,
-        Err(item) => return gemini::error_response(item),
-    };
-    let principal = match authenticate(&state, &headers).await {
-        Ok(principal) => principal,
-        Err(item) => {
-            state.usage.record(UsageRow {
-                key_id: None,
-                user_id: None,
-                plan_id: None,
-                model: model.clone(),
-                provider: None,
-                input_tokens: 0,
-                output_tokens: 0,
-                cache_read_tokens: 0,
-                cost_usd: 0.0,
-                status: item.status as i32,
-                latency_ms: Some(start.elapsed().as_millis() as i64),
-                error_code: Some(item.code.as_str().to_owned()),
-            });
-            return gemini::error_response(item);
-        }
-    };
-    let payload: Value = match serde_json::from_slice(&body) {
-        Ok(payload) => payload,
-        Err(error) => {
-            let item = Errx::new(
-                ErrCode::InvalidRequest,
-                400,
-                format!("the request body is not valid JSON: {error}"),
-            );
-            return gemini::error_response(item);
-        }
-    };
-    let credits_paid = match enforce_plan_quotas(&state, &principal.user_id, &principal.plan).await
-    {
-        Ok(credits_paid) => credits_paid,
-        Err(item) => {
-            state.usage.record(UsageRow {
-                key_id: Some(principal.key_id.clone()),
-                user_id: Some(principal.user_id.clone()),
-                plan_id: Some(principal.plan.clone()),
-                model: model.clone(),
-                provider: None,
-                input_tokens: 0,
-                output_tokens: 0,
-                cache_read_tokens: 0,
-                cost_usd: 0.0,
-                status: item.status as i32,
-                latency_ms: Some(start.elapsed().as_millis() as i64),
-                error_code: Some(item.code.as_str().to_owned()),
-            });
-            return gemini::error_response(item);
-        }
-    };
-    let mut chat = match gemini::parse(&payload) {
-        Ok(chat) => chat,
-        Err(item) => {
-            state.usage.record(UsageRow {
-                key_id: Some(principal.key_id.clone()),
-                user_id: Some(principal.user_id.clone()),
-                plan_id: Some(principal.plan.clone()),
-                model: model.clone(),
-                provider: None,
-                input_tokens: 0,
-                output_tokens: 0,
-                cache_read_tokens: 0,
-                cost_usd: 0.0,
-                status: item.status as i32,
-                latency_ms: Some(start.elapsed().as_millis() as i64),
-                error_code: Some(item.code.as_str().to_owned()),
-            });
-            return gemini::error_response(item);
-        }
-    };
-    let resolved = match service::resolve_request(&state.catalog, &model, &chat, &principal.allowlist)
-    {
-        Ok(resolved) => resolved,
-        Err(item) => {
-            state.usage.record(UsageRow {
-                key_id: Some(principal.key_id.clone()),
-                user_id: Some(principal.user_id.clone()),
-                plan_id: Some(principal.plan.clone()),
-                model: model.clone(),
-                provider: None,
-                input_tokens: 0,
-                output_tokens: 0,
-                cache_read_tokens: 0,
-                cost_usd: 0.0,
-                status: item.status as i32,
-                latency_ms: Some(start.elapsed().as_millis() as i64),
-                error_code: Some(item.code.as_str().to_owned()),
-            });
-            return gemini::error_response(item);
-        }
-    };
-    let model = resolved.entry.id().to_owned();
-    if let Err(item) = service::guard_entitlement(&resolved, &principal.allowlist) {
-        state.usage.record(UsageRow {
-            key_id: Some(principal.key_id.clone()),
-            user_id: Some(principal.user_id.clone()),
-            plan_id: Some(principal.plan.clone()),
-            model: model.clone(),
-            provider: Some(resolved.provider.id.to_owned()),
-            input_tokens: 0,
-            output_tokens: 0,
-            cache_read_tokens: 0,
-            cost_usd: 0.0,
-            status: item.status as i32,
-            latency_ms: Some(start.elapsed().as_millis() as i64),
-            error_code: Some(item.code.as_str().to_owned()),
-        });
-        return gemini::error_response(item);
-    }
-    gemini::clamp_params(&mut chat, resolved.entry.max_output);
-    let reservation = match reserve_generation(
-        &state,
-        &principal.user_id,
-        &principal.plan,
-        credits_paid,
-        &mut chat,
-        &resolved.entry,
+    return forward_to_llm_gateway(
+        &shared_client(),
+        &gw_url,
+        &gw_key,
+        body,
+        streaming,
+        state,
+        principal,
+        model,
+        entry,
+        reservation,
+        start,
     )
-    .await
-    {
-        Ok(reservation) => reservation,
-        Err(item) => {
-            state.usage.record(UsageRow {
-                key_id: Some(principal.key_id.clone()),
-                user_id: Some(principal.user_id.clone()),
-                plan_id: Some(principal.plan.clone()),
-                model: model.clone(),
-                provider: Some(resolved.provider.id.to_owned()),
-                input_tokens: 0,
-                output_tokens: 0,
-                cache_read_tokens: 0,
-                cost_usd: 0.0,
-                status: item.status as i32,
-                latency_ms: Some(start.elapsed().as_millis() as i64),
-                error_code: Some(item.code.as_str().to_owned()),
-            });
-            return gemini::error_response(item);
-        }
-    };
-
-    let turn_state = gemini::StreamState::new(model.clone());
-    let client = shared_client();
-    if let Err(error) = state
-        .app_db
-        .mark_generation_dispatched(&reservation.id)
-        .await
-    {
-        tracing::error!(%error, reservation_id = reservation.id, "generation dispatch failed");
-        let row = UsageRow {
-            key_id: Some(principal.key_id.clone()),
-            user_id: Some(principal.user_id.clone()),
-            plan_id: Some(principal.plan.clone()),
-            model: model.clone(),
-            provider: Some(resolved.provider.id.to_owned()),
-            input_tokens: 0,
-            output_tokens: 0,
-            cache_read_tokens: 0,
-            cost_usd: 0.0,
-            status: 500,
-            latency_ms: Some(start.elapsed().as_millis() as i64),
-            error_code: Some("generation_dispatch_failed".to_owned()),
-        };
-        let _ = settle_generation_usage(&state.usage, &reservation.id, row).await;
-        return gemini::error_response(Errx::new(
-            ErrCode::Upstream,
-            500,
-            "generation dispatch failed",
-        ));
-    }
-
-    if streaming {
-        let (tx, rx) = tokio::sync::mpsc::channel::<Result<Event, Errx>>(64);
-        let key_id = principal.key_id.clone();
-        let user_id = principal.user_id.clone();
-        let plan = principal.plan.clone();
-        let model_rec = model.clone();
-        let provider_rec = resolved.provider.id.to_owned();
-        let entry = resolved.entry.clone();
-        let usage_rec = state.usage.clone();
-        let reservation_id = reservation.id;
-        let reserved_tokens = reservation.reserved_tokens;
-        let held_micros = reservation.held_micros;
-        let chat_for_task = chat;
-        let resolved_for_task = resolved;
-        tokio::spawn(async move {
-            let mut input_tokens = 0i64;
-            let mut output_tokens = 0i64;
-            let mut cache_read_tokens = 0i64;
-            let mut status = 200i32;
-            let mut error_code: Option<String> = None;
-            let mut usage_reported = false;
-            let mut generated_output = false;
-            let mut conservative_settlement = false;
-            match service::stream_chat(&client, &resolved_for_task, chat_for_task).await {
-                Ok(mut stream) => {
-                    let mut client_gone = false;
-                    loop {
-                        let next = if client_gone {
-                            match tokio::time::timeout(Duration::from_secs(120), stream.next())
-                                .await
-                            {
-                                Ok(next) => next,
-                                Err(_) => break,
-                            }
-                        } else {
-                            stream.next().await
-                        };
-                        let Some(item) = next else { break };
-                        match &item {
-                            Ok(Event::Usage {
-                                input_tokens: i,
-                                output_tokens: o,
-                                cache_read_tokens: c,
-                            }) => {
-                                usage_reported = true;
-                                input_tokens = *i;
-                                output_tokens = *o;
-                                cache_read_tokens = *c;
-                            }
-                            Err(err) => {
-                                status = err.status as i32;
-                                error_code = Some(err.code.as_str().to_owned());
-                            }
-                            Ok(
-                                Event::TextDelta(_)
-                                | Event::ThinkingDelta(_)
-                                | Event::ToolUseStart { .. }
-                                | Event::ToolUseDelta { .. },
-                            ) => generated_output = true,
-                            _ => {}
-                        }
-                        if !client_gone && tx.send(item).await.is_err() {
-                            client_gone = true;
-                            error_code.get_or_insert_with(|| "client_disconnected".to_owned());
-                        }
-                    }
-                }
-                Err(err) => {
-                    status = err.status as i32;
-                    error_code = Some(err.code.as_str().to_owned());
-                    let _ = tx.send(Err(err)).await;
-                }
-            }
-            if !usage_reported && (status == 200 || generated_output) {
-                conservative_settlement = true;
-                tracing::warn!(model = %model_rec, "streamed response finished without usage; settling the full reservation");
-                input_tokens = reserved_tokens;
-                output_tokens = 0;
-                cache_read_tokens = 0;
-                status = 502;
-                error_code = Some("upstream_usage_missing".to_owned());
-                let _ = tx
-                    .send(Err(Errx::new(
-                        ErrCode::Upstream,
-                        502,
-                        "the upstream provider omitted usage data",
-                    )))
-                    .await;
-            }
-            let latency = start.elapsed().as_millis() as i64;
-            let cost = if conservative_settlement && held_micros > 0 {
-                held_micros as f64 / 1_000_000.0
-            } else {
-                cost_usd(&entry, input_tokens, output_tokens, cache_read_tokens)
-            };
-            let row = UsageRow {
-                key_id: Some(key_id),
-                user_id: Some(user_id),
-                plan_id: Some(plan),
-                model: model_rec,
-                provider: Some(provider_rec),
-                input_tokens,
-                output_tokens,
-                cache_read_tokens,
-                cost_usd: cost,
-                status,
-                latency_ms: Some(latency),
-                error_code,
-            };
-            if let Err(error) = settle_generation_usage(&usage_rec, &reservation_id, row).await {
-                tracing::error!(%error, reservation_id, "generation settlement failed");
-                let _ = tx
-                    .send(Err(Errx::new(
-                        ErrCode::Upstream,
-                        500,
-                        "generation settlement failed",
-                    )))
-                    .await;
-            }
-        });
-        let events = async_stream::stream! {
-            let mut rx = rx;
-            while let Some(item) = rx.recv().await {
-                yield item;
-            }
-        };
-        gemini_sse(Box::pin(events), turn_state).into_response()
-    } else {
-        match service::finish_chat(&client, &resolved, chat).await {
-            Ok(turn) => {
-                let latency = start.elapsed().as_millis() as i64;
-                let missing_usage = !turn.usage_reported;
-                let (input_tokens, output_tokens, cache_read_tokens, cost, status, error_code) =
-                    if missing_usage {
-                        (
-                            reservation.reserved_tokens,
-                            0,
-                            0,
-                            reservation.held_micros as f64 / 1_000_000.0,
-                            502,
-                            Some("upstream_usage_missing".to_owned()),
-                        )
-                    } else {
-                        (
-                            turn.usage.input_tokens,
-                            turn.usage.output_tokens,
-                            turn.usage.cache_read_tokens,
-                            cost_usd(
-                                &resolved.entry,
-                                turn.usage.input_tokens,
-                                turn.usage.output_tokens,
-                                turn.usage.cache_read_tokens,
-                            ),
-                            200,
-                            None,
-                        )
-                    };
-                let row = UsageRow {
-                    key_id: Some(principal.key_id.clone()),
-                    user_id: Some(principal.user_id.clone()),
-                    plan_id: Some(principal.plan.clone()),
-                    model: model.clone(),
-                    provider: Some(resolved.provider.id.to_owned()),
-                    input_tokens,
-                    output_tokens,
-                    cache_read_tokens,
-                    cost_usd: cost,
-                    status,
-                    latency_ms: Some(latency),
-                    error_code,
-                };
-                if let Err(error) =
-                    settle_generation_usage(&state.usage, &reservation.id, row).await
-                {
-                    tracing::error!(%error, reservation_id = reservation.id, "generation settlement failed");
-                    return gemini::error_response(Errx::new(
-                        ErrCode::Upstream,
-                        500,
-                        "generation settlement failed",
-                    ));
-                }
-                if missing_usage {
-                    return gemini::error_response(Errx::new(
-                        ErrCode::Upstream,
-                        502,
-                        "the upstream provider omitted usage data",
-                    ));
-                }
-                (StatusCode::OK, Json(gemini::completion(&turn_state, &turn))).into_response()
-            }
-            Err(item) => {
-                let row = UsageRow {
-                    key_id: Some(principal.key_id.clone()),
-                    user_id: Some(principal.user_id.clone()),
-                    plan_id: Some(principal.plan.clone()),
-                    model: model.clone(),
-                    provider: Some(resolved.provider.id.to_owned()),
-                    input_tokens: 0,
-                    output_tokens: 0,
-                    cache_read_tokens: 0,
-                    cost_usd: 0.0,
-                    status: item.status as i32,
-                    latency_ms: Some(start.elapsed().as_millis() as i64),
-                    error_code: Some(item.code.as_str().to_owned()),
-                };
-                if let Err(error) =
-                    settle_generation_usage(&state.usage, &reservation.id, row).await
-                {
-                    tracing::error!(%error, reservation_id = reservation.id, "generation settlement failed");
-                }
-                gemini::error_response(item)
-            }
-        }
-    }
-}
-
-fn sse_turn(events: EventStream, turn_state: openai::StreamState) -> Response {
-    let frames = async_stream::stream! {
-        let mut events = events;
-        let mut turn_state = turn_state;
-        while let Some(item) = events.next().await {
-            match item {
-                Ok(event) => {
-                    if let Some(frame) = openai::chunk(&mut turn_state, &event) {
-                        yield Ok(SseFrame::default().data(frame.to_string()));
-                    }
-                }
-                Err(item) => {
-                    yield Ok(SseFrame::default().data(openai::error_body(&item).to_string()));
-                    return;
-                }
-            }
-        }
-        yield Ok(SseFrame::default().data(openai::final_chunk(&turn_state).to_string()));
-        yield Ok(SseFrame::default().data("[DONE]"));
-    };
-    let frames: Pin<Box<dyn Stream<Item = Result<SseFrame, std::convert::Infallible>> + Send>> =
-        Box::pin(frames);
-    Sse::new(frames)
-        .keep_alive(KeepAlive::default())
-        .into_response()
-}
-
-fn gemini_sse(events: EventStream, turn_state: gemini::StreamState) -> Response {
-    let frames = async_stream::stream! {
-        let mut events = events;
-        let mut turn_state = turn_state;
-        while let Some(item) = events.next().await {
-            match item {
-                Ok(event) => {
-                    if let Some(frame) = gemini::chunk(&mut turn_state, &event) {
-                        yield Ok(SseFrame::default().data(frame.to_string()));
-                    }
-                }
-                Err(item) => {
-                    yield Ok(SseFrame::default().data(gemini::error_body(&item).to_string()));
-                    return;
-                }
-            }
-        }
-        yield Ok(SseFrame::default().data(gemini::final_chunk(&turn_state, None).to_string()));
-    };
-    let frames: Pin<Box<dyn Stream<Item = Result<SseFrame, std::convert::Infallible>> + Send>> =
-        Box::pin(frames);
-    Sse::new(frames)
-        .keep_alive(KeepAlive::default())
-        .into_response()
+    .await;
 }
 
 pub async fn openai_models(State(state): State<AppState>, headers: HeaderMap) -> Response {
@@ -1652,33 +980,6 @@ async fn openai_models_view(state: &AppState, headers: &HeaderMap) -> Result<Val
         })
         .collect();
     Ok(openai::models_list(entries))
-}
-
-pub async fn gemini_models(State(state): State<AppState>, headers: HeaderMap) -> Response {
-    match authenticate(&state, &headers).await {
-        Ok(principal) => {
-            let entries: Vec<Value> = state
-                .catalog
-                .snapshot()
-                .into_iter()
-                .filter(|entry| {
-                    principal
-                        .allowlist
-                        .iter()
-                        .any(|allowed| allowed == entry.id())
-                })
-                .map(|entry| {
-                    serde_json::json!({
-                        "name": format!("models/{}", entry.id),
-                        "displayName": entry.name,
-                        "ownedBy": entry.provider,
-                    })
-                })
-                .collect();
-            Json(gemini::models_list(entries)).into_response()
-        }
-        Err(item) => gemini::error_response(item),
-    }
 }
 
 pub async fn search_endpoint(
@@ -1945,5 +1246,44 @@ pub async fn search_endpoint(
             }
             openai::error_response(err)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{usage_from_response, usage_from_sse_line};
+
+    #[test]
+    fn reads_usage_and_cost_from_json_response() {
+        let snapshot = usage_from_response(&json!({
+            "usage": {
+                "prompt_tokens": 12,
+                "completion_tokens": 7,
+                "prompt_tokens_details": {"cached_tokens": 3},
+                "cost": 0.00042
+            }
+        }));
+        assert_eq!(snapshot.input_tokens, 12);
+        assert_eq!(snapshot.output_tokens, 7);
+        assert_eq!(snapshot.cache_read_tokens, 3);
+        assert_eq!(snapshot.cost_usd, 0.00042);
+    }
+
+    #[test]
+    fn reads_usage_and_cost_from_final_sse_chunk() {
+        let line = b"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":26,\"completion_tokens\":48,\"cost\":0.0008778}}\n";
+        let snapshot = usage_from_sse_line(line).expect("usage chunk is parsed");
+        assert_eq!(snapshot.input_tokens, 26);
+        assert_eq!(snapshot.output_tokens, 48);
+        assert_eq!(snapshot.cost_usd, 0.0008778);
+    }
+
+    #[test]
+    fn ignores_chunks_without_usage() {
+        let line = b"data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}],\"usage\":null}\n";
+        assert!(usage_from_sse_line(line).is_none());
+        assert!(usage_from_sse_line(b"data: [DONE]\n").is_none());
     }
 }

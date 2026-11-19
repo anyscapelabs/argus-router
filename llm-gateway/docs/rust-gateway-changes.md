@@ -10,18 +10,13 @@
 Add these to the Rust gateway's environment (systemd unit, `.env`, or EC2 parameter store):
 
 ```bash
-# Base URL of the LiteLLM proxy (internal — not public internet)
-# Same instance:
-LLM_GATEWAY_URL=http://localhost:4000
-# Docker Compose internal network:
-LLM_GATEWAY_URL=http://llm-gateway:4000
-# Separate VPC instance (use private IP):
-LLM_GATEWAY_URL=http://10.0.1.42:4000
+# Private IP of the dedicated LiteLLM router EC2 (not public internet)
+LLM_GATEWAY_URL=http://10.0.1.42:4000   # replace with actual private IP
 
 # Service-to-service auth key for LiteLLM.
-# Must match LITELLM_INTERNAL_KEY in the llm-gateway .env.
+# Must match LITELLM_INTERNAL_KEY on the router.
 # Generate: openssl rand -hex 32
-LITELLM_INTERNAL_KEY=sk-internal-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+LLM_GATEWAY_KEY=sk-internal-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ```
 
 Load these in the Rust config/settings struct wherever other env vars are read (e.g., `Config::from_env()`):
@@ -31,15 +26,10 @@ pub struct Config {
     // ... existing fields ...
 
     /// Base URL of the internal LiteLLM proxy
-    #[serde(default = "default_llm_gateway_url")]
-    pub llm_gateway_url: String,
+    pub llm_gateway_url: Option<String>,
 
     /// Service-to-service key for authenticating with LiteLLM
-    pub litellm_internal_key: String,
-}
-
-fn default_llm_gateway_url() -> String {
-    "http://localhost:4000".to_string()
+    pub llm_gateway_key: Option<String>,
 }
 ```
 

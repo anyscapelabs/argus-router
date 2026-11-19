@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 
 use super::types::{SearchResponse, SearchResultItem};
-use crate::proxy::ir::{ErrCode, Errx};
+use crate::error::{ErrCode, Errx};
 
 fn read_env(name: &str) -> Option<String> {
     std::env::var(name)

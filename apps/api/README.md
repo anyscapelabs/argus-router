@@ -1,17 +1,17 @@
 # Anyscape Gateway API (`apps/api`)
 
 Rust (Axum) gateway: service-account key auth, per-plan quota enforcement
-and model/search/voice proxying. One process, one Postgres database.
+and billing, web search, and voice sessions. Chat completions are raw-forwarded
+to LiteLLM, which performs all model routing. One process, one Postgres database.
 
 ## Routes
 
 | Route | Purpose |
 | --- | --- |
 | `/api/v1/auth/*` | better-auth (email/password, social OAuth, verification) |
-| `/v1/chat/completions` | OpenAI-compatible chat proxy (desktop `openai_compat` adapter) |
+| `/v1/chat/completions` | Auth/quota/billing, then raw-forward to LiteLLM (desktop `openai_compat` adapter) |
 | `/v1/models` | key-eligible catalog (plan-effective allowlist) |
 | `/v1/search` | web search router |
-| `/v1beta/models/{model}:{action}` | Gemini-compatible chat proxy |
 | `/v1/live` | Gemini Live speech-to-speech WebSocket |
 | `/api/v1/account/entitlements` | identity + plan + effective allowlist for paired desktop keys |
 | `/api/v1/{models,plans,usage,workspace,profile,agents}` | console dashboard API |
@@ -41,10 +41,10 @@ and model/search/voice proxying. One process, one Postgres database.
 ## Environment
 
 See [`.env.example`](./.env.example). Highlights: `DATABASE_URL`,
-`BETTER_AUTH_SECRET` (≥32 chars), `DASHBOARD_URL`, `OPENROUTER_API_KEY`
-(upstream origin), `GEMINI_API_KEY` (voice), `UPSTASH_REDIS_REST_URL/TOKEN`
-(optional cache), `API_DB_MAX_CONNECTIONS` (default 10), plus optional
-`EXA/BRAVE/TAVILY` search keys.
+`BETTER_AUTH_SECRET` (≥32 chars), `DASHBOARD_URL`, `LLM_GATEWAY_URL` /
+`LLM_GATEWAY_KEY` (dedicated LiteLLM router), `GEMINI_API_KEY` (voice),
+`UPSTASH_REDIS_REST_URL/TOKEN` (optional cache), `API_DB_MAX_CONNECTIONS`
+(default 10), plus optional `EXA/BRAVE/TAVILY` search keys.
 
 ## Test
 

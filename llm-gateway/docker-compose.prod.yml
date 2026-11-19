@@ -4,15 +4,12 @@
 #   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 #
 # What this file changes vs the base:
-#   - Keeps the localhost port binding (127.0.0.1:4000) — the Rust gateway
-#     binary runs on the host and reaches LiteLLM via localhost:4000.
 #   - Adds memory and CPU hard limits to prevent runaway resource usage.
 #   - Sets restart: always for prod resilience.
 #
-# NOTE: The Rust API gateway is a bare systemd binary (not a container),
-# so there is NO shared Docker network needed — localhost:4000 is sufficient.
-
-version: "3.9"
+# NOTE: The Rust API gateway runs on a separate EC2 instance and reaches this
+# service over the private VPC network. Port 4000 must only be reachable from
+# the API instance's security group, never from the public internet.
 
 services:
   llm-gateway:
@@ -21,7 +18,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512m
+          memory: 1g
           cpus: "1.0"
         reservations:
           memory: 128m

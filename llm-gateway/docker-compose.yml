@@ -1,20 +1,22 @@
-version: "3.9"
-
 services:
   llm-gateway:
     image: ghcr.io/berriai/litellm:main-stable
     container_name: argus-llm-gateway
     restart: unless-stopped
     ports:
-      - "127.0.0.1:4000:4000"   # Only bind to localhost — not public
+      - "4000:4000"
     environment:
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
       - LITELLM_INTERNAL_KEY=${LITELLM_INTERNAL_KEY}
     volumes:
       - ./config/litellm_config.yaml:/app/config.yaml:ro
-    command: ["--config", "/app/config.yaml", "--port", "4000", "--num_workers", "4"]
+    command: ["--config", "/app/config.yaml", "--port", "4000", "--num_workers", "1"]
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:4000/health"]
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import os, urllib.request; r = urllib.request.Request('http://localhost:4000/health', headers={'Authorization': 'Bearer ' + os.environ['LITELLM_INTERNAL_KEY']}); urllib.request.urlopen(r, timeout=5)\"",
+        ]
       interval: 30s
       timeout: 10s
       retries: 3

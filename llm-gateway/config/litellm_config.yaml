@@ -7,12 +7,8 @@
 
 model_list:
   # ─── argus/auto pool ───────────────────────────────────────────────────────
-  # The Rust gateway's auto router resolves which catalog model to use, then
-  # forwards that resolved model name here. The LLM Gateway receives the FINAL
-  # model id (e.g. "openai/gpt-6-luna"), not "argus/auto".
-  #
-  # However, if you ever call the LLM gateway directly with "argus/auto",
-  # LiteLLM will round-robin across the pool below as a fallback mechanism.
+  # Rust forwards "argus/auto" unchanged. LiteLLM alone selects a deployment
+  # from this group and handles retries, cooldowns, and fallback models.
 
   - model_name: argus/auto
     litellm_params:
@@ -199,7 +195,7 @@ model_list:
       max_tokens: 64000
 
 router_settings:
-  routing_strategy: least-busy
+  routing_strategy: simple-shuffle
   num_retries: 3
   retry_after: 2
   allowed_fails: 2
@@ -224,12 +220,15 @@ litellm_settings:
   streaming_timeout: 120
   set_verbose: false
   json_logs: true
-  # Emit token counts + cost on every response so the Rust gateway can settle
-  # billing without parsing the response body.
-  add_response_headers: true
+  # Cost is delivered in the final SSE usage chunk; response headers alone
+  # are written before a stream finishes and report zero for streaming calls.
+  include_cost_in_streaming_usage: true
 
 general_settings:
   master_key: os.environ/LITELLM_INTERNAL_KEY
+  # Inject stream_options.include_usage so the final SSE chunk carries the
+  # authoritative token counts without Rust modifying the request body.
+  always_include_stream_usage: true
   disable_spend_logs: true
   disable_error_logs: false
   store_model_in_db: false

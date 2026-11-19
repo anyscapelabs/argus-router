@@ -12,9 +12,9 @@ The Argus backend is split into two server-side components that deliberately own
 | Layer | Language | Host | Public? |
 |---|---|---|---|
 | Rust Gateway | Rust | EC2 (api.anyscapelabs.com) | ✅ Yes (HTTPS/WSS) |
-| LiteLLM Proxy (llm-gateway) | Python | EC2 (same instance or same VPC) | ❌ Internal only (port 4000) |
+| LiteLLM Proxy (llm-gateway) | Python | Dedicated EC2 (private VPC IP) | ❌ Internal only (port 4000) |
 
-The Desktop app talks **only** to the Rust gateway. The Rust gateway talks internally to LiteLLM for chat completions. Everything else (search, voice/live WebSocket) stays entirely within Rust.
+The Desktop app talks **only** to the Rust gateway. The Rust gateway raw-forwards chat completions to LiteLLM on a separate EC2 instance. Everything else (search, voice/live WebSocket) stays entirely within Rust.
 
 ---
 
@@ -36,10 +36,10 @@ flowchart TD
         SearchEP["POST /v1/search\n(fully in Rust)"]
         LiveEP["WS /live\n(fully in Rust — voice model)"]
         ChatFwd["POST /v1/chat/completions\nforward → LiteLLM"]
-        ModelsEP["GET /v1/models\nproxy or own list"]
+        ModelsEP["GET /v1/models\nallowlist-filtered list"]
     end
 
-    subgraph LiteLLM["LiteLLM Proxy (llm-gateway)\nEC2 internal — port 4000"]
+    subgraph LiteLLM["LiteLLM Proxy (llm-gateway)\ndedicated router EC2 — port 4000"]
         Router["Model Router\nargus/auto → picks OpenRouter model"]
         Retry["Retry / Fallback logic"]
         FailTrack["Failure Tracking"]
@@ -72,7 +72,7 @@ flowchart TD
     Quota --> ChatFwd
     Quota --> ModelsEP
 
-    ChatFwd -- "HTTP POST http://localhost:4000/v1/chat/completions\nBearer LITELLM_INTERNAL_KEY" --> LLMChat
+    ChatFwd -- "HTTP POST http://<router-private-ip>:4000/v1/chat/completions\nBearer LITELLM_INTERNAL_KEY" --> LLMChat
     ModelsEP -. "optional proxy" .-> LLMModels
 
     LLMChat --> Router
@@ -116,7 +116,7 @@ The desktop constructs **all** request URLs from a single base URL (the Rust gat
 | Dashboard API | ✅ |
 | `POST /v1/search` (web search) | ✅ Fully in Rust |
 | `WS /live` (voice) | ✅ Fully in Rust |
-| `GET /v1/models` | ✅ or proxy to LiteLLM |
+| `GET /v1/models` | ✅ allowlist-filtered local catalog |
 | `POST /v1/chat/completions` | ⏩ **Forwarded to LiteLLM** after auth passes |
 
 When forwarding chat completions, Rust:
@@ -163,7 +163,7 @@ sequenceDiagram
     D->>R: POST /v1/chat/completions<br/>Authorization: Bearer argus_pk_<br/>body: {model: "argus/auto", messages: [...], stream: true}
     R->>R: Validate argus_pk_ (Auth middleware)
     R->>R: Check quota / billing
-    R->>L: POST http://localhost:4000/v1/chat/completions<br/>Authorization: Bearer LITELLM_INTERNAL_KEY<br/>body: unchanged (model: "argus/auto", ...)
+    R->>L: POST http://<router-private-ip>:4000/v1/chat/completions<br/>Authorization: Bearer LITELLM_INTERNAL_KEY<br/>body: unchanged (model: "argus/auto", ...)
     L->>L: Route argus/auto → concrete model
     L->>OR: POST /v1/chat/completions (stream)
     OR-->>L: SSE stream chunks
@@ -177,7 +177,7 @@ sequenceDiagram
 2. **`Router/router.go Run()`** (Desktop) — dispatches the HTTP request; handles streaming SSE.
 3. **Rust Auth Middleware** — extracts Bearer token, validates `argus_pk_`, attaches user context.
 4. **Rust Quota** — checks usage limits; returns `429` if exceeded.
-5. **Rust Chat Forward Handler** — rewrites `Authorization` header, calls `http://localhost:4000/v1/chat/completions`, begins streaming response back.
+5. **Rust Chat Forward Handler** — rewrites `Authorization` header, calls `$LLM_GATEWAY_URL/v1/chat/completions`, begins streaming response back.
 6. **LiteLLM Router** — sees `model: argus/auto`, applies configured routing rules (see `config/litellm_config.yaml`).
 7. **LiteLLM → OpenRouter** — forwards using `OPENROUTER_API_KEY`.
 8. **Stream back** — SSE chunks flow from OpenRouter → LiteLLM → Rust → Desktop with minimal buffering.
@@ -240,7 +240,7 @@ sequenceDiagram
 | Billing / quota | ✅ Rust | ❌ Never |
 | Search | ✅ Rust | ❌ Never |
 | Voice WebSocket | ✅ Rust | ❌ Never |
-| LLM model routing | ❌ Rust has no model routing logic | ✅ LiteLLM — this is the problem area |
+| LLM model routing | ❌ Rust has no model routing logic | ✅ LiteLLM — sole owner |
 | Fallbacks & retries | ❌ Not Rust's job | ✅ LiteLLM built-in |
 | Adding new LLM models | ❌ Would require Rust rebuild | ✅ Edit YAML, restart container |
 
@@ -251,23 +251,17 @@ sequenceDiagram
 ## 8. Internal Networking on EC2
 
 ```
-┌─────────────────────────────────────────────────────┐
-│  EC2 Instance (or same VPC)                         │
-│                                                     │
-│  ┌──────────────────┐       ┌──────────────────┐   │
-│  │  Rust Gateway    │──────▶│  LiteLLM Proxy   │   │
-│  │  (public :443)   │  HTTP │  (internal :4000) │   │
-│  └──────────────────┘       └──────────────────┘   │
-│                                                     │
-│  LiteLLM port 4000 is NOT exposed to the internet  │
-└─────────────────────────────────────────────────────┘
+┌───────────────────────────┐         ┌───────────────────────────┐
+│  API EC2 (public :443)    │         │  Router EC2 (:4000)       │
+│  ┌─────────────────────┐  │  HTTP   │  ┌─────────────────────┐  │
+│  │  Rust Gateway       │──┼────────▶│  │  LiteLLM Proxy      │  │
+│  └─────────────────────┘  │  VPC    │  └─────────────────────┘  │
+└───────────────────────────┘         └───────────────────────────┘
 ```
 
-- **Same instance:** Rust calls `http://localhost:4000`
-- **Docker Compose / same network:** Rust calls `http://llm-gateway:4000`
-- Port 4000 must **not** be open in the EC2 Security Group for inbound public traffic.
-
-The environment variable `LLM_GATEWAY_URL` in the Rust gateway controls which address is used.
+- The router Security Group allows TCP 4000 **only** from the API instance's Security Group.
+- Port 4000 is **not** exposed to the public internet.
+- `LLM_GATEWAY_URL` on the API points at the router's private IP; `LLM_GATEWAY_KEY` must match LiteLLM's `LITELLM_INTERNAL_KEY`.
 
 ---
 

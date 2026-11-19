@@ -1,0 +1,55 @@
+name: deploy-api
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/api/**'
+      - 'Cargo.lock'
+      - '.github/workflows/deploy-api.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-api
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    env:
+      HOST: ${{ secrets.EC2_HOST }}
+      USER: ${{ secrets.EC2_USER }}
+      RUST_ICU_MAJOR_VERSION_NUMBER: "74"
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq libicu-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Test and build release binary
+        working-directory: apps/api
+        run: |
+          cargo test --release
+          cargo build --release
+
+      - name: Configure SSH
+        env:
+          KEY: ${{ secrets.EC2_SSH_KEY }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts
+
+      - name: Upload binary
+        run: scp apps/api/target/release/api "$USER@$HOST:/tmp/argus-api.new"
+
+      - name: Install and restart
+        run: |
+          ssh "$USER@$HOST" '
+            set -e
+            sudo cp /opt/argus/api /opt/argus/api.prev 2>/dev/null || true
+            sudo install -m 755 /tmp/argus-api.new /opt/argus/api
+            sudo systemctl restart argus-api
+            sleep 3
+            curl -fsS http://localhost:8080/api/v1/health
+          '

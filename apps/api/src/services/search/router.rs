@@ -2,7 +2,7 @@ use super::providers::{
     BraveSearchProvider, ExaSearchProvider, SearchProvider, TavilySearchProvider,
 };
 use super::types::SearchResponse;
-use crate::proxy::ir::{ErrCode, Errx};
+use crate::error::{ErrCode, Errx};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum QueryComplexity {

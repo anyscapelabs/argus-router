@@ -1,10 +1,11 @@
 # Anyscape Gateway
 
-Anyscape Gateway is the model-gateway service behind the Argus Agent desktop
-app: one API that authenticates service-account keys, enforces per-plan
-quotas, and proxies chat / search / voice traffic across model providers
-(upstream origin: OpenRouter; direct: Google Gemini). It ships as a Rust
-(Axum + Postgres) API plus a Next.js console.
+Anyscape Gateway is the gateway service behind the Argus Agent desktop app:
+one API that authenticates service-account keys, enforces per-plan quotas and
+billing, and meters chat / search / voice traffic. Chat completions are
+raw-forwarded to a dedicated LiteLLM proxy, which owns model routing and
+retries against OpenRouter. Voice still connects directly to Google Gemini.
+It ships as a Rust (Axum + Postgres) API plus a Next.js console.
 
 ## Layout
 

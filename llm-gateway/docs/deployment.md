@@ -132,17 +132,11 @@ curl -f http://localhost:4000/health
 The Rust gateway needs to know where to send chat completions. Set these environment variables in the Rust gateway's deployment (systemd unit, docker-compose, or EC2 user data):
 
 ```bash
-# If LiteLLM is on the same EC2 instance as Rust:
-LLM_GATEWAY_URL=http://localhost:4000
-
-# If LiteLLM is in Docker Compose on the same host (using Docker bridge network):
-LLM_GATEWAY_URL=http://llm-gateway:4000
-
-# If LiteLLM is on a separate EC2 instance in the same VPC:
+# Private IP of the dedicated LiteLLM router EC2
 LLM_GATEWAY_URL=http://10.0.1.42:4000   # replace with actual private IP
 
-# Service-to-service auth key (must match LITELLM_INTERNAL_KEY above)
-LITELLM_INTERNAL_KEY=sk-internal-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+# Service-to-service auth key (must match LITELLM_INTERNAL_KEY on the router)
+LLM_GATEWAY_KEY=sk-internal-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ```
 
 After setting these, restart the Rust gateway process or container.
