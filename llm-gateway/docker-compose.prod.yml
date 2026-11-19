@@ -1,23 +1,21 @@
 # Production overrides for the Argus LLM Gateway.
 #
 # Usage (always layer on top of the base file):
-#   docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 #
 # What this file changes vs the base:
-#   - Removes the host port binding entirely; the service is only reachable
-#     from within the shared Docker network where the Rust gateway runs.
+#   - Keeps the localhost port binding (127.0.0.1:4000) — the Rust gateway
+#     binary runs on the host and reaches LiteLLM via localhost:4000.
 #   - Adds memory and CPU hard limits to prevent runaway resource usage.
-#   - Sets the restart policy to always (not unless-stopped) for prod resilience.
+#   - Sets restart: always for prod resilience.
+#
+# NOTE: The Rust API gateway is a bare systemd binary (not a container),
+# so there is NO shared Docker network needed — localhost:4000 is sufficient.
 
 version: "3.9"
 
 services:
   llm-gateway:
-    # In production the Rust gateway lives on the same Docker network, so we
-    # remove the host-port binding and rely on internal service discovery
-    # (argus-llm-gateway:4000 from within the network).
-    ports: []   # Override base file — no external port binding in production
-
     restart: always
 
     deploy:
@@ -29,14 +27,12 @@ services:
           memory: 128m
           cpus: "0.25"
 
-    # Production containers log at a reduced verbosity; errors still surface.
     environment:
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
       - LITELLM_INTERNAL_KEY=${LITELLM_INTERNAL_KEY}
 
-networks:
-  default:
-    name: argus-internal
-    # Attach to the shared Argus internal network so the Rust gateway can
-    # reach this service without exposing any port to the host.
-    external: true
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"

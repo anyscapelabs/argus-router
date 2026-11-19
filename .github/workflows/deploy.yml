@@ -53,7 +53,7 @@ jobs:
   # ───────────────────────────────────────────────────────────────────────────
   resolve-ip:
     needs: changes
-    if: needs.changes.outputs.api == 'true' || needs.changes.outputs.llm-gateway == 'true'
+    if: needs.changes.outputs.api == 'true' || needs.changes.outputs['llm-gateway'] == 'true'
     runs-on: ubuntu-24.04
     outputs:
       ip:   ${{ steps.ip.outputs.ip }}
@@ -80,7 +80,7 @@ jobs:
           echo "ip=$(jq -r '.[0].ip' instance.json)"     >> "$GITHUB_OUTPUT"
 
   # ───────────────────────────────────────────────────────────────────────────
-  # Job 3: build + deploy Rust API binary
+  # Job 3: build Rust API binary
   # ───────────────────────────────────────────────────────────────────────────
   build-api:
     needs: changes
@@ -100,8 +100,11 @@ jobs:
           path: apps/api/target/release/api
           retention-days: 7
 
+  # ───────────────────────────────────────────────────────────────────────────
+  # Job 4: deploy Rust API binary to EC2
+  # ───────────────────────────────────────────────────────────────────────────
   deploy-api:
-    needs: [resolve-ip, build-api]
+    needs: [changes, resolve-ip, build-api]
     if: needs.changes.outputs.api == 'true' && needs.resolve-ip.outputs.skip == 'false'
     runs-on: ubuntu-24.04
     steps:
@@ -112,57 +115,63 @@ jobs:
 
       - name: Deploy Rust API + inject LLM gateway env
         env:
-          EC2_SSH_KEY:         ${{ secrets.EC2_SSH_KEY }}
-          IP:                  ${{ needs.resolve-ip.outputs.ip }}
-          LLM_GATEWAY_KEY:     ${{ secrets.LITELLM_INTERNAL_KEY }}
+          EC2_SSH_KEY:     ${{ secrets.EC2_SSH_KEY }}
+          IP:              ${{ needs.resolve-ip.outputs.ip }}
+          LLM_GATEWAY_KEY: ${{ secrets.LITELLM_INTERNAL_KEY }}
         run: |
           printf '%s' "$EC2_SSH_KEY" > deploy_key && chmod 600 deploy_key
+          chmod +x ./api
 
           scp -i deploy_key -o StrictHostKeyChecking=accept-new \
             ./api "ubuntu@$IP:/tmp/api"
 
-          ssh -i deploy_key -o StrictHostKeyChecking=accept-new "ubuntu@$IP" \
-            "sudo install -m 0755 /tmp/api /opt/argus/api
+          # Pass secrets as SSH env vars (requires AcceptEnv on the server, or use -o SendEnv).
+          # We instead write them via a quoted printf to avoid heredoc substitution issues.
+          ssh -i deploy_key -o StrictHostKeyChecking=accept-new "ubuntu@$IP" bash << SSHEOF
+          sudo install -m 0755 /tmp/api /opt/argus/api
 
-            # Ensure LLM gateway env vars are in the API env file
-            sudo grep -q '^LLM_GATEWAY_URL' /etc/argus/api.env 2>/dev/null \
-              || echo 'LLM_GATEWAY_URL=http://localhost:4000' | sudo tee -a /etc/argus/api.env
-            sudo grep -q '^LLM_GATEWAY_KEY' /etc/argus/api.env 2>/dev/null \
-              || echo 'LLM_GATEWAY_KEY=${LLM_GATEWAY_KEY}' | sudo tee -a /etc/argus/api.env
+          # Ensure LLM gateway env vars are in the API env file
+          sudo grep -q '^LLM_GATEWAY_URL' /etc/argus/api.env 2>/dev/null \
+            || echo 'LLM_GATEWAY_URL=http://localhost:4000' | sudo tee -a /etc/argus/api.env
 
-            sudo systemctl daemon-reload
-            sudo systemctl restart argus-api
+          # Always sync the key value
+          sudo sed -i '/^LLM_GATEWAY_KEY=/d' /etc/argus/api.env
+          printf 'LLM_GATEWAY_KEY=%s\n' '$LLM_GATEWAY_KEY' | sudo tee -a /etc/argus/api.env
 
-            # Health check (60s timeout)
-            for i in \$(seq 1 30); do
-              curl -sf http://localhost:8080/api/v1/health && echo && echo DEPLOY_OK && exit 0
-              sleep 2
-            done
-            echo 'API health check timed out' && exit 1"
+          sudo systemctl daemon-reload
+          sudo systemctl restart argus-api
+
+          # Health check (60s timeout)
+          for i in \$(seq 1 30); do
+            curl -sf http://localhost:8080/api/v1/health && echo && echo DEPLOY_OK && exit 0
+            sleep 2
+          done
+          echo 'API health check timed out' && exit 1
+          SSHEOF
 
   # ───────────────────────────────────────────────────────────────────────────
-  # Job 4: deploy LLM gateway (Docker Compose on EC2)
+  # Job 5: deploy LLM gateway (Docker Compose on EC2)
   # ───────────────────────────────────────────────────────────────────────────
   deploy-llm-gateway:
     needs: [changes, resolve-ip]
-    if: needs.changes.outputs.llm-gateway == 'true' && needs.resolve-ip.outputs.skip == 'false'
+    if: needs.changes.outputs['llm-gateway'] == 'true' && needs.resolve-ip.outputs.skip == 'false'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
-      - name: Copy config files to EC2
+      - name: Rsync llm-gateway files to EC2
         env:
           EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
           IP:          ${{ needs.resolve-ip.outputs.ip }}
         run: |
           printf '%s' "$EC2_SSH_KEY" > deploy_key && chmod 600 deploy_key
 
-          # Rsync just the llm-gateway directory (excludes .env — managed separately)
+          # Rsync the llm-gateway directory; .env is managed separately below
           rsync -az --exclude='.env' \
             -e "ssh -i deploy_key -o StrictHostKeyChecking=accept-new" \
             llm-gateway/ "ubuntu@$IP:/opt/llm-gateway/"
 
-      - name: Bootstrap .env + start containers
+      - name: Write .env + start containers
         env:
           EC2_SSH_KEY:        ${{ secrets.EC2_SSH_KEY }}
           IP:                 ${{ needs.resolve-ip.outputs.ip }}
@@ -171,66 +180,74 @@ jobs:
         run: |
           printf '%s' "$EC2_SSH_KEY" > deploy_key && chmod 600 deploy_key
 
-          ssh -i deploy_key -o StrictHostKeyChecking=accept-new "ubuntu@$IP" \
-            "cd /opt/llm-gateway
+          # Write secrets via a runner-side temp file, then scp — avoids all
+          # heredoc / shell-escaping issues with secrets inside double-quoted SSH strings.
+          printf 'OPENROUTER_API_KEY=%s\nLITELLM_INTERNAL_KEY=%s\n' \
+            "$OPENROUTER_API_KEY" "$LITELLM_KEY" > /tmp/llm_gateway.env
 
-            # Write .env if it doesn't already exist (preserves manual edits on re-deploy)
-            if [ ! -f .env ]; then
-              cat > .env <<'ENVEOF'
-OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
-LITELLM_INTERNAL_KEY=${LITELLM_KEY}
-ENVEOF
-              echo '.env created'
-            else
-              # Always keep secrets in sync with what GitHub has
-              sed -i 's|^OPENROUTER_API_KEY=.*|OPENROUTER_API_KEY=${OPENROUTER_API_KEY}|' .env
-              sed -i 's|^LITELLM_INTERNAL_KEY=.*|LITELLM_INTERNAL_KEY=${LITELLM_KEY}|' .env
-              echo '.env updated'
+          scp -i deploy_key -o StrictHostKeyChecking=accept-new \
+            /tmp/llm_gateway.env "ubuntu@$IP:/opt/llm-gateway/.env"
+
+          ssh -i deploy_key -o StrictHostKeyChecking=accept-new "ubuntu@$IP" bash << 'SSHEOF'
+          set -euo pipefail
+          cd /opt/llm-gateway
+
+          # Pull latest LiteLLM image quietly
+          sudo docker compose \
+            -f docker-compose.yml \
+            -f docker-compose.prod.yml \
+            pull --quiet
+
+          # (Re)start containers
+          sudo docker compose \
+            -f docker-compose.yml \
+            -f docker-compose.prod.yml \
+            up -d --remove-orphans
+
+          echo "Waiting for LLM gateway to be healthy..."
+          for i in $(seq 1 40); do
+            if curl -sf http://localhost:4000/health > /dev/null 2>&1; then
+              echo "LLM_GATEWAY_OK"
+              exit 0
             fi
-
-            # Pull latest image + (re)start containers
-            sudo docker compose \
-              -f docker-compose.yml \
-              -f docker-compose.prod.yml \
-              pull --quiet
-
-            sudo docker compose \
-              -f docker-compose.yml \
-              -f docker-compose.prod.yml \
-              up -d --remove-orphans
-
-            echo 'Waiting for LLM gateway to be healthy...'
-            for i in \$(seq 1 30); do
-              if curl -sf http://localhost:4000/health > /dev/null 2>&1; then
-                echo 'LLM_GATEWAY_OK'
-                exit 0
-              fi
-              sleep 3
-            done
-            echo 'LLM gateway health check timed out' && exit 1"
+            sleep 3
+          done
+          echo "LLM gateway health check timed out" && exit 1
+          SSHEOF
 
       - name: Inject LLM gateway env into Rust API and restart
         env:
-          EC2_SSH_KEY:  ${{ secrets.EC2_SSH_KEY }}
-          IP:           ${{ needs.resolve-ip.outputs.ip }}
-          LITELLM_KEY:  ${{ secrets.LITELLM_INTERNAL_KEY }}
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          IP:          ${{ needs.resolve-ip.outputs.ip }}
+          LITELLM_KEY: ${{ secrets.LITELLM_INTERNAL_KEY }}
         run: |
           printf '%s' "$EC2_SSH_KEY" > deploy_key && chmod 600 deploy_key
 
-          ssh -i deploy_key -o StrictHostKeyChecking=accept-new "ubuntu@$IP" \
-            "# Add LLM_GATEWAY_URL + LLM_GATEWAY_KEY to Rust API env if not already set
-            sudo grep -q '^LLM_GATEWAY_URL' /etc/argus/api.env 2>/dev/null \
-              || echo 'LLM_GATEWAY_URL=http://localhost:4000' | sudo tee -a /etc/argus/api.env
-            # Always sync the key
-            sudo sed -i 's|^LLM_GATEWAY_KEY=.*||' /etc/argus/api.env
-            echo 'LLM_GATEWAY_KEY=${LITELLM_KEY}' | sudo tee -a /etc/argus/api.env
+          # Write a small env-inject script locally, then run it remotely
+          printf 'LLM_GATEWAY_KEY=%s\n' "$LITELLM_KEY" > /tmp/llm_gw_key.txt
 
-            sudo systemctl daemon-reload
-            sudo systemctl restart argus-api
+          scp -i deploy_key -o StrictHostKeyChecking=accept-new \
+            /tmp/llm_gw_key.txt "ubuntu@$IP:/tmp/llm_gw_key.txt"
 
-            echo 'Waiting for Rust API...'
-            for i in \$(seq 1 30); do
-              curl -sf http://localhost:8080/api/v1/health && echo && echo API_OK && exit 0
-              sleep 2
-            done
-            echo 'API restart timed out' && exit 1"
+          ssh -i deploy_key -o StrictHostKeyChecking=accept-new "ubuntu@$IP" bash << 'SSHEOF'
+          set -euo pipefail
+
+          # Add LLM_GATEWAY_URL if not already set
+          sudo grep -q '^LLM_GATEWAY_URL' /etc/argus/api.env 2>/dev/null \
+            || echo 'LLM_GATEWAY_URL=http://localhost:4000' | sudo tee -a /etc/argus/api.env
+
+          # Always sync the key (remove old, append fresh)
+          sudo sed -i '/^LLM_GATEWAY_KEY=/d' /etc/argus/api.env
+          sudo cat /tmp/llm_gw_key.txt | sudo tee -a /etc/argus/api.env
+          rm /tmp/llm_gw_key.txt
+
+          sudo systemctl daemon-reload
+          sudo systemctl restart argus-api
+
+          echo "Waiting for Rust API..."
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:8080/api/v1/health && echo && echo API_OK && exit 0
+            sleep 2
+          done
+          echo "API restart timed out" && exit 1
+          SSHEOF
