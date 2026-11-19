@@ -25,3 +25,4 @@ logs/
 .idea/
 *.swp
 *.swo
+# Deployed via GitHub Actions
