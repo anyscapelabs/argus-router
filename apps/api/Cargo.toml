@@ -19,6 +19,9 @@ async-stream = "0.3.6"
 futures-util = "0.3.31"
 hmac = "0.12"
 reqwest = { version = "0.12.24", default-features = false, features = ["json", "rustls-tls", "stream", "gzip"] }
+# Both aws-lc-rs (AWS SDK) and ring (reqwest/tungstenite) are compiled in, so
+# rustls 0.23 cannot pick a process default on its own. Name ring explicitly.
+rustls = { version = "0.23", features = ["ring"] }
 sea-orm = { version = "2.0.4", features = ["sqlx-sqlite", "runtime-tokio-rustls"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"

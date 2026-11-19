@@ -14,6 +14,12 @@ use api::config::Settings;
 use api::services::cache::Cache;
 use api::state::AppState;
 
+fn install_crypto_provider() {
+    if rustls::crypto::ring::default_provider().install_default().is_err() {
+        tracing::warn!("rustls crypto provider already installed; keeping the existing one");
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
@@ -24,6 +30,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .unwrap_or_else(|_| "info,tower_http=debug".into()),
         )
         .init();
+    install_crypto_provider();
 
     let settings = Settings::from_env();
     let database = auth::connect_database(&settings).await?;
@@ -197,4 +204,13 @@ fn cors(settings: &Settings) -> CorsLayer {
         .allow_headers(AllowHeaders::mirror_request())
         .allow_credentials(true)
         .allow_private_network(true)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn crypto_provider_is_available_before_tls_use() {
+        super::install_crypto_provider();
+        assert!(rustls::crypto::CryptoProvider::get_default().is_some());
+    }
 }
