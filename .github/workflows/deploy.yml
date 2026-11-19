@@ -6,37 +6,82 @@ on:
   workflow_dispatch:
     inputs:
       component:
-        description: "Which app to deploy"
+        description: "Which component to deploy"
         type: choice
-        options: [all, api]
+        options: [all, api, llm-gateway]
         default: all
 
 env:
   INSTANCE_ID: i-0ca849fa6f19b0fd1
   REGION: eu-north-1
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Job 1: detect which components changed
+# ─────────────────────────────────────────────────────────────────────────────
 jobs:
   changes:
     runs-on: ubuntu-24.04
     outputs:
-      api: ${{ steps.detect.outputs.api }}
+      api:         ${{ steps.detect.outputs.api }}
+      llm-gateway: ${{ steps.detect.outputs.llm_gateway }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Detect changed apps
+
+      - name: Detect changed components
         id: detect
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            api=true
+            choice="${{ github.event.inputs.component }}"
+            api=false; llm_gateway=false
+            [[ "$choice" == "all" || "$choice" == "api" ]]         && api=true
+            [[ "$choice" == "all" || "$choice" == "llm-gateway" ]] && llm_gateway=true
           else
             changed=$(git diff --name-only "${{ github.event.before }}" "${{ github.sha }}")
-            echo "changed files:"; echo "$changed"
-            api=false
-            if echo "$changed" | grep -qE '^(apps/api/|test/|\.github/workflows/deploy\.yml$)'; then api=true; fi
+            echo "Changed files:"; echo "$changed"
+            api=false; llm_gateway=false
+            echo "$changed" | grep -qE '^(apps/api/|\.github/workflows/deploy\.yml$)' && api=true
+            echo "$changed" | grep -qE '^llm-gateway/'                                && llm_gateway=true
           fi
-          echo "api=$api" >> "$GITHUB_OUTPUT"
+          echo "api=$api"               >> "$GITHUB_OUTPUT"
+          echo "llm_gateway=$llm_gateway" >> "$GITHUB_OUTPUT"
+          echo "api=$api  llm-gateway=$llm_gateway"
 
+  # ───────────────────────────────────────────────────────────────────────────
+  # Job 2: resolve the EC2 public IP (shared by both deploy jobs)
+  # ───────────────────────────────────────────────────────────────────────────
+  resolve-ip:
+    needs: changes
+    if: needs.changes.outputs.api == 'true' || needs.changes.outputs.llm-gateway == 'true'
+    runs-on: ubuntu-24.04
+    outputs:
+      ip:   ${{ steps.ip.outputs.ip }}
+      skip: ${{ steps.ip.outputs.skip }}
+    steps:
+      - name: Get instance IP
+        id: ip
+        env:
+          AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          aws ec2 describe-instances \
+            --instance-ids "$INSTANCE_ID" --region "$REGION" \
+            --query "Reservations[].Instances[0].{state:State.Name,ip:PublicIpAddress}" \
+            --output json > instance.json
+          state=$(jq -r '.[0].state' instance.json)
+          echo "Instance state: $state"
+          if [ "$state" != "running" ]; then
+            echo "::notice::Instance is $state — skipping deploy"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "skip=false"                               >> "$GITHUB_OUTPUT"
+          echo "ip=$(jq -r '.[0].ip' instance.json)"     >> "$GITHUB_OUTPUT"
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Job 3: build + deploy Rust API binary
+  # ───────────────────────────────────────────────────────────────────────────
   build-api:
     needs: changes
     if: needs.changes.outputs.api == 'true'
@@ -56,41 +101,136 @@ jobs:
           retention-days: 7
 
   deploy-api:
-    needs: [changes, build-api]
-    if: needs.changes.outputs.api == 'true'
+    needs: [resolve-ip, build-api]
+    if: needs.changes.outputs.api == 'true' && needs.resolve-ip.outputs.skip == 'false'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/download-artifact@v4
         with:
           name: api
           path: .
-      - name: Resolve instance address
-        id: ip
+
+      - name: Deploy Rust API + inject LLM gateway env
         env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          EC2_SSH_KEY:         ${{ secrets.EC2_SSH_KEY }}
+          IP:                  ${{ needs.resolve-ip.outputs.ip }}
+          LLM_GATEWAY_KEY:     ${{ secrets.LITELLM_INTERNAL_KEY }}
         run: |
-          aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --region "$REGION" \
-            --query "Reservations[].Instances[0].{state:State.Name,ip:PublicIpAddress}" \
-            --output json > instance.json
-          state=$(jq -r '.[0].state' instance.json)
-          echo "instance state: $state"
-          if [ "$state" != "running" ]; then
-            echo "::notice::Instance is $state (paused) — skipping deploy"
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "skip=false" >> "$GITHUB_OUTPUT"
-          echo "ip=$(jq -r '.[0].ip' instance.json)" >> "$GITHUB_OUTPUT"
-      - name: Deploy
-        if: steps.ip.outputs.skip == 'false'
+          printf '%s' "$EC2_SSH_KEY" > deploy_key && chmod 600 deploy_key
+
+          scp -i deploy_key -o StrictHostKeyChecking=accept-new \
+            ./api "ubuntu@$IP:/tmp/api"
+
+          ssh -i deploy_key -o StrictHostKeyChecking=accept-new "ubuntu@$IP" \
+            "sudo install -m 0755 /tmp/api /opt/argus/api
+
+            # Ensure LLM gateway env vars are in the API env file
+            sudo grep -q '^LLM_GATEWAY_URL' /etc/argus/api.env 2>/dev/null \
+              || echo 'LLM_GATEWAY_URL=http://localhost:4000' | sudo tee -a /etc/argus/api.env
+            sudo grep -q '^LLM_GATEWAY_KEY' /etc/argus/api.env 2>/dev/null \
+              || echo 'LLM_GATEWAY_KEY=${LLM_GATEWAY_KEY}' | sudo tee -a /etc/argus/api.env
+
+            sudo systemctl daemon-reload
+            sudo systemctl restart argus-api
+
+            # Health check (60s timeout)
+            for i in \$(seq 1 30); do
+              curl -sf http://localhost:8080/api/v1/health && echo && echo DEPLOY_OK && exit 0
+              sleep 2
+            done
+            echo 'API health check timed out' && exit 1"
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Job 4: deploy LLM gateway (Docker Compose on EC2)
+  # ───────────────────────────────────────────────────────────────────────────
+  deploy-llm-gateway:
+    needs: [changes, resolve-ip]
+    if: needs.changes.outputs.llm-gateway == 'true' && needs.resolve-ip.outputs.skip == 'false'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Copy config files to EC2
         env:
           EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
-          IP: ${{ steps.ip.outputs.ip }}
+          IP:          ${{ needs.resolve-ip.outputs.ip }}
         run: |
-          printf '%s' "$EC2_SSH_KEY" > deploy_key
-          chmod 600 deploy_key
-          scp -i deploy_key -o StrictHostKeyChecking=accept-new ./api "ubuntu@$IP:/tmp/api"
+          printf '%s' "$EC2_SSH_KEY" > deploy_key && chmod 600 deploy_key
+
+          # Rsync just the llm-gateway directory (excludes .env — managed separately)
+          rsync -az --exclude='.env' \
+            -e "ssh -i deploy_key -o StrictHostKeyChecking=accept-new" \
+            llm-gateway/ "ubuntu@$IP:/opt/llm-gateway/"
+
+      - name: Bootstrap .env + start containers
+        env:
+          EC2_SSH_KEY:        ${{ secrets.EC2_SSH_KEY }}
+          IP:                 ${{ needs.resolve-ip.outputs.ip }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          LITELLM_KEY:        ${{ secrets.LITELLM_INTERNAL_KEY }}
+        run: |
+          printf '%s' "$EC2_SSH_KEY" > deploy_key && chmod 600 deploy_key
+
           ssh -i deploy_key -o StrictHostKeyChecking=accept-new "ubuntu@$IP" \
-            'sudo install -m 0755 /tmp/api /opt/argus/api && sudo systemctl restart argus-api && \
-             for i in $(seq 1 60); do curl -sf http://localhost:8080/api/v1/health && echo && echo DEPLOY_OK && exit 0; sleep 2; done; echo "health check timed out"; exit 1'
+            "cd /opt/llm-gateway
+
+            # Write .env if it doesn't already exist (preserves manual edits on re-deploy)
+            if [ ! -f .env ]; then
+              cat > .env <<'ENVEOF'
+OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+LITELLM_INTERNAL_KEY=${LITELLM_KEY}
+ENVEOF
+              echo '.env created'
+            else
+              # Always keep secrets in sync with what GitHub has
+              sed -i 's|^OPENROUTER_API_KEY=.*|OPENROUTER_API_KEY=${OPENROUTER_API_KEY}|' .env
+              sed -i 's|^LITELLM_INTERNAL_KEY=.*|LITELLM_INTERNAL_KEY=${LITELLM_KEY}|' .env
+              echo '.env updated'
+            fi
+
+            # Pull latest image + (re)start containers
+            sudo docker compose \
+              -f docker-compose.yml \
+              -f docker-compose.prod.yml \
+              pull --quiet
+
+            sudo docker compose \
+              -f docker-compose.yml \
+              -f docker-compose.prod.yml \
+              up -d --remove-orphans
+
+            echo 'Waiting for LLM gateway to be healthy...'
+            for i in \$(seq 1 30); do
+              if curl -sf http://localhost:4000/health > /dev/null 2>&1; then
+                echo 'LLM_GATEWAY_OK'
+                exit 0
+              fi
+              sleep 3
+            done
+            echo 'LLM gateway health check timed out' && exit 1"
+
+      - name: Inject LLM gateway env into Rust API and restart
+        env:
+          EC2_SSH_KEY:  ${{ secrets.EC2_SSH_KEY }}
+          IP:           ${{ needs.resolve-ip.outputs.ip }}
+          LITELLM_KEY:  ${{ secrets.LITELLM_INTERNAL_KEY }}
+        run: |
+          printf '%s' "$EC2_SSH_KEY" > deploy_key && chmod 600 deploy_key
+
+          ssh -i deploy_key -o StrictHostKeyChecking=accept-new "ubuntu@$IP" \
+            "# Add LLM_GATEWAY_URL + LLM_GATEWAY_KEY to Rust API env if not already set
+            sudo grep -q '^LLM_GATEWAY_URL' /etc/argus/api.env 2>/dev/null \
+              || echo 'LLM_GATEWAY_URL=http://localhost:4000' | sudo tee -a /etc/argus/api.env
+            # Always sync the key
+            sudo sed -i 's|^LLM_GATEWAY_KEY=.*||' /etc/argus/api.env
+            echo 'LLM_GATEWAY_KEY=${LITELLM_KEY}' | sudo tee -a /etc/argus/api.env
+
+            sudo systemctl daemon-reload
+            sudo systemctl restart argus-api
+
+            echo 'Waiting for Rust API...'
+            for i in \$(seq 1 30); do
+              curl -sf http://localhost:8080/api/v1/health && echo && echo API_OK && exit 0
+              sleep 2
+            done
+            echo 'API restart timed out' && exit 1"
