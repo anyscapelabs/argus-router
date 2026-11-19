@@ -223,6 +223,9 @@ litellm_settings:
   # Cost is delivered in the final SSE usage chunk; response headers alone
   # are written before a stream finishes and report zero for streaming calls.
   include_cost_in_streaming_usage: true
+  # Rust passes each user's effective plan allowlist on every request.
+  # This hook blocks disallowed models and constrains argus/auto to the plan.
+  callbacks: argus_gate.gate
 
 general_settings:
   master_key: os.environ/LITELLM_INTERNAL_KEY

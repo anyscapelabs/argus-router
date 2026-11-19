@@ -495,6 +495,7 @@ async fn forward_to_llm_gateway(
         // Forward user/plan metadata so LiteLLM can log them
         .header("x-argus-user-id", &principal.user_id)
         .header("x-argus-plan", &principal.plan)
+        .header("x-argus-allowed-models", principal.allowlist.join(","))
         .body(body);
 
     let upstream = match req.send().await {

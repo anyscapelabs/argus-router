@@ -10,6 +10,7 @@ services:
       - LITELLM_INTERNAL_KEY=${LITELLM_INTERNAL_KEY}
     volumes:
       - ./config/litellm_config.yaml:/app/config.yaml:ro
+      - ./config/argus_gate.py:/app/argus_gate.py:ro
     command: ["--config", "/app/config.yaml", "--port", "4000", "--num_workers", "1"]
     healthcheck:
       test:
