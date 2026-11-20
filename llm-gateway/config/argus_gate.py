@@ -35,7 +35,7 @@ def _deployed_models():
     with open(os.environ.get("LITELLM_CONFIG", "/app/config.yaml")) as config_file:
         config = yaml.safe_load(config_file) or {}
     return {
-        entry["litellm_params"]["model"].removeprefix("openrouter/")
+        entry["model_name"]
         for entry in config.get("model_list", [])
         if entry.get("model_name") != AUTO_ALIAS
     }
