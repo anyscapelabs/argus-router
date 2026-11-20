@@ -7,48 +7,25 @@
 
 model_list:
   # ─── argus/auto pool ───────────────────────────────────────────────────────
-  # Rust forwards "argus/auto" unchanged. LiteLLM alone selects a deployment
-  # from this group and handles retries, cooldowns, and fallback models.
+  # Only Bedrock deployments: OpenRouter credentials are not available.
+  # LiteLLM selects a deployment and handles cooldowns and fallbacks.
+  - model_name: argus/auto
+    litellm_params:
+      model: bedrock/eu.amazon.nova-lite-v1:0
+      aws_region_name: eu-north-1
+    model_info:
+      disable_background_health_check: true
+      id: nova-lite-auto
+      max_tokens: 10000
 
   - model_name: argus/auto
     litellm_params:
-      model: openrouter/openai/gpt-6-luna
-      api_key: os.environ/OPENROUTER_API_KEY
-      api_base: https://openrouter.ai/api/v1
+      model: bedrock/zai.glm-4.7-flash
+      aws_region_name: eu-north-1
     model_info:
       disable_background_health_check: true
-      id: gpt-6-luna-auto
-      max_tokens: 16384
-
-  - model_name: argus/auto
-    litellm_params:
-      model: openrouter/deepseek/deepseek-v4.1-flash-1017
-      api_key: os.environ/OPENROUTER_API_KEY
-      api_base: https://openrouter.ai/api/v1
-    model_info:
-      disable_background_health_check: true
-      id: deepseek-flash-auto
-      max_tokens: 65536
-
-  - model_name: argus/auto
-    litellm_params:
-      model: openrouter/minimax/minimax-m3.1-flash
-      api_key: os.environ/OPENROUTER_API_KEY
-      api_base: https://openrouter.ai/api/v1
-    model_info:
-      disable_background_health_check: true
-      id: minimax-flash-auto
-      max_tokens: 32768
-
-  - model_name: argus/auto
-    litellm_params:
-      model: openrouter/qwen/qwen3.8-flash
-      api_key: os.environ/OPENROUTER_API_KEY
-      api_base: https://openrouter.ai/api/v1
-    model_info:
-      disable_background_health_check: true
-      id: qwen-flash-auto
-      max_tokens: 32768
+      id: glm-4.7-flash-auto
+      max_tokens: 128000
 
   # ─── Free / Lite tier models (from catalog + allowlist) ────────────────────
   - model_name: openai/gpt-6-luna
@@ -322,19 +299,15 @@ router_settings:
   retry_after: 2
   allowed_fails: 2
   cooldown_time: 60
-  # If the resolved model fails, fall back through the lite tier
+  # Bedrock-only fallbacks; no OpenRouter credentials in this deployment.
   fallbacks:
-    - openai/gpt-6-luna:
-        - deepseek/deepseek-v4.1-flash-1017
-        - qwen/qwen3.8-flash
-        - z-ai/glm-5.3-flash
-    - deepseek/deepseek-v4.1-flash-1017:
-        - openai/gpt-6-luna
-        - qwen/qwen3.8-flash
     - argus/auto:
-        - openai/gpt-6-luna
-        - deepseek/deepseek-v4.1-flash-1017
-        - qwen/qwen3.8-flash
+        - bedrock/nova-lite
+        - bedrock/glm-4.7-flash
+    - bedrock/nova-lite:
+        - bedrock/glm-4.7-flash
+    - bedrock/glm-4.7-flash:
+        - bedrock/nova-lite
 
 litellm_settings:
   drop_params: true

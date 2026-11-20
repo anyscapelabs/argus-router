@@ -8,11 +8,7 @@ from litellm.integrations.custom_logger import CustomLogger
 AUTO_ALIAS = "argus/auto"
 AUTO_MODELS = frozenset({
     "bedrock/nova-lite",
-    "bedrock/nova-2-lite",
     "bedrock/glm-4.7-flash",
-    "bedrock/minimax-m2.1",
-    "bedrock/minimax-m2.5",
-    "bedrock/deepseek-v3.2",
 })
 VISION_MODELS = frozenset({
     "bedrock/nova-lite",
