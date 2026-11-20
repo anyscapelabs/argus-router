@@ -45,3 +45,6 @@ target/
 
 # Command Code session data
 .commandcode/
+
+# Generated catalog copy for the router deployment
+llm-gateway/catalog/

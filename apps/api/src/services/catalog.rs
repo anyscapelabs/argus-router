@@ -85,6 +85,10 @@ pub struct ModelCatalogEntry {
     pub pricing: Pricing,
     #[serde(default)]
     pub free: bool,
+    #[serde(default)]
+    pub auto: bool,
+    #[serde(default)]
+    pub auto_priority: u32,
     pub tier: Tier,
 }
 

@@ -1,180 +1,6 @@
-# Argus LLM Gateway — LiteLLM Proxy Configuration
-# All models route through OpenRouter (single API key)
-# This service sits behind the Rust gateway and only accepts internal service key calls
-#
-# Model IDs match exactly what's in apps/api/catalog/models.json (upstream_model field).
-# OpenRouter accepts the model slug directly — no extra prefix needed beyond "openrouter/".
-
+# GENERATED from apps/api/catalog/models.json — do not edit.
+# Run scripts/render_litellm_config.py after changing the catalog.
 model_list:
-  # ─── argus/auto pool ───────────────────────────────────────────────────────
-  # Only Bedrock deployments: OpenRouter credentials are not available.
-  # LiteLLM selects a deployment and handles cooldowns and fallbacks.
-  - model_name: argus/auto
-    litellm_params:
-      model: bedrock/eu.amazon.nova-lite-v1:0
-      aws_region_name: eu-north-1
-    model_info:
-      disable_background_health_check: true
-      id: nova-lite-auto
-      max_tokens: 10000
-
-  - model_name: argus/auto
-    litellm_params:
-      model: bedrock/zai.glm-4.7-flash
-      aws_region_name: eu-north-1
-    model_info:
-      disable_background_health_check: true
-      id: glm-4.7-flash-auto
-      max_tokens: 128000
-
-  # ─── Free / Lite tier models (from catalog + allowlist) ────────────────────
-  - model_name: openai/gpt-6-luna
-    litellm_params:
-      model: openrouter/openai/gpt-6-luna
-      api_key: os.environ/OPENROUTER_API_KEY
-      api_base: https://openrouter.ai/api/v1
-    model_info:
-      disable_background_health_check: true
-      max_tokens: 16384
-
-  - model_name: deepseek/deepseek-v4.1-flash-1017
-    litellm_params:
-      model: openrouter/deepseek/deepseek-v4.1-flash-1017
-      api_key: os.environ/OPENROUTER_API_KEY
-      api_base: https://openrouter.ai/api/v1
-    model_info:
-      disable_background_health_check: true
-      max_tokens: 65536
-
-  - model_name: minimax/minimax-m3.1-flash
-    litellm_params:
-      model: openrouter/minimax/minimax-m3.1-flash
-      api_key: os.environ/OPENROUTER_API_KEY
-      api_base: https://openrouter.ai/api/v1
-    model_info:
-      disable_background_health_check: true
-      max_tokens: 32768
-
-  - model_name: qwen/qwen3.8-flash
-    litellm_params:
-      model: openrouter/qwen/qwen3.8-flash
-      api_key: os.environ/OPENROUTER_API_KEY
-      api_base: https://openrouter.ai/api/v1
-    model_info:
-      disable_background_health_check: true
-      max_tokens: 32768
-
-  - model_name: z-ai/glm-5.3-flash
-    litellm_params:
-      model: openrouter/z-ai/glm-5.3-flash
-      api_key: os.environ/OPENROUTER_API_KEY
-      api_base: https://openrouter.ai/api/v1
-    model_info:
-      disable_background_health_check: true
-      max_tokens: 32768
-
-  - model_name: anthropic/claude-haiku-5.5
-    litellm_params:
-      model: openrouter/anthropic/claude-haiku-5.5
-      api_key: os.environ/OPENROUTER_API_KEY
-      api_base: https://openrouter.ai/api/v1
-    model_info:
-      disable_background_health_check: true
-      max_tokens: 64000
-
-  # ─── Standard tier ─────────────────────────────────────────────────────────
-  - model_name: deepseek/deepseek-v4-pro
-    litellm_params:
-      model: openrouter/deepseek/deepseek-v4-pro
-      api_key: os.environ/OPENROUTER_API_KEY
-      api_base: https://openrouter.ai/api/v1
-    model_info:
-      disable_background_health_check: true
-      max_tokens: 65536
-
-  - model_name: google/gemini-3.8-flash
-    litellm_params:
-      model: openrouter/google/gemini-3.8-flash
-      api_key: os.environ/OPENROUTER_API_KEY
-      api_base: https://openrouter.ai/api/v1
-    model_info:
-      disable_background_health_check: true
-      max_tokens: 65536
-
-  - model_name: minimax/minimax-m3
-    litellm_params:
-      model: openrouter/minimax/minimax-m3
-      api_key: os.environ/OPENROUTER_API_KEY
-      api_base: https://openrouter.ai/api/v1
-    model_info:
-      disable_background_health_check: true
-      max_tokens: 32768
-
-  - model_name: z-ai/glm-5.3
-    litellm_params:
-      model: openrouter/z-ai/glm-5.3
-      api_key: os.environ/OPENROUTER_API_KEY
-      api_base: https://openrouter.ai/api/v1
-    model_info:
-      disable_background_health_check: true
-      max_tokens: 32768
-
-  # ─── Premium tier ──────────────────────────────────────────────────────────
-  - model_name: anthropic/claude-sonnet-5.5
-    litellm_params:
-      model: openrouter/anthropic/claude-sonnet-5.5
-      api_key: os.environ/OPENROUTER_API_KEY
-      api_base: https://openrouter.ai/api/v1
-    model_info:
-      disable_background_health_check: true
-      max_tokens: 64000
-
-  - model_name: google/gemini-4-carbon
-    litellm_params:
-      model: openrouter/google/gemini-4-carbon
-      api_key: os.environ/OPENROUTER_API_KEY
-      api_base: https://openrouter.ai/api/v1
-    model_info:
-      disable_background_health_check: true
-      max_tokens: 65536
-
-  - model_name: moonshotai/kimi-k3.1-pro
-    litellm_params:
-      model: openrouter/moonshotai/kimi-k3.1-pro
-      api_key: os.environ/OPENROUTER_API_KEY
-      api_base: https://openrouter.ai/api/v1
-    model_info:
-      disable_background_health_check: true
-      max_tokens: 32768
-
-  - model_name: openai/gpt-6.1-sol
-    litellm_params:
-      model: openrouter/openai/gpt-6.1-sol
-      api_key: os.environ/OPENROUTER_API_KEY
-      api_base: https://openrouter.ai/api/v1
-    model_info:
-      disable_background_health_check: true
-      max_tokens: 32768
-
-  - model_name: qwen/qwen3.8-max
-    litellm_params:
-      model: openrouter/qwen/qwen3.8-max
-      api_key: os.environ/OPENROUTER_API_KEY
-      api_base: https://openrouter.ai/api/v1
-    model_info:
-      disable_background_health_check: true
-      max_tokens: 32768
-
-  - model_name: x-ai/grok-4.7
-    litellm_params:
-      model: openrouter/x-ai/grok-4.7
-      api_key: os.environ/OPENROUTER_API_KEY
-      api_base: https://openrouter.ai/api/v1
-    model_info:
-      disable_background_health_check: true
-      max_tokens: 32768
-
-  # ─── Ultra tier ────────────────────────────────────────────────────────────
   - model_name: anthropic/claude-fable-5.2
     litellm_params:
       model: openrouter/anthropic/claude-fable-5.2
@@ -183,7 +9,14 @@ model_list:
     model_info:
       disable_background_health_check: true
       max_tokens: 64000
-
+  - model_name: anthropic/claude-haiku-5.5
+    litellm_params:
+      model: openrouter/anthropic/claude-haiku-5.5
+      api_key: os.environ/OPENROUTER_API_KEY
+      api_base: https://openrouter.ai/api/v1
+    model_info:
+      disable_background_health_check: true
+      max_tokens: 64000
   - model_name: anthropic/claude-opus-5.5
     litellm_params:
       model: openrouter/anthropic/claude-opus-5.5
@@ -192,8 +25,126 @@ model_list:
     model_info:
       disable_background_health_check: true
       max_tokens: 64000
-
-  # ─── Amazon Bedrock (AWS credentials from instance role) ────────────────
+  - model_name: anthropic/claude-sonnet-5.5
+    litellm_params:
+      model: openrouter/anthropic/claude-sonnet-5.5
+      api_key: os.environ/OPENROUTER_API_KEY
+      api_base: https://openrouter.ai/api/v1
+    model_info:
+      disable_background_health_check: true
+      max_tokens: 64000
+  - model_name: deepseek/deepseek-v4-pro
+    litellm_params:
+      model: openrouter/deepseek/deepseek-v4-pro
+      api_key: os.environ/OPENROUTER_API_KEY
+      api_base: https://openrouter.ai/api/v1
+    model_info:
+      disable_background_health_check: true
+      max_tokens: 65536
+  - model_name: deepseek/deepseek-v4.1-flash-1017
+    litellm_params:
+      model: openrouter/deepseek/deepseek-v4.1-flash-1017
+      api_key: os.environ/OPENROUTER_API_KEY
+      api_base: https://openrouter.ai/api/v1
+    model_info:
+      disable_background_health_check: true
+      max_tokens: 65536
+  - model_name: google/gemini-3.8-flash
+    litellm_params:
+      model: openrouter/google/gemini-3.8-flash
+      api_key: os.environ/OPENROUTER_API_KEY
+      api_base: https://openrouter.ai/api/v1
+    model_info:
+      disable_background_health_check: true
+      max_tokens: 65536
+  - model_name: google/gemini-4-carbon
+    litellm_params:
+      model: openrouter/google/gemini-4-carbon
+      api_key: os.environ/OPENROUTER_API_KEY
+      api_base: https://openrouter.ai/api/v1
+    model_info:
+      disable_background_health_check: true
+      max_tokens: 65536
+  - model_name: moonshotai/kimi-k3.1-pro
+    litellm_params:
+      model: openrouter/moonshotai/kimi-k3.1-pro
+      api_key: os.environ/OPENROUTER_API_KEY
+      api_base: https://openrouter.ai/api/v1
+    model_info:
+      disable_background_health_check: true
+      max_tokens: 65536
+  - model_name: minimax/minimax-m3
+    litellm_params:
+      model: openrouter/minimax/minimax-m3
+      api_key: os.environ/OPENROUTER_API_KEY
+      api_base: https://openrouter.ai/api/v1
+    model_info:
+      disable_background_health_check: true
+      max_tokens: 65536
+  - model_name: minimax/minimax-m3.1-flash
+    litellm_params:
+      model: openrouter/minimax/minimax-m3.1-flash
+      api_key: os.environ/OPENROUTER_API_KEY
+      api_base: https://openrouter.ai/api/v1
+    model_info:
+      disable_background_health_check: true
+      max_tokens: 65536
+  - model_name: openai/gpt-6-luna
+    litellm_params:
+      model: openrouter/openai/gpt-6-luna
+      api_key: os.environ/OPENROUTER_API_KEY
+      api_base: https://openrouter.ai/api/v1
+    model_info:
+      disable_background_health_check: true
+      max_tokens: 128000
+  - model_name: openai/gpt-6.1-sol
+    litellm_params:
+      model: openrouter/openai/gpt-6.1-sol
+      api_key: os.environ/OPENROUTER_API_KEY
+      api_base: https://openrouter.ai/api/v1
+    model_info:
+      disable_background_health_check: true
+      max_tokens: 128000
+  - model_name: qwen/qwen3.8-flash
+    litellm_params:
+      model: openrouter/qwen/qwen3.8-flash
+      api_key: os.environ/OPENROUTER_API_KEY
+      api_base: https://openrouter.ai/api/v1
+    model_info:
+      disable_background_health_check: true
+      max_tokens: 65536
+  - model_name: qwen/qwen3.8-max
+    litellm_params:
+      model: openrouter/qwen/qwen3.8-max
+      api_key: os.environ/OPENROUTER_API_KEY
+      api_base: https://openrouter.ai/api/v1
+    model_info:
+      disable_background_health_check: true
+      max_tokens: 65536
+  - model_name: x-ai/grok-4.7
+    litellm_params:
+      model: openrouter/x-ai/grok-4.7
+      api_key: os.environ/OPENROUTER_API_KEY
+      api_base: https://openrouter.ai/api/v1
+    model_info:
+      disable_background_health_check: true
+      max_tokens: 65536
+  - model_name: z-ai/glm-5.3
+    litellm_params:
+      model: openrouter/z-ai/glm-5.3
+      api_key: os.environ/OPENROUTER_API_KEY
+      api_base: https://openrouter.ai/api/v1
+    model_info:
+      disable_background_health_check: true
+      max_tokens: 131072
+  - model_name: z-ai/glm-5.3-flash
+    litellm_params:
+      model: openrouter/z-ai/glm-5.3-flash
+      api_key: os.environ/OPENROUTER_API_KEY
+      api_base: https://openrouter.ai/api/v1
+    model_info:
+      disable_background_health_check: true
+      max_tokens: 32768
   - model_name: bedrock/nova-lite
     litellm_params:
       model: bedrock/eu.amazon.nova-lite-v1:0
@@ -292,6 +243,49 @@ model_list:
     model_info:
       disable_background_health_check: true
       max_tokens: 8000
+  - model_name: argus/auto-bedrock
+    litellm_params:
+      model: bedrock/eu.amazon.nova-lite-v1:0
+      aws_region_name: eu-north-1
+    model_info:
+      disable_background_health_check: true
+      id: bedrock-nova-lite-auto
+      max_tokens: 10000
+  - model_name: argus/auto-bedrock
+    litellm_params:
+      model: bedrock/zai.glm-4.7-flash
+      aws_region_name: eu-north-1
+    model_info:
+      disable_background_health_check: true
+      id: bedrock-glm-4.7-flash-auto
+      max_tokens: 128000
+  - model_name: argus/auto-openrouter
+    litellm_params:
+      model: openrouter/openai/gpt-6-luna
+      api_key: os.environ/OPENROUTER_API_KEY
+      api_base: https://openrouter.ai/api/v1
+    model_info:
+      disable_background_health_check: true
+      id: openai-gpt-6-luna-auto
+      max_tokens: 128000
+  - model_name: argus/auto-openrouter
+    litellm_params:
+      model: openrouter/deepseek/deepseek-v4.1-flash-1017
+      api_key: os.environ/OPENROUTER_API_KEY
+      api_base: https://openrouter.ai/api/v1
+    model_info:
+      disable_background_health_check: true
+      id: deepseek-deepseek-v4.1-flash-1017-auto
+      max_tokens: 65536
+  - model_name: argus/auto-openrouter
+    litellm_params:
+      model: openrouter/qwen/qwen3.8-flash
+      api_key: os.environ/OPENROUTER_API_KEY
+      api_base: https://openrouter.ai/api/v1
+    model_info:
+      disable_background_health_check: true
+      id: qwen-qwen3.8-flash-auto
+      max_tokens: 65536
 
 router_settings:
   routing_strategy: simple-shuffle
@@ -299,15 +293,12 @@ router_settings:
   retry_after: 2
   allowed_fails: 2
   cooldown_time: 60
-  # Bedrock-only fallbacks; no OpenRouter credentials in this deployment.
+  # Provider-level fallback: if one provider fails, use the next one.
   fallbacks:
-    - argus/auto:
-        - bedrock/nova-lite
-        - bedrock/glm-4.7-flash
-    - bedrock/nova-lite:
-        - bedrock/glm-4.7-flash
-    - bedrock/glm-4.7-flash:
-        - bedrock/nova-lite
+    - argus/auto-bedrock:
+        - argus/auto-openrouter
+    - argus/auto-openrouter:
+        - argus/auto-bedrock
 
 litellm_settings:
   drop_params: true
@@ -315,18 +306,12 @@ litellm_settings:
   streaming_timeout: 120
   set_verbose: false
   json_logs: true
-  # Cost is delivered in the final SSE usage chunk; response headers alone
-  # are written before a stream finishes and report zero for streaming calls.
   include_cost_in_streaming_usage: true
-  # Rust passes each user's effective plan allowlist on every request.
-  # This hook blocks disallowed models and constrains argus/auto to the plan.
   callbacks: argus_gate.gate
 
 general_settings:
   master_key: os.environ/LITELLM_INTERNAL_KEY
   background_health_checks: false
-  # Inject stream_options.include_usage so the final SSE chunk carries the
-  # authoritative token counts without Rust modifying the request body.
   always_include_stream_usage: true
   disable_spend_logs: true
   disable_error_logs: false

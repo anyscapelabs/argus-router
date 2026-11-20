@@ -1,30 +1,46 @@
+import json
 import os
-import random
 
 import yaml
 from fastapi import HTTPException
 from litellm.integrations.custom_logger import CustomLogger
 
 AUTO_ALIAS = "argus/auto"
-AUTO_MODELS = frozenset({
-    "bedrock/nova-lite",
-    "bedrock/glm-4.7-flash",
-})
-VISION_MODELS = frozenset({
-    "bedrock/nova-lite",
-    "bedrock/nova-2-lite",
-    "bedrock/nova-pro",
-    "bedrock/kimi-k2.5",
-    "bedrock/kimi-k3",
-    "bedrock/kimi-k3.1",
-    "bedrock/claude-haiku-4.5",
-    "bedrock/claude-opus-4.5",
-})
+CATALOG_PATH = os.environ.get("ARGUS_CATALOG_PATH", "/app/catalog/models.json")
 REQUIRED_HEADERS = (
     "x-argus-allowed-models",
     "x-argus-user-id",
     "x-argus-plan",
 )
+
+with open(CATALOG_PATH) as catalog_file:
+    CATALOG = json.load(catalog_file)
+
+BY_ID = {entry["id"]: entry for entry in CATALOG}
+AUTO_ENTRIES = sorted(
+    (
+        entry
+        for entry in CATALOG
+        if entry.get("auto") and entry["id"] != AUTO_ALIAS
+    ),
+    key=lambda entry: (entry.get("auto_priority", 999), entry["id"]),
+)
+AUTO_PROVIDERS = sorted(
+    {entry["provider"] for entry in AUTO_ENTRIES},
+    key=lambda provider: min(
+        entry.get("auto_priority", 999)
+        for entry in AUTO_ENTRIES
+        if entry["provider"] == provider
+    ),
+)
+AUTO_GROUPS = {provider: f"{AUTO_ALIAS}-{provider}" for provider in AUTO_PROVIDERS}
+AUTO_MODELS = {
+    provider: {entry["id"] for entry in AUTO_ENTRIES if entry["provider"] == provider}
+    for provider in AUTO_PROVIDERS
+}
+VISION_MODELS = {
+    entry["id"] for entry in CATALOG if entry.get("capabilities", {}).get("vision")
+}
 
 
 def _deployed_models():
@@ -33,7 +49,7 @@ def _deployed_models():
     return {
         entry["model_name"]
         for entry in config.get("model_list", [])
-        if entry.get("model_name") != AUTO_ALIAS
+        if not entry.get("model_name", "").startswith(AUTO_ALIAS)
     }
 
 
@@ -57,12 +73,9 @@ class ArgusGate(CustomLogger):
     async def async_pre_call_hook(self, user_api_key_dict, cache, data, call_type):
         metadata = data.get("metadata") or {}
         headers = metadata.get("headers") or {}
-
-        missing = [name for name in REQUIRED_HEADERS if not headers.get(name)]
-        if missing:
+        if any(not headers.get(name) for name in REQUIRED_HEADERS):
             raise HTTPException(
-                status_code=403,
-                detail="requests must come from the Argus API gateway",
+                status_code=403, detail="requests must come from the Argus API gateway"
             )
 
         allowed = {
@@ -75,21 +88,21 @@ class ArgusGate(CustomLogger):
 
         requested = data.get("model")
         if requested == AUTO_ALIAS:
-            candidates = allowed & DEPLOYED_MODELS & AUTO_MODELS
-            if not candidates:
-                candidates = allowed & DEPLOYED_MODELS
-            if _has_image(data):
-                candidates &= VISION_MODELS
-                if not candidates:
-                    raise HTTPException(
-                        status_code=403, detail="no vision-capable model is enabled for your plan"
-                    )
-            candidates = sorted(candidates)
-            if not candidates:
+            has_image = _has_image(data)
+            provider = next(
+                (
+                    candidate
+                    for candidate in AUTO_PROVIDERS
+                    if allowed & AUTO_MODELS[candidate]
+                    and (not has_image or allowed & AUTO_MODELS[candidate] & VISION_MODELS)
+                ),
+                None,
+            )
+            if provider is None:
                 raise HTTPException(
                     status_code=403, detail="no allowed model is available for auto routing"
                 )
-            data["model"] = random.choice(candidates)
+            data["model"] = AUTO_GROUPS[provider]
             return data
 
         if requested not in allowed:

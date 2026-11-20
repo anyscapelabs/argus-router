@@ -12,6 +12,7 @@ services:
     volumes:
       - ./config/litellm_config.yaml:/app/config.yaml:ro
       - ./config/argus_gate.py:/app/argus_gate.py:ro
+      - ./catalog/models.json:/app/catalog/models.json:ro
     command: ["--config", "/app/config.yaml", "--port", "4000", "--num_workers", "1"]
     logging:
       driver: "json-file"
