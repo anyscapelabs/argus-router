@@ -8,6 +8,7 @@ services:
     environment:
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
       - LITELLM_INTERNAL_KEY=${LITELLM_INTERNAL_KEY}
+      - AWS_REGION_NAME=eu-north-1
     volumes:
       - ./config/litellm_config.yaml:/app/config.yaml:ro
       - ./config/argus_gate.py:/app/argus_gate.py:ro

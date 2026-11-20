@@ -6,6 +6,24 @@ from fastapi import HTTPException
 from litellm.integrations.custom_logger import CustomLogger
 
 AUTO_ALIAS = "argus/auto"
+AUTO_MODELS = frozenset({
+    "bedrock/nova-lite",
+    "bedrock/nova-2-lite",
+    "bedrock/glm-4.7-flash",
+    "bedrock/minimax-m2.1",
+    "bedrock/minimax-m2.5",
+    "bedrock/deepseek-v3.2",
+})
+VISION_MODELS = frozenset({
+    "bedrock/nova-lite",
+    "bedrock/nova-2-lite",
+    "bedrock/nova-pro",
+    "bedrock/kimi-k2.5",
+    "bedrock/kimi-k3",
+    "bedrock/kimi-k3.1",
+    "bedrock/claude-haiku-4.5",
+    "bedrock/claude-opus-4.5",
+})
 REQUIRED_HEADERS = (
     "x-argus-allowed-models",
     "x-argus-user-id",
@@ -24,6 +42,19 @@ def _deployed_models():
 
 
 DEPLOYED_MODELS = _deployed_models()
+
+
+def _has_image(data):
+    for message in data.get("messages") or []:
+        content = message.get("content")
+        if isinstance(content, list):
+            for part in content:
+                if isinstance(part, dict):
+                    if part.get("type") in ("image_url", "image", "input_image"):
+                        return True
+                    if "image_url" in part:
+                        return True
+    return False
 
 
 class ArgusGate(CustomLogger):
@@ -48,7 +79,16 @@ class ArgusGate(CustomLogger):
 
         requested = data.get("model")
         if requested == AUTO_ALIAS:
-            candidates = sorted(allowed & DEPLOYED_MODELS)
+            candidates = allowed & DEPLOYED_MODELS & AUTO_MODELS
+            if not candidates:
+                candidates = allowed & DEPLOYED_MODELS
+            if _has_image(data):
+                candidates &= VISION_MODELS
+                if not candidates:
+                    raise HTTPException(
+                        status_code=403, detail="no vision-capable model is enabled for your plan"
+                    )
+            candidates = sorted(candidates)
             if not candidates:
                 raise HTTPException(
                     status_code=403, detail="no allowed model is available for auto routing"

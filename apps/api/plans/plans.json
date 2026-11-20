@@ -26,7 +26,11 @@
       "deepseek/deepseek-v4.1-flash-1017",
       "minimax/minimax-m3.1-flash",
       "qwen/qwen3.8-flash",
-      "openai/gpt-6-luna"
+      "openai/gpt-6-luna",
+      "bedrock/nova-lite",
+      "bedrock/glm-4.7-flash",
+      "bedrock/minimax-m2.1",
+      "bedrock/minimax-m2.5"
     ]
   },
   {
@@ -66,7 +70,17 @@
       "minimax/minimax-m3",
       "deepseek/deepseek-v4-pro",
       "google/gemini-3.8-flash",
-      "z-ai/glm-5.3"
+      "z-ai/glm-5.3",
+      "bedrock/nova-lite",
+      "bedrock/nova-2-lite",
+      "bedrock/nova-pro",
+      "bedrock/kimi-k2.5",
+      "bedrock/glm-4.7-flash",
+      "bedrock/glm-4.7",
+      "bedrock/glm-5",
+      "bedrock/minimax-m2.1",
+      "bedrock/minimax-m2.5",
+      "bedrock/deepseek-v3.2"
     ]
   },
   {
@@ -117,7 +131,20 @@
       "openai/gpt-6.1-sol",
       "moonshotai/kimi-k3.1-pro",
       "qwen/qwen3.8-max",
-      "x-ai/grok-4.7"
+      "x-ai/grok-4.7",
+      "bedrock/nova-lite",
+      "bedrock/nova-2-lite",
+      "bedrock/nova-pro",
+      "bedrock/kimi-k2.5",
+      "bedrock/kimi-k3",
+      "bedrock/kimi-k3.1",
+      "bedrock/claude-haiku-4.5",
+      "bedrock/glm-4.7-flash",
+      "bedrock/glm-4.7",
+      "bedrock/glm-5",
+      "bedrock/minimax-m2.1",
+      "bedrock/minimax-m2.5",
+      "bedrock/deepseek-v3.2"
     ]
   },
   {
@@ -175,7 +202,21 @@
       "qwen/qwen3.8-max",
       "x-ai/grok-4.7",
       "anthropic/claude-opus-5.5",
-      "anthropic/claude-fable-5.2"
+      "anthropic/claude-fable-5.2",
+      "bedrock/nova-lite",
+      "bedrock/nova-2-lite",
+      "bedrock/nova-pro",
+      "bedrock/kimi-k2.5",
+      "bedrock/kimi-k3",
+      "bedrock/kimi-k3.1",
+      "bedrock/claude-haiku-4.5",
+      "bedrock/claude-opus-4.5",
+      "bedrock/glm-4.7-flash",
+      "bedrock/glm-4.7",
+      "bedrock/glm-5",
+      "bedrock/minimax-m2.1",
+      "bedrock/minimax-m2.5",
+      "bedrock/deepseek-v3.2"
     ]
   }
 ]

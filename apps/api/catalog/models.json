@@ -513,5 +513,313 @@
     },
     "free": false,
     "tier": "lite"
+  },
+  {
+    "id": "bedrock/nova-lite",
+    "name": "Nova Lite (Bedrock)",
+    "compat": "openai",
+    "provider": "bedrock",
+    "upstream_model": "bedrock/eu.amazon.nova-lite-v1:0",
+    "context": 300000,
+    "max_output": 10000,
+    "capabilities": {
+      "tools": true,
+      "vision": true,
+      "reasoning": false
+    },
+    "pricing": {
+      "input": "0.06",
+      "output": "0.24",
+      "cache_read": "0",
+      "cache_write": null
+    },
+    "free": false,
+    "tier": "lite"
+  },
+  {
+    "id": "bedrock/nova-2-lite",
+    "name": "Nova 2 Lite (Bedrock)",
+    "compat": "openai",
+    "provider": "bedrock",
+    "upstream_model": "bedrock/eu.amazon.nova-2-lite-v1:0",
+    "context": 1000000,
+    "max_output": 64000,
+    "capabilities": {
+      "tools": true,
+      "vision": true,
+      "reasoning": false
+    },
+    "pricing": {
+      "input": "0.30",
+      "output": "2.50",
+      "cache_read": "0",
+      "cache_write": null
+    },
+    "free": false,
+    "tier": "standard"
+  },
+  {
+    "id": "bedrock/nova-pro",
+    "name": "Nova Pro (Bedrock)",
+    "compat": "openai",
+    "provider": "bedrock",
+    "upstream_model": "bedrock/eu.amazon.nova-pro-v1:0",
+    "context": 300000,
+    "max_output": 10000,
+    "capabilities": {
+      "tools": true,
+      "vision": true,
+      "reasoning": false
+    },
+    "pricing": {
+      "input": "0.80",
+      "output": "3.20",
+      "cache_read": "0",
+      "cache_write": null
+    },
+    "free": false,
+    "tier": "standard"
+  },
+  {
+    "id": "bedrock/kimi-k2.5",
+    "name": "Kimi K2.5 (Bedrock)",
+    "compat": "openai",
+    "provider": "bedrock",
+    "upstream_model": "bedrock/moonshotai.kimi-k2.5",
+    "context": 256000,
+    "max_output": 16000,
+    "capabilities": {
+      "tools": true,
+      "vision": true,
+      "reasoning": true
+    },
+    "pricing": {
+      "input": "0.60",
+      "output": "3.00",
+      "cache_read": "0",
+      "cache_write": null
+    },
+    "free": false,
+    "tier": "standard"
+  },
+  {
+    "id": "bedrock/kimi-k3",
+    "name": "Kimi K3 (Bedrock)",
+    "compat": "openai",
+    "provider": "bedrock",
+    "upstream_model": "bedrock/global.moonshotai.kimi-k3",
+    "context": 1000000,
+    "max_output": 131072,
+    "capabilities": {
+      "tools": true,
+      "vision": true,
+      "reasoning": true
+    },
+    "pricing": {
+      "input": "3.00",
+      "output": "15.00",
+      "cache_read": "0",
+      "cache_write": null
+    },
+    "free": false,
+    "tier": "premium"
+  },
+  {
+    "id": "bedrock/kimi-k3.1",
+    "name": "Kimi K3.1 (Bedrock)",
+    "compat": "openai",
+    "provider": "bedrock",
+    "upstream_model": "bedrock/global.moonshotai.kimi-k3.1",
+    "context": 868928,
+    "max_output": 131072,
+    "capabilities": {
+      "tools": true,
+      "vision": true,
+      "reasoning": true
+    },
+    "pricing": {
+      "input": "4.00",
+      "output": "20.00",
+      "cache_read": "0",
+      "cache_write": null
+    },
+    "free": false,
+    "tier": "premium"
+  },
+  {
+    "id": "bedrock/claude-haiku-4.5",
+    "name": "Claude Haiku 4.5 (Bedrock)",
+    "compat": "openai",
+    "provider": "bedrock",
+    "upstream_model": "bedrock/eu.anthropic.claude-haiku-4-5-20251001-v1:0",
+    "context": 200000,
+    "max_output": 64000,
+    "capabilities": {
+      "tools": true,
+      "vision": true,
+      "reasoning": true
+    },
+    "pricing": {
+      "input": "1.00",
+      "output": "5.00",
+      "cache_read": "0",
+      "cache_write": null
+    },
+    "free": false,
+    "tier": "premium"
+  },
+  {
+    "id": "bedrock/claude-opus-4.5",
+    "name": "Claude Opus 4.5 (Bedrock)",
+    "compat": "openai",
+    "provider": "bedrock",
+    "upstream_model": "bedrock/eu.anthropic.claude-opus-4-5-20251101-v1:0",
+    "context": 200000,
+    "max_output": 64000,
+    "capabilities": {
+      "tools": true,
+      "vision": true,
+      "reasoning": true
+    },
+    "pricing": {
+      "input": "5.00",
+      "output": "25.00",
+      "cache_read": "0",
+      "cache_write": null
+    },
+    "free": false,
+    "tier": "ultra"
+  },
+  {
+    "id": "bedrock/glm-4.7-flash",
+    "name": "GLM 4.7 Flash (Bedrock)",
+    "compat": "openai",
+    "provider": "bedrock",
+    "upstream_model": "bedrock/zai.glm-4.7-flash",
+    "context": 203000,
+    "max_output": 128000,
+    "capabilities": {
+      "tools": true,
+      "vision": false,
+      "reasoning": false
+    },
+    "pricing": {
+      "input": "0.07",
+      "output": "0.40",
+      "cache_read": "0",
+      "cache_write": null
+    },
+    "free": false,
+    "tier": "lite"
+  },
+  {
+    "id": "bedrock/glm-4.7",
+    "name": "GLM 4.7 (Bedrock)",
+    "compat": "openai",
+    "provider": "bedrock",
+    "upstream_model": "bedrock/zai.glm-4.7",
+    "context": 203000,
+    "max_output": 128000,
+    "capabilities": {
+      "tools": true,
+      "vision": false,
+      "reasoning": false
+    },
+    "pricing": {
+      "input": "0.60",
+      "output": "2.20",
+      "cache_read": "0",
+      "cache_write": null
+    },
+    "free": false,
+    "tier": "standard"
+  },
+  {
+    "id": "bedrock/glm-5",
+    "name": "GLM 5 (Bedrock)",
+    "compat": "openai",
+    "provider": "bedrock",
+    "upstream_model": "bedrock/zai.glm-5",
+    "context": 200000,
+    "max_output": 128000,
+    "capabilities": {
+      "tools": true,
+      "vision": false,
+      "reasoning": true
+    },
+    "pricing": {
+      "input": "1.00",
+      "output": "3.20",
+      "cache_read": "0",
+      "cache_write": null
+    },
+    "free": false,
+    "tier": "standard"
+  },
+  {
+    "id": "bedrock/minimax-m2.1",
+    "name": "MiniMax M2.1 (Bedrock)",
+    "compat": "openai",
+    "provider": "bedrock",
+    "upstream_model": "bedrock/minimax.minimax-m2.1",
+    "context": 196000,
+    "max_output": 8000,
+    "capabilities": {
+      "tools": true,
+      "vision": false,
+      "reasoning": true
+    },
+    "pricing": {
+      "input": "0.30",
+      "output": "1.20",
+      "cache_read": "0",
+      "cache_write": null
+    },
+    "free": false,
+    "tier": "lite"
+  },
+  {
+    "id": "bedrock/minimax-m2.5",
+    "name": "MiniMax M2.5 (Bedrock)",
+    "compat": "openai",
+    "provider": "bedrock",
+    "upstream_model": "bedrock/minimax.minimax-m2.5",
+    "context": 196000,
+    "max_output": 8000,
+    "capabilities": {
+      "tools": true,
+      "vision": false,
+      "reasoning": true
+    },
+    "pricing": {
+      "input": "0.30",
+      "output": "1.20",
+      "cache_read": "0",
+      "cache_write": null
+    },
+    "free": false,
+    "tier": "lite"
+  },
+  {
+    "id": "bedrock/deepseek-v3.2",
+    "name": "DeepSeek V3.2 (Bedrock)",
+    "compat": "openai",
+    "provider": "bedrock",
+    "upstream_model": "bedrock/deepseek.v3.2",
+    "context": 156000,
+    "max_output": 8000,
+    "capabilities": {
+      "tools": true,
+      "vision": false,
+      "reasoning": true
+    },
+    "pricing": {
+      "input": "0.62",
+      "output": "1.85",
+      "cache_read": "0",
+      "cache_write": null
+    },
+    "free": false,
+    "tier": "standard"
   }
 ]

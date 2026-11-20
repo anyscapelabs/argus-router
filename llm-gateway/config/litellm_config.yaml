@@ -216,6 +216,106 @@ model_list:
       disable_background_health_check: true
       max_tokens: 64000
 
+  # ─── Amazon Bedrock (AWS credentials from instance role) ────────────────
+  - model_name: bedrock/nova-lite
+    litellm_params:
+      model: bedrock/eu.amazon.nova-lite-v1:0
+      aws_region_name: eu-north-1
+    model_info:
+      disable_background_health_check: true
+      max_tokens: 10000
+  - model_name: bedrock/nova-2-lite
+    litellm_params:
+      model: bedrock/eu.amazon.nova-2-lite-v1:0
+      aws_region_name: eu-north-1
+    model_info:
+      disable_background_health_check: true
+      max_tokens: 64000
+  - model_name: bedrock/nova-pro
+    litellm_params:
+      model: bedrock/eu.amazon.nova-pro-v1:0
+      aws_region_name: eu-north-1
+    model_info:
+      disable_background_health_check: true
+      max_tokens: 10000
+  - model_name: bedrock/kimi-k2.5
+    litellm_params:
+      model: bedrock/moonshotai.kimi-k2.5
+      aws_region_name: eu-north-1
+    model_info:
+      disable_background_health_check: true
+      max_tokens: 16000
+  - model_name: bedrock/kimi-k3
+    litellm_params:
+      model: bedrock/global.moonshotai.kimi-k3
+      aws_region_name: eu-north-1
+    model_info:
+      disable_background_health_check: true
+      max_tokens: 131072
+  - model_name: bedrock/kimi-k3.1
+    litellm_params:
+      model: bedrock/global.moonshotai.kimi-k3.1
+      aws_region_name: eu-north-1
+    model_info:
+      disable_background_health_check: true
+      max_tokens: 131072
+  - model_name: bedrock/claude-haiku-4.5
+    litellm_params:
+      model: bedrock/eu.anthropic.claude-haiku-4-5-20251001-v1:0
+      aws_region_name: eu-north-1
+    model_info:
+      disable_background_health_check: true
+      max_tokens: 64000
+  - model_name: bedrock/claude-opus-4.5
+    litellm_params:
+      model: bedrock/eu.anthropic.claude-opus-4-5-20251101-v1:0
+      aws_region_name: eu-north-1
+    model_info:
+      disable_background_health_check: true
+      max_tokens: 64000
+  - model_name: bedrock/glm-4.7-flash
+    litellm_params:
+      model: bedrock/zai.glm-4.7-flash
+      aws_region_name: eu-north-1
+    model_info:
+      disable_background_health_check: true
+      max_tokens: 128000
+  - model_name: bedrock/glm-4.7
+    litellm_params:
+      model: bedrock/zai.glm-4.7
+      aws_region_name: eu-north-1
+    model_info:
+      disable_background_health_check: true
+      max_tokens: 128000
+  - model_name: bedrock/glm-5
+    litellm_params:
+      model: bedrock/zai.glm-5
+      aws_region_name: eu-north-1
+    model_info:
+      disable_background_health_check: true
+      max_tokens: 128000
+  - model_name: bedrock/minimax-m2.1
+    litellm_params:
+      model: bedrock/minimax.minimax-m2.1
+      aws_region_name: eu-north-1
+    model_info:
+      disable_background_health_check: true
+      max_tokens: 8000
+  - model_name: bedrock/minimax-m2.5
+    litellm_params:
+      model: bedrock/minimax.minimax-m2.5
+      aws_region_name: eu-north-1
+    model_info:
+      disable_background_health_check: true
+      max_tokens: 8000
+  - model_name: bedrock/deepseek-v3.2
+    litellm_params:
+      model: bedrock/deepseek.v3.2
+      aws_region_name: eu-north-1
+    model_info:
+      disable_background_health_check: true
+      max_tokens: 8000
+
 router_settings:
   routing_strategy: simple-shuffle
   num_retries: 3
