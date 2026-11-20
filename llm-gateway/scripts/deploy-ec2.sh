@@ -42,7 +42,7 @@ docker compose \
 for _ in $(seq 1 60); do
   if curl --fail --silent --show-error --max-time 5 \
     -H "Authorization: Bearer $internal_key" \
-    http://localhost:4000/health > /dev/null; then
+    http://localhost:4000/health/liveliness > /dev/null; then
     echo "LLM gateway is healthy"
     exit 0
   fi

@@ -16,7 +16,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "python -c \"import os, urllib.request; r = urllib.request.Request('http://localhost:4000/health', headers={'Authorization': 'Bearer ' + os.environ['LITELLM_INTERNAL_KEY']}); urllib.request.urlopen(r, timeout=5)\"",
+          "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:4000/health/liveliness', timeout=5)\"",
         ]
       interval: 30s
       timeout: 10s
