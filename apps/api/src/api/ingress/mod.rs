@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use crate::error::{ErrCode, Errx};
 use crate::services::app_db::{GenerationReservation, GenerationReservationOutcome, QuotaCheck};
-use crate::services::catalog::ModelCatalogEntry;
+use crate::services::catalog::{AUTO_MODEL_ID, ModelCatalogEntry, Tier};
 use crate::services::usage::UsageRow;
 use crate::state::AppState;
 
@@ -524,6 +524,19 @@ async fn forward_to_llm_gateway(
 
     let gw_status = upstream.status();
 
+    let deployed_model = upstream
+        .headers()
+        .get("x-litellm-model-name")
+        .and_then(|value| value.to_str().ok());
+    let billing_entry = if model == AUTO_MODEL_ID {
+        deployed_model
+            .and_then(|name| state.catalog.find_by_upstream(name))
+            .unwrap_or_else(|| entry.clone())
+    } else {
+        entry.clone()
+    };
+    let billable = billing_entry.tier != Tier::Lite;
+
     // Token usage and cost come from the response body (JSON or final SSE
     // usage chunk). The cost header is only a non-streaming fallback.
     let gw_cost: f64 = upstream
@@ -574,21 +587,25 @@ async fn forward_to_llm_gateway(
     let usage_rec = state.usage.clone();
     let reservation_id = reservation.id.clone();
     let held_micros = reservation.held_micros;
-    let entry_clone = entry.clone();
 
     if streaming {
         let byte_stream = upstream.bytes_stream();
         let (usage_tx, usage_rx) = tokio::sync::oneshot::channel::<UsageSnapshot>();
+        let billing_entry = billing_entry.clone();
 
         tokio::spawn(async move {
             let reported = usage_rx.await.unwrap_or_default();
-            let cost = if reported.cost_usd > 0.0 {
+            let cost = if !billable {
+                0.0
+            } else if reported.cost_usd > 0.0 {
                 reported.cost_usd
+            } else if gw_cost > 0.0 {
+                gw_cost
             } else if held_micros > 0 {
                 held_micros as f64 / 1_000_000.0
             } else {
                 cost_usd(
-                    &entry_clone,
+                    &billing_entry,
                     reported.input_tokens,
                     reported.output_tokens,
                     reported.cache_read_tokens,
@@ -683,7 +700,9 @@ async fn forward_to_llm_gateway(
         let reported = serde_json::from_slice::<Value>(&body_bytes)
             .map(|value| usage_from_response(&value))
             .unwrap_or_default();
-        let cost = if reported.cost_usd > 0.0 {
+        let cost = if !billable {
+            0.0
+        } else if reported.cost_usd > 0.0 {
             reported.cost_usd
         } else if gw_cost > 0.0 {
             gw_cost
@@ -691,7 +710,7 @@ async fn forward_to_llm_gateway(
             held_micros as f64 / 1_000_000.0
         } else {
             cost_usd(
-                &entry_clone,
+                &billing_entry,
                 reported.input_tokens,
                 reported.output_tokens,
                 reported.cache_read_tokens,

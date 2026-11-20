@@ -160,6 +160,20 @@ impl CatalogCache {
             .find(|entry| entry.id == id)
             .cloned()
     }
+
+    pub fn find_by_upstream(&self, deployed_model: &str) -> Option<ModelCatalogEntry> {
+        let normalized = deployed_model
+            .strip_prefix("openrouter/")
+            .unwrap_or(deployed_model);
+        self.inner
+            .read()
+            .expect("catalog lock")
+            .iter()
+            .find(|entry| {
+                entry.upstream_model == deployed_model || entry.upstream_model == normalized
+            })
+            .cloned()
+    }
 }
 
 const EMBEDDED: &str = include_str!("../../catalog/models.json");

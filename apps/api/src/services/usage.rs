@@ -217,7 +217,7 @@ async fn settle_generation(
     }
 
     if credits_paid {
-        let target_charge = if row.cost_usd > 0.0 || row.status == 200 {
+        let target_charge = if row.cost_usd > 0.0 {
             cost_micros(row.cost_usd).max(1)
         } else {
             0
