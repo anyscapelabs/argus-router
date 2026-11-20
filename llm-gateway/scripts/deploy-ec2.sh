@@ -37,7 +37,7 @@ docker compose \
 docker compose \
   -f docker-compose.yml \
   -f docker-compose.prod.yml \
-  up -d --remove-orphans
+  up -d --force-recreate --remove-orphans
 
 for _ in $(seq 1 60); do
   if [ -n "$(docker compose \
