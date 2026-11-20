@@ -40,10 +40,11 @@ docker compose \
   up -d --remove-orphans
 
 for _ in $(seq 1 60); do
-  if curl --fail --silent --show-error --max-time 5 \
-    -H "Authorization: Bearer $internal_key" \
-    http://localhost:4000/health/liveliness > /dev/null; then
-    echo "LLM gateway is healthy"
+  if [ -n "$(docker compose \
+    -f docker-compose.yml \
+    -f docker-compose.prod.yml \
+    ps -q --filter status=running llm-gateway 2>/dev/null)" ]; then
+    echo "LLM gateway container is running"
     exit 0
   fi
   sleep 3

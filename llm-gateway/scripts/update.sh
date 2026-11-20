@@ -32,7 +32,7 @@ echo "[3/3] Waiting for gateway to become healthy..."
 GATEWAY_URL="${GATEWAY_URL:-http://localhost:4000}"
 
 for i in $(seq 1 30); do
-  if curl -sf "$GATEWAY_URL/health" > /dev/null 2>&1; then
+  if curl -sf "$GATEWAY_URL/health/liveliness" > /dev/null 2>&1; then
     echo "Gateway is healthy after $((i * 2))s."
     break
   fi

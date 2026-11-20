@@ -19,7 +19,7 @@ docker-compose up -d
 
 echo "Waiting for health check..."
 for i in $(seq 1 30); do
-  if curl -sf http://localhost:4000/health > /dev/null 2>&1; then
+  if curl -sf http://localhost:4000/health/liveliness > /dev/null 2>&1; then
     echo "LLM Gateway is healthy!"
     exit 0
   fi

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # scripts/health_check.sh — Argus LLM Gateway health inspector
-# Hits /health and /v1/models, prints model list, then tails recent logs.
+# Hits /health/liveliness and /v1/models, prints model list, then tails recent logs.
 set -euo pipefail
 
 GATEWAY_URL="${GATEWAY_URL:-http://localhost:4000}"
@@ -13,9 +13,9 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 
 # ── 1. Basic health ────────────────────────────────────────────────────────────
 echo ""
-echo "[ /health ]"
-HEALTH_RESPONSE=$(curl -sf "$GATEWAY_URL/health" 2>&1) || {
-  echo "FAIL — could not reach $GATEWAY_URL/health"
+echo "[ /health/liveliness ]"
+HEALTH_RESPONSE=$(curl -sf "$GATEWAY_URL/health/liveliness" 2>&1) || {
+  echo "FAIL — could not reach $GATEWAY_URL/health/liveliness"
   echo "Is the container running?  docker-compose ps"
   exit 1
 }
