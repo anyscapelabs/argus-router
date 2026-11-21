@@ -76,6 +76,16 @@ pub struct PlanCatalogEntry {
     #[serde(default)]
     pub voice_minutes: i64,
     #[serde(default)]
+    pub compute_budget_usd: f64,
+    #[serde(default)]
+    pub allowance_usd: f64,
+    #[serde(default)]
+    pub weekly_fraction: f64,
+    #[serde(default)]
+    pub groups: Vec<String>,
+    #[serde(default)]
+    pub group_caps: HashMap<String, f64>,
+    #[serde(default)]
     pub limits: Option<PlanLimits>,
     #[serde(default)]
     pub tier_limits: Option<HashMap<String, TierLimits>>,
@@ -88,28 +98,40 @@ pub struct PlanCatalogEntry {
     pub model_count: String,
 }
 
-pub fn expand_tiers(
+pub fn expand_groups(
     mut plans: Vec<PlanCatalogEntry>,
     catalog: &[crate::services::catalog::ModelCatalogEntry],
 ) -> Vec<PlanCatalogEntry> {
+    let auto = crate::services::catalog::AUTO_MODEL_ID;
     for plan in &mut plans {
-        let explicit = !plan.models.is_empty();
-        if !explicit {
+        let selected_groups = if plan.groups.is_empty() {
+            &plan.tiers
+        } else {
+            &plan.groups
+        };
+        if plan.models.is_empty() {
             plan.models = catalog
                 .iter()
-                .filter(|entry| plan.tiers.iter().any(|t| t == entry.tier.as_str()))
+                .filter(|entry| {
+                    !entry.is_blocked()
+                        && selected_groups
+                            .iter()
+                            .any(|group| group == entry.group.as_str())
+                })
                 .map(|entry| entry.id.clone())
                 .collect();
         }
-        let auto = crate::services::catalog::AUTO_MODEL_ID;
+        plan.models.retain(|model| {
+            if model == auto {
+                return true;
+            }
+            catalog
+                .iter()
+                .find(|entry| &entry.id == model)
+                .is_some_and(|entry| !entry.is_blocked())
+        });
         if catalog.iter().any(|entry| entry.id == auto) && !plan.models.iter().any(|m| m == auto) {
             plan.models.push(auto.to_owned());
-        }
-        if explicit {
-            plan.models.retain(|model| {
-                catalog.iter().any(|entry| &entry.id == model)
-                    || model == crate::services::catalog::AUTO_MODEL_ID
-            });
         }
         plan.model_names = catalog
             .iter()
@@ -119,6 +141,13 @@ pub fn expand_tiers(
         plan.model_count = format!("{} models", plan.models.len());
     }
     plans
+}
+
+pub fn expand_tiers(
+    plans: Vec<PlanCatalogEntry>,
+    catalog: &[crate::services::catalog::ModelCatalogEntry],
+) -> Vec<PlanCatalogEntry> {
+    expand_groups(plans, catalog)
 }
 
 const EMBEDDED: &str = include_str!("../../plans/plans.json");
@@ -141,25 +170,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn embedded_plans_parse_with_tier_limits() {
+    fn embedded_plans_parse_with_dollar_allowances() {
         let plans = seed_entries();
         assert!(plans.iter().any(|plan| plan.id == "max"));
         assert!(plans.iter().any(|plan| plan.id == "max-plus"));
-        let max_plus = plans
+        let starter = plans
             .iter()
-            .find(|plan| plan.id == "max-plus")
-            .expect("max-plus plan");
-        let tier_limits = max_plus.tier_limits.as_ref().expect("tier limits");
-        assert_eq!(tier_limits.len(), 4);
-        let ultra = tier_limits.get("ultra").expect("ultra tier limits");
-        assert_eq!(ultra.monthly_tokens_count(), 750_000);
-        assert_eq!(ultra.weekly_tokens_count(), 220_000);
-        let premium = tier_limits.get("premium").expect("premium tier limits");
-        assert_eq!(premium.monthly_tokens_count(), 3_000_000);
+            .find(|plan| plan.id == "starter")
+            .expect("starter plan");
+        assert_eq!(starter.price, "5");
+        assert_eq!(starter.searches_per_month, 60);
+        assert_eq!(starter.voice_minutes, 10);
+        assert_eq!(starter.compute_budget_usd, 3.0);
+        assert_eq!(starter.allowance_usd, 2.53);
+        assert_eq!(starter.weekly_fraction, 0.4);
+        assert_eq!(starter.groups, vec!["lite", "standard"]);
     }
 
     #[test]
-    fn aggregate_limits_equal_tier_sums() {
+    fn aggregate_limits_equal_group_sums() {
         for plan in seed_entries() {
             let Some(tier_limits) = &plan.tier_limits else {
                 continue;

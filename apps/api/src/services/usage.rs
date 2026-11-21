@@ -12,6 +12,7 @@ pub struct UsageRow {
     pub user_id: Option<String>,
     pub plan_id: Option<String>,
     pub model: String,
+    pub requested_model: Option<String>,
     pub provider: Option<String>,
     pub input_tokens: i64,
     pub output_tokens: i64,
@@ -123,7 +124,7 @@ async fn flush(pool: &PgPool, buffer: &mut Vec<Stamped>) {
 async fn insert(pool: &PgPool, rows: &[Stamped]) -> Result<(), sqlx::Error> {
     let mut tx = pool.begin().await?;
     let mut qb = QueryBuilder::new(
-        "INSERT INTO usage_logs (event_id, created_at, key_id, user_id, plan_id, model, provider, input_tokens, output_tokens, cache_read_tokens, cost_usd, status, latency_ms, error_code) ",
+        "INSERT INTO usage_logs (event_id, created_at, key_id, user_id, plan_id, model, requested_model, provider, input_tokens, output_tokens, cache_read_tokens, cost_usd, status, latency_ms, error_code) ",
     );
     qb.push_values(rows.iter(), |mut b, item| {
         let row = &item.row;
@@ -133,6 +134,7 @@ async fn insert(pool: &PgPool, rows: &[Stamped]) -> Result<(), sqlx::Error> {
             .push_bind(row.user_id.clone())
             .push_bind(row.plan_id.clone())
             .push_bind(row.model.clone())
+            .push_bind(row.requested_model.clone())
             .push_bind(row.provider.clone())
             .push_bind(row.input_tokens)
             .push_bind(row.output_tokens)
@@ -147,29 +149,19 @@ async fn insert(pool: &PgPool, rows: &[Stamped]) -> Result<(), sqlx::Error> {
     tx.commit().await
 }
 
-fn cost_micros(cost_usd: f64) -> i64 {
-    if !cost_usd.is_finite() || cost_usd <= 0.0 {
-        return 0;
-    }
-    (cost_usd * 1_000_000.0).round().clamp(0.0, i64::MAX as f64) as i64
-}
-
 async fn settle_generation(
     pool: &PgPool,
     reservation_id: &str,
     row: UsageRow,
 ) -> Result<(), sqlx::Error> {
     let mut tx = pool.begin().await?;
-    let reservation = sqlx::query(
-        "SELECT user_id, held_micros, credits_paid
-         FROM generation_reservations
-         WHERE id = $1
-         FOR UPDATE",
+    let reserved = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS (SELECT 1 FROM generation_reservations WHERE id = $1)",
     )
     .bind(reservation_id)
-    .fetch_optional(tx.as_mut())
+    .fetch_one(tx.as_mut())
     .await?;
-    let Some(reservation) = reservation else {
+    if !reserved {
         let exists = sqlx::query_scalar::<_, bool>(
             "SELECT EXISTS (SELECT 1 FROM usage_logs WHERE event_id = $1)",
         )
@@ -182,16 +174,13 @@ async fn settle_generation(
         } else {
             Err(sqlx::Error::RowNotFound)
         };
-    };
-    let user_id = sqlx::Row::try_get::<String, _>(&reservation, "user_id")?;
-    let held_micros = sqlx::Row::try_get::<i64, _>(&reservation, "held_micros")?;
-    let credits_paid = sqlx::Row::try_get::<bool, _>(&reservation, "credits_paid")?;
+    }
 
     let usage_inserted = sqlx::query(
         "INSERT INTO usage_logs
-           (event_id, created_at, key_id, user_id, plan_id, model, provider, input_tokens,
-            output_tokens, cache_read_tokens, cost_usd, status, latency_ms, error_code)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+           (event_id, created_at, key_id, user_id, plan_id, model, requested_model, provider,
+            input_tokens, output_tokens, cache_read_tokens, cost_usd, status, latency_ms, error_code)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
          ON CONFLICT (event_id) DO NOTHING",
     )
     .bind(reservation_id)
@@ -200,6 +189,7 @@ async fn settle_generation(
     .bind(row.user_id)
     .bind(row.plan_id)
     .bind(row.model)
+    .bind(row.requested_model)
     .bind(row.provider)
     .bind(row.input_tokens)
     .bind(row.output_tokens)
@@ -214,59 +204,6 @@ async fn settle_generation(
     if usage_inserted != 1 {
         tx.rollback().await?;
         return Err(sqlx::Error::RowNotFound);
-    }
-
-    if credits_paid {
-        let target_charge = if row.cost_usd > 0.0 {
-            cost_micros(row.cost_usd).max(1)
-        } else {
-            0
-        };
-        let wallet_balance = sqlx::query_scalar::<_, i64>(
-            "SELECT balance_micros FROM credit_wallet WHERE user_id = $1 FOR UPDATE",
-        )
-        .bind(&user_id)
-        .fetch_optional(tx.as_mut())
-        .await?
-        .unwrap_or(0);
-        let charged = target_charge.min(held_micros.saturating_add(wallet_balance));
-        let adjustment = held_micros.saturating_sub(charged);
-        if adjustment != 0 {
-            sqlx::query(
-                "UPDATE credit_wallet
-                 SET balance_micros = balance_micros + $2, updated_at = NOW()
-                 WHERE user_id = $1",
-            )
-            .bind(&user_id)
-            .bind(adjustment)
-            .execute(tx.as_mut())
-            .await?;
-        }
-        if charged > 0 {
-            let ledger_inserted = sqlx::query(
-                "INSERT INTO credit_transactions (user_id, delta_micros, reason, reference)
-                 VALUES ($1, $2, 'usage', $3)
-                 ON CONFLICT (reason, reference) DO NOTHING",
-            )
-            .bind(&user_id)
-            .bind(-charged)
-            .bind(reservation_id)
-            .execute(tx.as_mut())
-            .await?
-            .rows_affected();
-            if ledger_inserted != 1 {
-                tx.rollback().await?;
-                return Err(sqlx::Error::RowNotFound);
-            }
-        }
-        if charged < target_charge {
-            tracing::error!(
-                reservation_id,
-                target_charge,
-                charged,
-                "generation cost exceeded its credit reservation"
-            );
-        }
     }
 
     sqlx::query("DELETE FROM generation_reservations WHERE id = $1")

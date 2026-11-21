@@ -132,6 +132,19 @@ impl AppDb {
                     .map(|e| e.tagline.clone())
                     .unwrap_or_default(),
                 limits: entry.as_ref().and_then(|e| e.limits.clone()),
+                compute_budget_usd: entry
+                    .as_ref()
+                    .map(|e| e.compute_budget_usd)
+                    .unwrap_or_default(),
+                allowance_usd: entry.as_ref().map(|e| e.allowance_usd).unwrap_or_default(),
+                weekly_fraction: entry
+                    .as_ref()
+                    .map(|e| e.weekly_fraction)
+                    .unwrap_or_default(),
+                groups: entry
+                    .as_ref()
+                    .map(|e| e.groups.clone())
+                    .unwrap_or_default(),
                 model_names: entry
                     .as_ref()
                     .map(|e| e.model_names.clone())

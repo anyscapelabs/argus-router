@@ -7,13 +7,6 @@ export type ModelCapabilities = {
   reasoning: boolean;
 };
 
-export type ModelPricing = {
-  input: string;
-  output: string;
-  cacheRead: string | null;
-  cacheWrite: string | null;
-};
-
 export type ModelTier = "lite" | "standard" | "premium" | "ultra";
 
 export type ModelView = {
@@ -24,7 +17,6 @@ export type ModelView = {
   context: number;
   maxOutput: number;
   capabilities: ModelCapabilities;
-  pricing: ModelPricing;
   free: boolean;
   tier: ModelTier;
   enabled: boolean;

@@ -38,13 +38,16 @@ impl Settings {
     pub fn from_env() -> Self {
         let secret = env::var("BETTER_AUTH_SECRET")
             .expect("BETTER_AUTH_SECRET must be set (at least 32 chars)");
-        let extra_allowed_origins = env::var("ALLOWED_ORIGINS")
-            .unwrap_or_default()
-            .split(',')
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(str::to_owned)
-            .collect();
+        let mut extra_allowed_origins: Vec<String> = vec!["http://localhost:3000".to_owned()];
+        extra_allowed_origins.extend(
+            env::var("ALLOWED_ORIGINS")
+                .unwrap_or_default()
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned),
+        );
+        extra_allowed_origins.dedup();
         let parse_set = |name: &str| -> HashSet<String> {
             env::var(name)
                 .unwrap_or_default()

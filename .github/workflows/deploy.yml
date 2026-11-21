@@ -38,7 +38,7 @@ jobs:
             changed=$(git diff --name-only "${{ github.event.before }}" "${{ github.sha }}")
             printf '%s\n' "$changed"
             llm_gateway=false
-            printf '%s\n' "$changed" | grep -qE '^(llm-gateway/|\.github/workflows/deploy\.yml$)' && llm_gateway=true
+            printf '%s\n' "$changed" | grep -qE '^(llm-gateway/|apps/api/catalog/models\.json$|\.github/workflows/deploy\.yml$)' && llm_gateway=true
             echo "llm_gateway=$llm_gateway" >> "$GITHUB_OUTPUT"
           fi
 

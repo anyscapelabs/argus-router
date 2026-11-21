@@ -4,7 +4,6 @@ import { useState } from "react";
 import { RangeControls } from "@/components/usage-range-controls";
 import { EmptyState } from "@/components/empty-state";
 import { SkeletonRows } from "@/components/skeleton-rows";
-import { formatTokenCount } from "@/lib/usage-format";
 import { useUsage } from "@/domains/usage/hooks";
 import type { UsageRange } from "@/domains/usage/api";
 
@@ -69,16 +68,16 @@ export default function LogsPage() {
               <th className="px-2 py-2 font-medium">Model</th>
               <th className="px-2 py-2 font-medium">Service account key</th>
               <th className="px-2 py-2 text-right font-medium">Duration</th>
-              <th className="px-2 py-2 text-right font-medium">Tokens</th>
-              <th className="px-2 py-2 text-right font-medium rounded-tr-md">Cost</th>
+              <th className="px-2 py-2 text-right font-medium">Input tokens</th>
+              <th className="px-2 py-2 text-right font-medium rounded-tr-md">Output tokens</th>
             </tr>
           </thead>
           <tbody>
             {usage.isLoading ? (
-              <SkeletonRows columns={7} />
+              <SkeletonRows columns={8} />
             ) : usageRows.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-2 py-10">
+                <td colSpan={8} className="px-2 py-10">
                   <EmptyState message="No usage in this range" />
                 </td>
               </tr>
@@ -108,9 +107,11 @@ export default function LogsPage() {
                     {r.latencyMs != null ? `${(r.latencyMs / 1000).toFixed(1)}s` : "-"}
                   </td>
                   <td className="px-2 py-2 text-right tabular-nums text-white/70">
-                    {formatTokenCount((r.inputTokens ?? 0) + (r.outputTokens ?? 0))}
+                    {(r.inputTokens ?? 0).toLocaleString()}
                   </td>
-                  <td className="px-2 py-2 text-right tabular-nums text-white/70">${(r.costUsd ?? 0).toFixed(4)}</td>
+                  <td className="px-2 py-2 text-right tabular-nums text-white/70">
+                    {(r.outputTokens ?? 0).toLocaleString()}
+                  </td>
                 </tr>
               ))
             )}

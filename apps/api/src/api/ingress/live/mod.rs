@@ -151,34 +151,30 @@ pub async fn live_websocket_handler(
         }
     };
 
-    let credits_paid =
-        match crate::api::ingress::enforce_plan_quotas(&state, &principal.user_id, &principal.plan)
-            .await
-        {
-            Ok(credits_paid) => credits_paid,
-            Err(err) => {
-                record(
-                    &state,
-                    LiveUsage {
-                        key_id: Some(&principal.key_id),
-                        user_id: Some(&principal.user_id),
-                        plan_id: Some(&principal.plan),
-                        model: &model,
-                        status: err.status as i32,
-                        latency_ms: start.elapsed().as_millis() as i64,
-                        error_code: Some(err.code.as_str()),
-                        cost_usd: 0.0,
-                    },
-                );
-                return (
-                    StatusCode::from_u16(err.status).unwrap_or(StatusCode::TOO_MANY_REQUESTS),
-                    Json(serde_json::json!({
-                        "error": {"code": err.code.as_str(), "message": err.public_message()}
-                    })),
-                )
-                    .into_response();
-            }
-        };
+    if let Err(err) =
+        crate::api::ingress::enforce_plan_quotas(&state, &principal.user_id, &principal.plan).await
+    {
+        record(
+            &state,
+            LiveUsage {
+                key_id: Some(&principal.key_id),
+                user_id: Some(&principal.user_id),
+                plan_id: Some(&principal.plan),
+                model: &model,
+                status: err.status as i32,
+                latency_ms: start.elapsed().as_millis() as i64,
+                error_code: Some(err.code.as_str()),
+                cost_usd: 0.0,
+            },
+        );
+        return (
+            StatusCode::from_u16(err.status).unwrap_or(StatusCode::TOO_MANY_REQUESTS),
+            Json(serde_json::json!({
+                "error": {"code": err.code.as_str(), "message": err.public_message()}
+            })),
+        )
+            .into_response();
+    }
 
     let session_id = new_session_id();
     let (used_minutes, allowed_minutes) = match state
@@ -268,99 +264,6 @@ pub async fn live_websocket_handler(
     };
 
     let remaining_minutes = (allowed_minutes - used_minutes).max(0);
-    let credit_reservation_id = if credits_paid {
-        let cost_per_minute = find_live_model(&model)
-            .map(models::LiveModelSpec::blended_cost_per_min)
-            .unwrap_or(0.0);
-        let max_session_micros = (remaining_minutes.max(1) as f64 * cost_per_minute * 1_000_000.0)
-            .ceil()
-            .clamp(1.0, i64::MAX as f64) as i64;
-        let balance = match state.app_db.credit_balance(&principal.user_id).await {
-            Ok(balance) => balance,
-            Err(err) => {
-                tracing::error!(%err, user_id = %principal.user_id, "credit balance lookup failed");
-                let _ = state.app_db.release_voice_reservation(&session_id).await;
-                record(
-                    &state,
-                    LiveUsage {
-                        key_id: Some(&principal.key_id),
-                        user_id: Some(&principal.user_id),
-                        plan_id: Some(&principal.plan),
-                        model: &model,
-                        status: StatusCode::INTERNAL_SERVER_ERROR.as_u16() as i32,
-                        latency_ms: start.elapsed().as_millis() as i64,
-                        error_code: Some("credit_balance_failed"),
-                        cost_usd: 0.0,
-                    },
-                );
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({
-                        "error": {
-                            "code": "UPSTREAM_ERROR",
-                            "message": "An error has occurred. Try again later.",
-                        }
-                    })),
-                )
-                    .into_response();
-            }
-        };
-        let held_micros = max_session_micros.min(balance);
-        if held_micros <= 0 {
-            let _ = state.app_db.release_voice_reservation(&session_id).await;
-            record(
-                &state,
-                LiveUsage {
-                    key_id: Some(&principal.key_id),
-                    user_id: Some(&principal.user_id),
-                    plan_id: Some(&principal.plan),
-                    model: &model,
-                    status: StatusCode::PAYMENT_REQUIRED.as_u16() as i32,
-                    latency_ms: start.elapsed().as_millis() as i64,
-                    error_code: Some("credits_exhausted"),
-                    cost_usd: 0.0,
-                },
-            );
-            return (
-                StatusCode::PAYMENT_REQUIRED,
-                Json(serde_json::json!({
-                    "error": {
-                        "code": "credits_exhausted",
-                        "message": "An error has occurred. Try again later.",
-                    }
-                })),
-            )
-                .into_response();
-        }
-        match super::reserve_credit_operation(&state, &principal.user_id, held_micros).await {
-            Ok(reservation) => Some(reservation.id),
-            Err(item) => {
-                let _ = state.app_db.release_voice_reservation(&session_id).await;
-                record(
-                    &state,
-                    LiveUsage {
-                        key_id: Some(&principal.key_id),
-                        user_id: Some(&principal.user_id),
-                        plan_id: Some(&principal.plan),
-                        model: &model,
-                        status: item.status as i32,
-                        latency_ms: start.elapsed().as_millis() as i64,
-                        error_code: Some(item.code.as_str()),
-                        cost_usd: 0.0,
-                    },
-                );
-                return (
-                    StatusCode::from_u16(item.status).unwrap_or(StatusCode::PAYMENT_REQUIRED),
-                    Json(serde_json::json!({
-                        "error": {"code": item.code.as_str(), "message": item.public_message()}
-                    })),
-                )
-                    .into_response();
-            }
-        }
-    } else {
-        None
-    };
     let gemini_key = state.settings.gemini_api_key.clone();
 
     ws.on_upgrade(move |socket| async move {
@@ -374,7 +277,6 @@ pub async fn live_websocket_handler(
             remaining_minutes,
             gemini_key,
             &session_id,
-            credit_reservation_id,
         )
         .await;
         let _ = state.app_db.release_voice_reservation(&session_id).await;

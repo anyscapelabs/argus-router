@@ -70,17 +70,10 @@ Locally the gateway is available at **http://localhost:4000**. In production it 
 
 Models are defined in [`config/litellm_config.yaml`](config/litellm_config.yaml).
 
-- **`argus/auto`** — The default group. The desktop always sends `model: "argus/auto"`. LiteLLM picks the least-busy backend from the pool and falls back automatically on errors.
+- **`argus/auto`** — The default alias. The API gateway rewrites it to `argus/auto-<tier>-<provider>` based on request complexity and plan access. Fallbacks move across providers first, then down a tier.
 - **Named models** (e.g. `openai/gpt-6-luna`) — Available for explicit model selection from the desktop settings panel.
 
-For local development, use the leaner config:
-
-```bash
-docker-compose run --rm llm-gateway \
-  --config /app/config.dev.yaml --port 4000
-```
-
-Or mount the dev config in your compose override.
+There is a single production config at `config/litellm_config.yaml`; both compose files mount it as `/app/config.yaml`.
 
 ---
 
@@ -120,10 +113,10 @@ bash scripts/health_check.sh
 curl http://localhost:4000/health
 ```
 
-JSON-structured logs are written by default in production (`json_logs: true`). In dev, human-readable logs are enabled (`json_logs: false`) — see [`config/litellm_config.dev.yaml`](config/litellm_config.dev.yaml).
+JSON-structured logs are written by default (`json_logs: true`).
 
 > [!TIP]
-> Set `set_verbose: true` in the YAML (or use the dev config) to enable full LiteLLM debug output including raw request/response bodies.
+> Set `set_verbose: true` in the YAML to enable full LiteLLM debug output including raw request/response bodies.
 
 ---
 

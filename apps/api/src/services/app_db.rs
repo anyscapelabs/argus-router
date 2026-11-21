@@ -12,7 +12,7 @@ mod plans;
 mod quota;
 mod settings;
 
-pub use billing::{AutoRechargeView, SubscriptionRow, SubscriptionView};
+pub use billing::{SubscriptionRow, SubscriptionView};
 
 #[derive(Clone)]
 pub struct AppDb {
@@ -37,14 +37,13 @@ pub struct GenerationReservation {
     pub id: String,
     pub max_output_tokens: u64,
     pub reserved_tokens: i64,
-    pub held_micros: i64,
 }
 
 #[derive(Clone, Debug)]
 pub enum GenerationReservationOutcome {
     Reserved(GenerationReservation),
     MonthlyExhausted,
-    CreditsExhausted,
+    WeeklyExhausted,
 }
 
 #[derive(Clone, Debug)]
@@ -68,6 +67,14 @@ pub struct PlanView {
     pub searches_per_month: i64,
     #[serde(default)]
     pub voice_minutes: i64,
+    #[serde(default)]
+    pub compute_budget_usd: f64,
+    #[serde(default)]
+    pub allowance_usd: f64,
+    #[serde(default)]
+    pub weekly_fraction: f64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub groups: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub model_names: Vec<String>,
     #[serde(default, skip_serializing_if = "String::is_empty")]

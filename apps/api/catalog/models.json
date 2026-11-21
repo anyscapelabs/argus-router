@@ -19,7 +19,9 @@
       "cache_write": null
     },
     "free": false,
-    "tier": "lite"
+    "tier": "lite",
+    "group": "lite",
+    "status": "manual-only"
   },
   {
     "id": "anthropic/claude-fable-5.2",
@@ -49,7 +51,9 @@
       "cache_write": "10.00"
     },
     "free": false,
-    "tier": "ultra"
+    "tier": "ultra",
+    "group": "ultra",
+    "status": "manual-only"
   },
   {
     "id": "anthropic/claude-haiku-5.5",
@@ -79,7 +83,9 @@
       "cache_write": "0.125"
     },
     "free": false,
-    "tier": "lite"
+    "tier": "lite",
+    "group": "lite",
+    "status": "manual-only"
   },
   {
     "id": "anthropic/claude-opus-5.5",
@@ -109,7 +115,9 @@
       "cache_write": "5.00"
     },
     "free": false,
-    "tier": "ultra"
+    "tier": "ultra",
+    "group": "ultra",
+    "status": "manual-only"
   },
   {
     "id": "anthropic/claude-sonnet-5.5",
@@ -139,7 +147,9 @@
       "cache_write": "2.50"
     },
     "free": false,
-    "tier": "premium"
+    "tier": "premium",
+    "group": "premium",
+    "status": "manual-only"
   },
   {
     "id": "deepseek/deepseek-v4-pro",
@@ -155,13 +165,15 @@
       "reasoning": true
     },
     "pricing": {
-      "input": "0.435",
-      "output": "0.87",
-      "cache_read": "0.0435",
+      "input": "0.90",
+      "output": "1.50",
+      "cache_read": "0.20",
       "cache_write": null
     },
     "free": false,
-    "tier": "standard"
+    "tier": "standard",
+    "group": "standard",
+    "status": "manual-only"
   },
   {
     "id": "deepseek/deepseek-v4.1-flash-1017",
@@ -193,7 +205,9 @@
     "free": false,
     "tier": "lite",
     "auto": true,
-    "auto_priority": 4
+    "auto_priority": 4,
+    "group": "lite",
+    "status": "auto-eligible"
   },
   {
     "id": "google/gemini-3.8-flash",
@@ -209,13 +223,15 @@
       "reasoning": true
     },
     "pricing": {
-      "input": "0.75",
-      "output": "3.75",
-      "cache_read": "0.075",
-      "cache_write": null
+      "input": "0.825",
+      "output": "4.125",
+      "cache_read": "0.0825",
+      "cache_write": "0.0416666666666667"
     },
     "free": false,
-    "tier": "standard"
+    "tier": "standard",
+    "group": "standard",
+    "status": "manual-only"
   },
   {
     "id": "google/gemini-4-carbon",
@@ -237,7 +253,9 @@
       "cache_write": null
     },
     "free": false,
-    "tier": "premium"
+    "tier": "premium",
+    "group": "premium",
+    "status": "manual-only"
   },
   {
     "id": "moonshotai/kimi-k3.1-pro",
@@ -261,13 +279,15 @@
       "reasoning": true
     },
     "pricing": {
-      "input": "2.00",
-      "output": "10.00",
-      "cache_read": "0.20",
+      "input": "0.253",
+      "output": "8.80",
+      "cache_read": "0.18",
       "cache_write": null
     },
     "free": false,
-    "tier": "premium"
+    "tier": "standard",
+    "group": "standard",
+    "status": "manual-only"
   },
   {
     "id": "minimax/minimax-m3",
@@ -298,7 +318,9 @@
       "cache_write": null
     },
     "free": false,
-    "tier": "standard"
+    "tier": "standard",
+    "group": "standard",
+    "status": "manual-only"
   },
   {
     "id": "minimax/minimax-m3.1-flash",
@@ -322,13 +344,15 @@
       "reasoning": true
     },
     "pricing": {
-      "input": "0.15",
-      "output": "0.60",
-      "cache_read": "0.015",
+      "input": "0.075",
+      "output": "0.30",
+      "cache_read": "0.0075",
       "cache_write": null
     },
     "free": false,
-    "tier": "lite"
+    "tier": "lite",
+    "group": "lite",
+    "status": "manual-only"
   },
   {
     "id": "openai/gpt-6-luna",
@@ -360,7 +384,9 @@
     "free": false,
     "tier": "lite",
     "auto": true,
-    "auto_priority": 3
+    "auto_priority": 3,
+    "group": "lite",
+    "status": "auto-eligible"
   },
   {
     "id": "openai/gpt-6.1-sol",
@@ -390,7 +416,9 @@
       "cache_write": "0.25"
     },
     "free": false,
-    "tier": "premium"
+    "tier": "premium",
+    "group": "premium",
+    "status": "manual-only"
   },
   {
     "id": "qwen/qwen3.8-flash",
@@ -414,15 +442,17 @@
       "reasoning": true
     },
     "pricing": {
-      "input": "0.162",
-      "output": "0.508",
+      "input": "0.15",
+      "output": "0.47",
       "cache_read": "0.016",
       "cache_write": null
     },
     "free": false,
     "tier": "lite",
     "auto": true,
-    "auto_priority": 5
+    "auto_priority": 5,
+    "group": "lite",
+    "status": "auto-eligible"
   },
   {
     "id": "qwen/qwen3.8-max",
@@ -452,7 +482,9 @@
       "cache_write": null
     },
     "free": false,
-    "tier": "premium"
+    "tier": "ultra",
+    "group": "ultra",
+    "status": "blocked"
   },
   {
     "id": "x-ai/grok-4.7",
@@ -474,7 +506,9 @@
       "cache_write": null
     },
     "free": false,
-    "tier": "premium"
+    "tier": "premium",
+    "group": "premium",
+    "status": "manual-only"
   },
   {
     "id": "z-ai/glm-5.3",
@@ -490,13 +524,15 @@
       "reasoning": true
     },
     "pricing": {
-      "input": "1.40",
-      "output": "4.40",
-      "cache_read": "0.14",
+      "input": "0.0699",
+      "output": "1.40",
+      "cache_read": "0.0689",
       "cache_write": null
     },
     "free": false,
-    "tier": "standard"
+    "tier": "standard",
+    "group": "standard",
+    "status": "manual-only"
   },
   {
     "id": "z-ai/glm-5.3-flash",
@@ -512,13 +548,15 @@
       "reasoning": true
     },
     "pricing": {
-      "input": "0.15",
-      "output": "0.50",
+      "input": "0.0399",
+      "output": "0.0784",
       "cache_read": "0.03",
       "cache_write": null
     },
     "free": false,
-    "tier": "lite"
+    "tier": "lite",
+    "group": "lite",
+    "status": "manual-only"
   },
   {
     "id": "bedrock/nova-lite",
@@ -536,20 +574,22 @@
     "pricing": {
       "input": "0.06",
       "output": "0.24",
-      "cache_read": "0",
+      "cache_read": "0.015",
       "cache_write": null
     },
     "free": false,
     "tier": "lite",
     "auto": true,
-    "auto_priority": 1
+    "auto_priority": 1,
+    "group": "lite",
+    "status": "auto-eligible"
   },
   {
     "id": "bedrock/nova-2-lite",
     "name": "Nova 2 Lite (Bedrock)",
     "compat": "openai",
     "provider": "bedrock",
-    "upstream_model": "bedrock/eu.amazon.nova-2-lite-v1:0",
+    "upstream_model": "bedrock/global.amazon.nova-2-lite-v1:0",
     "context": 1000000,
     "max_output": 64000,
     "capabilities": {
@@ -560,11 +600,13 @@
     "pricing": {
       "input": "0.30",
       "output": "2.50",
-      "cache_read": "0",
+      "cache_read": "0.075",
       "cache_write": null
     },
     "free": false,
-    "tier": "standard"
+    "tier": "standard",
+    "group": "standard",
+    "status": "manual-only"
   },
   {
     "id": "bedrock/nova-pro",
@@ -582,11 +624,13 @@
     "pricing": {
       "input": "0.80",
       "output": "3.20",
-      "cache_read": "0",
+      "cache_read": "0.2",
       "cache_write": null
     },
     "free": false,
-    "tier": "standard"
+    "tier": "standard",
+    "group": "standard",
+    "status": "manual-only"
   },
   {
     "id": "bedrock/kimi-k2.5",
@@ -604,11 +648,13 @@
     "pricing": {
       "input": "0.60",
       "output": "3.00",
-      "cache_read": "0",
+      "cache_read": "0.15",
       "cache_write": null
     },
     "free": false,
-    "tier": "standard"
+    "tier": "standard",
+    "group": "standard",
+    "status": "manual-only"
   },
   {
     "id": "bedrock/kimi-k3",
@@ -626,11 +672,13 @@
     "pricing": {
       "input": "3.00",
       "output": "15.00",
-      "cache_read": "0",
+      "cache_read": "0.75",
       "cache_write": null
     },
     "free": false,
-    "tier": "premium"
+    "tier": "ultra",
+    "group": "ultra",
+    "status": "manual-only"
   },
   {
     "id": "bedrock/kimi-k3.1",
@@ -648,18 +696,20 @@
     "pricing": {
       "input": "4.00",
       "output": "20.00",
-      "cache_read": "0",
+      "cache_read": "1",
       "cache_write": null
     },
     "free": false,
-    "tier": "premium"
+    "tier": "ultra",
+    "group": "ultra",
+    "status": "manual-only"
   },
   {
     "id": "bedrock/claude-haiku-4.5",
     "name": "Claude Haiku 4.5 (Bedrock)",
     "compat": "openai",
     "provider": "bedrock",
-    "upstream_model": "bedrock/eu.anthropic.claude-haiku-4-5-20251001-v1:0",
+    "upstream_model": "bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0",
     "context": 200000,
     "max_output": 64000,
     "capabilities": {
@@ -670,18 +720,20 @@
     "pricing": {
       "input": "1.00",
       "output": "5.00",
-      "cache_read": "0",
+      "cache_read": "0.25",
       "cache_write": null
     },
     "free": false,
-    "tier": "premium"
+    "tier": "premium",
+    "group": "premium",
+    "status": "manual-only"
   },
   {
     "id": "bedrock/claude-opus-4.5",
     "name": "Claude Opus 4.5 (Bedrock)",
     "compat": "openai",
     "provider": "bedrock",
-    "upstream_model": "bedrock/eu.anthropic.claude-opus-4-5-20251101-v1:0",
+    "upstream_model": "bedrock/global.anthropic.claude-opus-4-5-20251101-v1:0",
     "context": 200000,
     "max_output": 64000,
     "capabilities": {
@@ -692,11 +744,13 @@
     "pricing": {
       "input": "5.00",
       "output": "25.00",
-      "cache_read": "0",
+      "cache_read": "1.25",
       "cache_write": null
     },
     "free": false,
-    "tier": "ultra"
+    "tier": "ultra",
+    "group": "ultra",
+    "status": "manual-only"
   },
   {
     "id": "bedrock/glm-4.7-flash",
@@ -714,13 +768,15 @@
     "pricing": {
       "input": "0.07",
       "output": "0.40",
-      "cache_read": "0",
+      "cache_read": "0.0175",
       "cache_write": null
     },
     "free": false,
     "tier": "lite",
     "auto": true,
-    "auto_priority": 2
+    "auto_priority": 2,
+    "group": "lite",
+    "status": "auto-eligible"
   },
   {
     "id": "bedrock/glm-4.7",
@@ -738,11 +794,13 @@
     "pricing": {
       "input": "0.60",
       "output": "2.20",
-      "cache_read": "0",
+      "cache_read": "0.15",
       "cache_write": null
     },
     "free": false,
-    "tier": "standard"
+    "tier": "standard",
+    "group": "standard",
+    "status": "manual-only"
   },
   {
     "id": "bedrock/glm-5",
@@ -760,11 +818,13 @@
     "pricing": {
       "input": "1.00",
       "output": "3.20",
-      "cache_read": "0",
+      "cache_read": "0.25",
       "cache_write": null
     },
     "free": false,
-    "tier": "standard"
+    "tier": "standard",
+    "group": "standard",
+    "status": "manual-only"
   },
   {
     "id": "bedrock/minimax-m2.1",
@@ -782,11 +842,13 @@
     "pricing": {
       "input": "0.30",
       "output": "1.20",
-      "cache_read": "0",
+      "cache_read": "0.075",
       "cache_write": null
     },
     "free": false,
-    "tier": "lite"
+    "tier": "standard",
+    "group": "standard",
+    "status": "blocked"
   },
   {
     "id": "bedrock/minimax-m2.5",
@@ -804,11 +866,13 @@
     "pricing": {
       "input": "0.30",
       "output": "1.20",
-      "cache_read": "0",
+      "cache_read": "0.075",
       "cache_write": null
     },
     "free": false,
-    "tier": "lite"
+    "tier": "standard",
+    "group": "standard",
+    "status": "blocked"
   },
   {
     "id": "bedrock/deepseek-v3.2",
@@ -826,10 +890,12 @@
     "pricing": {
       "input": "0.62",
       "output": "1.85",
-      "cache_read": "0",
+      "cache_read": "0.155",
       "cache_write": null
     },
     "free": false,
-    "tier": "standard"
+    "tier": "standard",
+    "group": "standard",
+    "status": "manual-only"
   }
 ]

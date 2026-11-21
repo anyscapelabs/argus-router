@@ -28,7 +28,6 @@ type RequestLog = {
   duration: string;
   inputTokens: number;
   outputTokens: number;
-  cost: string;
 };
 
 function toActivityLog(row: UsageRow): RequestLog {
@@ -43,7 +42,6 @@ function toActivityLog(row: UsageRow): RequestLog {
     duration: row.latencyMs != null ? `${(row.latencyMs / 1000).toFixed(1)}s` : "-",
     inputTokens: input,
     outputTokens: output,
-    cost: `$${(row.costUsd ?? 0).toFixed(4)}`,
   };
 }
 
@@ -359,10 +357,6 @@ export default function OverviewPage() {
                         <span className="text-white/80">
                           {formatTokenCount(hovered.log.inputTokens)} in · {formatTokenCount(hovered.log.outputTokens)} out
                         </span>
-                      </div>
-                      <div className="flex justify-between border-t border-border-secondary pt-1.5">
-                        <span className="text-white/50">Cost</span>
-                        <span className="text-white/80">{hovered.log.cost}</span>
                       </div>
                     </div>
                   </div>

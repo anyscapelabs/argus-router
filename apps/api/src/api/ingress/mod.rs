@@ -112,7 +112,7 @@ pub(crate) async fn enforce_plan_quotas(
     state: &AppState,
     user_id: &str,
     plan: &str,
-) -> Result<bool, Errx> {
+) -> Result<(), Errx> {
     let db_error = |what: &str| Errx::new(ErrCode::Upstream, 500, format!("{what} failed"));
     let quota = state
         .app_db
@@ -120,16 +120,14 @@ pub(crate) async fn enforce_plan_quotas(
         .await
         .map_err(|_| db_error("the plan quota lookup"))?;
 
-    let daily_exceeded = if let QuotaCheck::Exceeded { .. } = state
+    if let QuotaCheck::Exceeded { used, quota } = state
         .app_db
         .reserve_daily_request(user_id, plan)
         .await
         .map_err(|_| db_error("the daily request reservation"))?
     {
-        true
-    } else {
-        false
-    };
+        return Err(limit_error(state, LimitWindow::Daily, quota, used).await);
+    }
     let (monthly, weekly) = state
         .app_db
         .tokens_used(user_id)
@@ -138,30 +136,10 @@ pub(crate) async fn enforce_plan_quotas(
     if quota.monthly_tokens > 0 && monthly >= quota.monthly_tokens {
         return Err(limit_error(state, LimitWindow::Monthly, quota.monthly_tokens, monthly).await);
     }
-    let weekly_exceeded = quota.weekly_tokens > 0 && weekly >= quota.weekly_tokens;
-    if daily_exceeded || weekly_exceeded {
-        let balance = state
-            .app_db
-            .credit_balance(user_id)
-            .await
-            .map_err(|_| db_error("the credit balance lookup"))?;
-        if balance <= 0 {
-            if weekly_exceeded && !daily_exceeded {
-                return Err(
-                    limit_error(state, LimitWindow::Weekly, quota.weekly_tokens, weekly).await,
-                );
-            }
-            return Err(limit_error(
-                state,
-                LimitWindow::Daily,
-                quota.daily_requests,
-                quota.daily_requests,
-            )
-            .await);
-        }
-        return Ok(true);
+    if quota.weekly_tokens > 0 && weekly >= quota.weekly_tokens {
+        return Err(limit_error(state, LimitWindow::Weekly, quota.weekly_tokens, weekly).await);
     }
-    Ok(false)
+    Ok(())
 }
 
 #[derive(Clone, Copy)]
@@ -261,7 +239,6 @@ async fn reserve_gateway_generation(
     state: &AppState,
     user_id: &str,
     plan: &str,
-    force_credits: bool,
     payload: &Value,
     body_len: usize,
     entry: &ModelCatalogEntry,
@@ -286,19 +263,14 @@ async fn reserve_gateway_generation(
         .min(entry.max_output.max(1) as u64)
         .min(context_room as u64)
         .max(1);
-    let input_price = entry.pricing.input.parse::<f64>().unwrap_or(0.0);
-    let output_price = entry.pricing.output.parse::<f64>().unwrap_or(0.0);
     let outcome = state
         .app_db
         .reserve_generation(
             user_id,
             plan,
             Some(entry.tier.as_str()),
-            force_credits,
             desired_output,
             prompt_tokens,
-            input_price,
-            output_price,
         )
         .await
         .map_err(|_| Errx::new(ErrCode::Upstream, 500, "generation reservation failed"))?;
@@ -307,46 +279,10 @@ async fn reserve_gateway_generation(
         GenerationReservationOutcome::MonthlyExhausted => {
             Err(limit_error(state, LimitWindow::Monthly, 0, 0).await)
         }
-        GenerationReservationOutcome::CreditsExhausted => {
-            tokio::spawn(crate::api::v1::billing::try_auto_recharge(
-                state.clone(),
-                user_id.to_owned(),
-            ));
-            Err(Errx::new(
-                ErrCode::CreditsExhausted,
-                402,
-                "included usage is exhausted and no prepaid credits remain",
-            ))
+        GenerationReservationOutcome::WeeklyExhausted => {
+            Err(limit_error(state, LimitWindow::Weekly, 0, 0).await)
         }
     }
-}
-
-async fn reserve_credit_operation(
-    state: &AppState,
-    user_id: &str,
-    amount_micros: i64,
-) -> Result<GenerationReservation, Errx> {
-    let outcome = state
-        .app_db
-        .reserve_credit_operation(user_id, amount_micros)
-        .await
-        .map_err(|_| Errx::new(ErrCode::Upstream, 500, "credit reservation failed"))?;
-    let reservation = match outcome {
-        GenerationReservationOutcome::Reserved(reservation) => reservation,
-        GenerationReservationOutcome::CreditsExhausted
-        | GenerationReservationOutcome::MonthlyExhausted => {
-            tokio::spawn(crate::api::v1::billing::try_auto_recharge(
-                state.clone(),
-                user_id.to_owned(),
-            ));
-            return Err(Errx::new(
-                ErrCode::CreditsExhausted,
-                402,
-                "no prepaid credits remain for this request",
-            ));
-        }
-    };
-    Ok(reservation)
 }
 
 async fn settle_generation_usage(
@@ -508,6 +444,7 @@ async fn forward_to_llm_gateway(
                 user_id: Some(principal.user_id.clone()),
                 plan_id: Some(principal.plan.clone()),
                 model: model.clone(),
+                requested_model: Some(model.clone()),
                 provider: Some("llm-gateway".to_owned()),
                 input_tokens: 0,
                 output_tokens: 0,
@@ -524,13 +461,22 @@ async fn forward_to_llm_gateway(
 
     let gw_status = upstream.status();
 
-    let deployed_model = upstream
-        .headers()
-        .get("x-litellm-model-name")
-        .and_then(|value| value.to_str().ok());
+    let deployed_model = [
+        "x-litellm-model-id",
+        "x-litellm-model-name",
+        "x-litellm-model-group",
+    ]
+    .iter()
+    .find_map(|name| upstream.headers().get(*name).and_then(|v| v.to_str().ok()));
     let billing_entry = if model == AUTO_MODEL_ID {
         deployed_model
-            .and_then(|name| state.catalog.find_by_upstream(name))
+            .and_then(|name| {
+                state.catalog.find_by_upstream(name).or_else(|| {
+                    state
+                        .catalog
+                        .find_by_deployed_id(name.strip_suffix("-auto").unwrap_or(name))
+                })
+            })
             .unwrap_or_else(|| entry.clone())
     } else {
         entry.clone()
@@ -560,6 +506,7 @@ async fn forward_to_llm_gateway(
             user_id: Some(principal.user_id.clone()),
             plan_id: Some(principal.plan.clone()),
             model: model.clone(),
+            requested_model: Some(model.clone()),
             provider: Some("llm-gateway".to_owned()),
             input_tokens: 0,
             output_tokens: 0,
@@ -586,7 +533,6 @@ async fn forward_to_llm_gateway(
     let plan = principal.plan.clone();
     let usage_rec = state.usage.clone();
     let reservation_id = reservation.id.clone();
-    let held_micros = reservation.held_micros;
 
     if streaming {
         let byte_stream = upstream.bytes_stream();
@@ -595,27 +541,27 @@ async fn forward_to_llm_gateway(
 
         tokio::spawn(async move {
             let reported = usage_rx.await.unwrap_or_default();
+            let catalog_cost = cost_usd(
+                &billing_entry,
+                reported.input_tokens,
+                reported.output_tokens,
+                reported.cache_read_tokens,
+            );
             let cost = if !billable {
                 0.0
+            } else if catalog_cost > 0.0 {
+                catalog_cost
             } else if reported.cost_usd > 0.0 {
                 reported.cost_usd
-            } else if gw_cost > 0.0 {
-                gw_cost
-            } else if held_micros > 0 {
-                held_micros as f64 / 1_000_000.0
             } else {
-                cost_usd(
-                    &billing_entry,
-                    reported.input_tokens,
-                    reported.output_tokens,
-                    reported.cache_read_tokens,
-                )
+                gw_cost
             };
             let row = UsageRow {
                 key_id: Some(key_id),
                 user_id: Some(user_id),
                 plan_id: Some(plan),
-                model,
+                model: billing_entry.id.clone(),
+                requested_model: Some(model.clone()),
                 provider: Some("llm-gateway".to_owned()),
                 input_tokens: reported.input_tokens,
                 output_tokens: reported.output_tokens,
@@ -678,7 +624,8 @@ async fn forward_to_llm_gateway(
                     key_id: Some(key_id),
                     user_id: Some(user_id),
                     plan_id: Some(plan),
-                    model,
+                    model: billing_entry.id.clone(),
+                    requested_model: Some(model.clone()),
                     provider: Some("llm-gateway".to_owned()),
                     input_tokens: 0,
                     output_tokens: 0,
@@ -700,27 +647,27 @@ async fn forward_to_llm_gateway(
         let reported = serde_json::from_slice::<Value>(&body_bytes)
             .map(|value| usage_from_response(&value))
             .unwrap_or_default();
+        let catalog_cost = cost_usd(
+            &billing_entry,
+            reported.input_tokens,
+            reported.output_tokens,
+            reported.cache_read_tokens,
+        );
         let cost = if !billable {
             0.0
+        } else if catalog_cost > 0.0 {
+            catalog_cost
         } else if reported.cost_usd > 0.0 {
             reported.cost_usd
-        } else if gw_cost > 0.0 {
-            gw_cost
-        } else if held_micros > 0 {
-            held_micros as f64 / 1_000_000.0
         } else {
-            cost_usd(
-                &billing_entry,
-                reported.input_tokens,
-                reported.output_tokens,
-                reported.cache_read_tokens,
-            )
+            gw_cost
         };
         let row = UsageRow {
             key_id: Some(key_id),
             user_id: Some(user_id),
             plan_id: Some(plan),
-            model,
+            model: billing_entry.id.clone(),
+            requested_model: Some(model.clone()),
             provider: Some("llm-gateway".to_owned()),
             input_tokens: reported.input_tokens,
             output_tokens: reported.output_tokens,
@@ -759,6 +706,7 @@ pub async fn openai_chat_completions(
                 user_id: None,
                 plan_id: None,
                 model: "unknown".to_owned(),
+                requested_model: None,
                 provider: None,
                 input_tokens: 0,
                 output_tokens: 0,
@@ -786,15 +734,13 @@ pub async fn openai_chat_completions(
     let model_id = payload_model(&payload);
 
     // ── 3. Quota check ─────────────────────────────────────────────────────
-    let credits_paid = match enforce_plan_quotas(&state, &principal.user_id, &principal.plan).await
-    {
-        Ok(cp) => cp,
-        Err(item) => {
+    if let Err(item) = enforce_plan_quotas(&state, &principal.user_id, &principal.plan).await {
             state.usage.record(UsageRow {
                 key_id: Some(principal.key_id.clone()),
                 user_id: Some(principal.user_id.clone()),
                 plan_id: Some(principal.plan.clone()),
                 model: model_id.clone(),
+                requested_model: Some(model_id.clone()),
                 provider: None,
                 input_tokens: 0,
                 output_tokens: 0,
@@ -804,9 +750,8 @@ pub async fn openai_chat_completions(
                 latency_ms: Some(start.elapsed().as_millis() as i64),
                 error_code: Some(item.code.as_str().to_owned()),
             });
-            return openai::error_response(item);
-        }
-    };
+        return openai::error_response(item);
+    }
 
     // ── 4. Validate the requested model without resolving or rewriting it ───
     let entry = match state.catalog.find(&model_id) {
@@ -822,6 +767,7 @@ pub async fn openai_chat_completions(
                 user_id: Some(principal.user_id.clone()),
                 plan_id: Some(principal.plan.clone()),
                 model: model_id.clone(),
+                requested_model: Some(model_id.clone()),
                 provider: None,
                 input_tokens: 0,
                 output_tokens: 0,
@@ -846,6 +792,7 @@ pub async fn openai_chat_completions(
             user_id: Some(principal.user_id.clone()),
             plan_id: Some(principal.plan.clone()),
             model: model.clone(),
+            requested_model: Some(model.clone()),
             provider: None,
             input_tokens: 0,
             output_tokens: 0,
@@ -875,6 +822,7 @@ pub async fn openai_chat_completions(
                 user_id: Some(principal.user_id.clone()),
                 plan_id: Some(principal.plan.clone()),
                 model: model.clone(),
+                requested_model: Some(model.clone()),
                 provider: Some("llm-gateway".to_owned()),
                 input_tokens: 0,
                 output_tokens: 0,
@@ -893,7 +841,6 @@ pub async fn openai_chat_completions(
         &state,
         &principal.user_id,
         &principal.plan,
-        credits_paid,
         &payload,
         body.len(),
         &entry,
@@ -907,6 +854,7 @@ pub async fn openai_chat_completions(
                 user_id: Some(principal.user_id.clone()),
                 plan_id: Some(principal.plan.clone()),
                 model: model.clone(),
+                requested_model: Some(model.clone()),
                 provider: None,
                 input_tokens: 0,
                 output_tokens: 0,
@@ -931,6 +879,7 @@ pub async fn openai_chat_completions(
             user_id: Some(principal.user_id.clone()),
             plan_id: Some(principal.plan.clone()),
             model: model.clone(),
+            requested_model: Some(model.clone()),
             provider: Some("llm-gateway".to_owned()),
             input_tokens: 0,
             output_tokens: 0,
@@ -1016,6 +965,7 @@ pub async fn search_endpoint(
                 user_id: None,
                 plan_id: None,
                 model: "web-search".to_owned(),
+                requested_model: None,
                 provider: None,
                 input_tokens: 0,
                 output_tokens: 0,
@@ -1049,27 +999,24 @@ pub async fn search_endpoint(
         return openai::error_response(item);
     }
 
-    let credits_paid = match enforce_plan_quotas(&state, &principal.user_id, &principal.plan).await
-    {
-        Ok(credits_paid) => credits_paid,
-        Err(item) => {
-            state.usage.record(UsageRow {
-                key_id: Some(principal.key_id.clone()),
-                user_id: Some(principal.user_id.clone()),
-                plan_id: Some(principal.plan.clone()),
-                model: "web-search".to_owned(),
-                provider: None,
-                input_tokens: 0,
-                output_tokens: 0,
-                cache_read_tokens: 0,
-                cost_usd: 0.0,
-                status: item.status as i32,
-                latency_ms: Some(start.elapsed().as_millis() as i64),
-                error_code: Some(item.code.as_str().to_owned()),
-            });
-            return openai::error_response(item);
-        }
-    };
+    if let Err(item) = enforce_plan_quotas(&state, &principal.user_id, &principal.plan).await {
+        state.usage.record(UsageRow {
+            key_id: Some(principal.key_id.clone()),
+            user_id: Some(principal.user_id.clone()),
+            plan_id: Some(principal.plan.clone()),
+            model: "web-search".to_owned(),
+            requested_model: None,
+            provider: None,
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_read_tokens: 0,
+            cost_usd: 0.0,
+            status: item.status as i32,
+            latency_ms: Some(start.elapsed().as_millis() as i64),
+            error_code: Some(item.code.as_str().to_owned()),
+        });
+        return openai::error_response(item);
+    }
 
     match state
         .app_db
@@ -1090,6 +1037,7 @@ pub async fn search_endpoint(
                 user_id: Some(principal.user_id.clone()),
                 plan_id: Some(principal.plan.clone()),
                 model: "web-search".to_owned(),
+                requested_model: None,
                 provider: None,
                 input_tokens: 0,
                 output_tokens: 0,
@@ -1115,6 +1063,7 @@ pub async fn search_endpoint(
                 user_id: Some(principal.user_id.clone()),
                 plan_id: Some(principal.plan.clone()),
                 model: "web-search".to_owned(),
+                requested_model: None,
                 provider: None,
                 input_tokens: 0,
                 output_tokens: 0,
@@ -1135,6 +1084,7 @@ pub async fn search_endpoint(
                 user_id: Some(principal.user_id.clone()),
                 plan_id: Some(principal.plan.clone()),
                 model: "web-search".to_owned(),
+                requested_model: None,
                 provider: None,
                 input_tokens: 0,
                 output_tokens: 0,
@@ -1147,50 +1097,6 @@ pub async fn search_endpoint(
             return openai::error_response(item);
         }
     }
-
-    let credit_reservation = if credits_paid {
-        let max_cost_micros = (state.search_router.max_cost_per_query(&payload.query) * 1_000_000.0)
-            .ceil()
-            .clamp(1.0, i64::MAX as f64) as i64;
-        match reserve_credit_operation(&state, &principal.user_id, max_cost_micros).await {
-            Ok(reservation) => {
-                if state
-                    .app_db
-                    .mark_generation_dispatched(&reservation.id)
-                    .await
-                    .is_err()
-                {
-                    let _ = state.app_db.release_search_quota(&principal.user_id).await;
-                    return openai::error_response(Errx::new(
-                        ErrCode::Upstream,
-                        500,
-                        "search credit reservation failed",
-                    ));
-                }
-                Some(reservation)
-            }
-            Err(item) => {
-                let _ = state.app_db.release_search_quota(&principal.user_id).await;
-                state.usage.record(UsageRow {
-                    key_id: Some(principal.key_id.clone()),
-                    user_id: Some(principal.user_id.clone()),
-                    plan_id: Some(principal.plan.clone()),
-                    model: "web-search".to_owned(),
-                    provider: None,
-                    input_tokens: 0,
-                    output_tokens: 0,
-                    cache_read_tokens: 0,
-                    cost_usd: 0.0,
-                    status: item.status as i32,
-                    latency_ms: Some(start.elapsed().as_millis() as i64),
-                    error_code: Some(item.code.as_str().to_owned()),
-                });
-                return openai::error_response(item);
-            }
-        }
-    } else {
-        None
-    };
 
     let client = shared_client();
     let max_results = payload.clamped_max_results();
@@ -1206,6 +1112,7 @@ pub async fn search_endpoint(
                 user_id: Some(principal.user_id.clone()),
                 plan_id: Some(principal.plan.clone()),
                 model: "web-search".to_owned(),
+                requested_model: None,
                 provider: Some(search_res.provider.clone()),
                 input_tokens: 0,
                 output_tokens: 0,
@@ -1215,20 +1122,7 @@ pub async fn search_endpoint(
                 latency_ms: Some(latency),
                 error_code: None,
             };
-            if let Some(reservation) = &credit_reservation {
-                if let Err(error) =
-                    settle_generation_usage(&state.usage, &reservation.id, row).await
-                {
-                    tracing::error!(%error, reservation_id = reservation.id, "search credit settlement failed");
-                    return openai::error_response(Errx::new(
-                        ErrCode::Upstream,
-                        500,
-                        "search credit settlement failed",
-                    ));
-                }
-            } else {
-                state.usage.record(row);
-            }
+            state.usage.record(row);
             (StatusCode::OK, Json(search_res)).into_response()
         }
         Err(err) => {
@@ -1246,6 +1140,7 @@ pub async fn search_endpoint(
                 user_id: Some(principal.user_id.clone()),
                 plan_id: Some(principal.plan.clone()),
                 model: "web-search".to_owned(),
+                requested_model: None,
                 provider: None,
                 input_tokens: 0,
                 output_tokens: 0,
@@ -1255,15 +1150,7 @@ pub async fn search_endpoint(
                 latency_ms: Some(latency),
                 error_code: Some(err.code.as_str().to_owned()),
             };
-            if let Some(reservation) = &credit_reservation {
-                if let Err(error) =
-                    settle_generation_usage(&state.usage, &reservation.id, row).await
-                {
-                    tracing::error!(%error, reservation_id = reservation.id, "search credit settlement failed");
-                }
-            } else {
-                state.usage.record(row);
-            }
+            state.usage.record(row);
             openai::error_response(err)
         }
     }

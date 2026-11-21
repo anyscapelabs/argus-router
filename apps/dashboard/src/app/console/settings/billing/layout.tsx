@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 
 export const metadata: Metadata = {
   title: "Billing & Plans | Anyscape Gateway",
-  description: "Choose a plan and manage billing.",
+  description: "Manage your subscription and plan.",
 };
 
 export default function Layout({ children }: { children: React.ReactNode }) {

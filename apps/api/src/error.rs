@@ -8,7 +8,6 @@ pub enum ErrCode {
     DailyLimitReached,
     WeeklyLimitReached,
     MonthlyLimitReached,
-    CreditsExhausted,
     Overloaded,
     Upstream,
     Network,
@@ -27,7 +26,6 @@ impl ErrCode {
             ErrCode::DailyLimitReached => "daily_limit_reached",
             ErrCode::WeeklyLimitReached => "weekly_limit_reached",
             ErrCode::MonthlyLimitReached => "monthly_limit_reached",
-            ErrCode::CreditsExhausted => "credits_exhausted",
             ErrCode::Overloaded => "overloaded_error",
             ErrCode::Upstream => "upstream_error",
             ErrCode::Network => "network_error",
@@ -74,8 +72,7 @@ impl Errx {
             ErrCode::RateLimited
             | ErrCode::DailyLimitReached
             | ErrCode::WeeklyLimitReached
-            | ErrCode::MonthlyLimitReached
-            | ErrCode::CreditsExhausted => self.message.clone(),
+            | ErrCode::MonthlyLimitReached => self.message.clone(),
             _ => "An error has occurred. Try again later.".to_owned(),
         }
     }

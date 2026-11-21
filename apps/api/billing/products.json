@@ -1,8 +1,19 @@
 {
   "subscriptions": [
-    { "planId": "starter", "priceUsd": 3, "productId": "pdt_0NeOZ8dsxO6i412Yk9CvT" },
-    { "planId": "max", "priceUsd": 9, "productId": "pdt_0NsC0j4bhAhbmwReQmfec" },
-    { "planId": "max-plus", "priceUsd": 15, "productId": "pdt_0NsC18JPzW0wYk8kmcXEZ" }
-  ],
-  "creditPacks": []
+    {
+      "planId": "starter",
+      "priceUsd": 5,
+      "productId": "pdt_0NeOZ8dsxO6i412Yk9CvT"
+    },
+    {
+      "planId": "max",
+      "priceUsd": 10,
+      "productId": "pdt_0NsC0j4bhAhbmwReQmfec"
+    },
+    {
+      "planId": "max-plus",
+      "priceUsd": 15,
+      "productId": "pdt_0NsC18JPzW0wYk8kmcXEZ"
+    }
+  ]
 }

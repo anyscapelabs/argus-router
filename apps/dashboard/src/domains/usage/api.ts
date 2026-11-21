@@ -11,7 +11,6 @@ export type UsageRow = {
   inputTokens: number | null;
   outputTokens: number | null;
   cacheReadTokens: number | null;
-  costUsd: number | null;
   status: number | null;
   latencyMs: number | null;
   errorCode: string | null;
@@ -35,7 +34,6 @@ export type UsageAggregate = {
   inputTokens: number;
   outputTokens: number;
   cacheReadTokens: number;
-  costUsd: number;
 };
 
 export type UsageByModel = UsageAggregate & { model: string };
@@ -45,7 +43,6 @@ export type UsageSeriesPoint = {
   bucket: string;
   requests: number;
   tokens: number;
-  costUsd: number;
 };
 
 export type UsageByModelSeriesPoint = {
@@ -53,7 +50,6 @@ export type UsageByModelSeriesPoint = {
   model: string;
   requests: number;
   tokens: number;
-  costUsd: number;
 };
 
 export type UsageSummary = {

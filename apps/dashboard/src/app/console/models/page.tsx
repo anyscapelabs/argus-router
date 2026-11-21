@@ -18,13 +18,6 @@ import type { ModelView } from "@/domains/models/api";
 
 const filters = ["All", "Enabled", "Free"] as const;
 
-function price(value: string | null): string {
-  if (value === null || value === undefined) return "-";
-  const amount = Number(value);
-  if (Number.isNaN(amount)) return "-";
-  return `$${amount.toFixed(2)}`;
-}
-
 function relativeTime(timestamp: number | undefined): string {
   if (!timestamp) return "-";
   const seconds = Math.round((Date.now() - timestamp) / 1000);
@@ -112,7 +105,7 @@ export default function ModelsPage() {
               <h2 className="text-sm font-medium text-primary">Models</h2>
               <p className="mt-1 text-xs text-white/60">
                 Every catalog model is listed. Only models included in your plan can be
-                enabled. Prices per 1M tokens unless noted.
+                enabled.
               </p>
             </div>
             <div className="relative">
@@ -150,10 +143,6 @@ export default function ModelsPage() {
                 <tr className="border-b border-border-secondary bg-tertiary text-white/40">
                   <th className="rounded-tl-md px-2 py-2 font-medium">Model</th>
                   <th className="px-2 py-2 font-medium">Features</th>
-                  <th className="px-2 py-2 font-medium">Input</th>
-                  <th className="px-2 py-2 font-medium">Output</th>
-                  <th className="px-2 py-2 font-medium">Cache Read</th>
-                  <th className="px-2 py-2 font-medium">Cache Write</th>
                   <th className="rounded-tr-md px-2 py-2 font-medium">Enabled</th>
                 </tr>
               </thead>
@@ -162,7 +151,7 @@ export default function ModelsPage() {
                   <>
                     {[0, 1, 2, 3, 4].map((row) => (
                       <tr key={row} className="border-b border-border-secondary/50">
-                        <td colSpan={7} className="px-2 py-2.5">
+                        <td colSpan={3} className="px-2 py-2.5">
                           <Skeleton className={["w-48", "w-40", "w-44", "w-36", "w-40"][row]} />
                         </td>
                       </tr>
@@ -171,7 +160,7 @@ export default function ModelsPage() {
                 )}
                 {models.isError && (
                   <tr>
-                    <td colSpan={7} className="px-2 py-3 text-white/60">
+                    <td colSpan={3} className="px-2 py-3 text-white/60">
                       {models.error?.message ?? "Failed to load models"}
                     </td>
                   </tr>
@@ -180,7 +169,7 @@ export default function ModelsPage() {
                   !models.isError &&
                   filtered.length === 0 && (
                     <tr>
-                      <td colSpan={7} className="px-2 py-3 text-white/60">
+                      <td colSpan={3} className="px-2 py-3 text-white/60">
                         No models match.
                       </td>
                     </tr>
@@ -333,10 +322,6 @@ function Row({
           )}
         </div>
       </td>
-      <td className="px-2 py-2 text-white/70">{price(model.pricing.input)}</td>
-      <td className="px-2 py-2 text-white/70">{price(model.pricing.output)}</td>
-      <td className="px-2 py-2 text-white/70">{price(model.pricing.cacheRead)}</td>
-      <td className="px-2 py-2 text-white/70">{price(model.pricing.cacheWrite)}</td>
       <td className="px-2 py-1">
         <Toggle
           on={model.enabled}

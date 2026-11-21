@@ -55,7 +55,6 @@ export default function ServiceAccountDetail({ id }: { id: string }) {
 
   const summary = useUsageSummary({ keyId: id });
   const chartSummary = useUsageSummary({ keyId: id, range: "30d" });
-  const totalCost = summary.data?.totals.costUsd ?? 0;
   const totalRequests = summary.data?.totals.requests ?? 0;
   const totalTokens = (summary.data?.totals.inputTokens ?? 0) + (summary.data?.totals.outputTokens ?? 0);
 
@@ -192,21 +191,13 @@ export default function ServiceAccountDetail({ id }: { id: string }) {
           {models.isLoading ? <Skeleton className="inline-block h-3.5 w-16 align-middle" /> : `${availableModels} Available`}
         </div>
       </div>
-      <div className="mt-4">
-        <h2 className="text-sm font-medium text-primary">Spend</h2>
-        <p className="mt-1 text-sm text-white/60">${totalCost.toFixed(4)}</p>
-      </div>
       {(keys.isError || revoke.isError || usage.isError) && (
         <p className="mt-2 text-xs text-red-400">
           {keys.isError ? keys.error.message : revoke.error?.message ?? usage.error?.message}
         </p>
       )}
 
-      <div className="mt-6 grid min-w-0 grid-cols-3 gap-4">
-        <div className="min-w-0 overflow-hidden rounded-md border border-border-secondary bg-[#262626] p-2">
-          <p className="text-xs text-white/60">Total cost</p>
-          <p className="mt-1 text-2xl font-medium text-primary">${totalCost.toFixed(4)}</p>
-        </div>
+      <div className="mt-6 grid min-w-0 grid-cols-2 gap-4">
         <div className="min-w-0 overflow-hidden rounded-md border border-border-secondary bg-[#262626] p-2">
           <p className="text-xs text-white/60">Total requests</p>
           <p className="mt-1 text-2xl font-medium text-primary">{formatTokenCount(totalRequests)}</p>
@@ -334,16 +325,15 @@ export default function ServiceAccountDetail({ id }: { id: string }) {
                 <th className="px-2 py-2 font-medium">Status</th>
                 <th className="px-2 py-2 text-right font-medium">In</th>
                 <th className="px-2 py-2 text-right font-medium">Out</th>
-                <th className="px-2 py-2 text-right font-medium">Latency</th>
-                <th className="px-2 py-2 text-right font-medium rounded-tr-md">Cost</th>
+                <th className="px-2 py-2 text-right font-medium rounded-tr-md">Latency</th>
               </tr>
             </thead>
             <tbody>
               {usage.isLoading ? (
-                <SkeletonRows columns={7} />
+                <SkeletonRows columns={6} />
               ) : logsPageRows.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-2 py-10">
+                  <td colSpan={6} className="px-2 py-10">
                     <EmptyState message="No requests logged for this service account yet" />
                   </td>
                 </tr>
@@ -376,7 +366,6 @@ export default function ServiceAccountDetail({ id }: { id: string }) {
                       <td className="px-2 py-2 text-right tabular-nums text-white/70">
                         {r.latencyMs != null ? `${(r.latencyMs / 1000).toFixed(1)}s` : "-"}
                       </td>
-                      <td className="px-2 py-2 text-right tabular-nums text-white/70">${(r.costUsd ?? 0).toFixed(4)}</td>
                     </tr>
                   );
                 })

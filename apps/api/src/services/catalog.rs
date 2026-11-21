@@ -55,6 +55,30 @@ impl Tier {
     }
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum ModelStatus {
+    ManualOnly,
+    AutoEligible,
+    Blocked,
+}
+
+impl Default for ModelStatus {
+    fn default() -> Self {
+        ModelStatus::ManualOnly
+    }
+}
+
+impl ModelStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ModelStatus::ManualOnly => "manual-only",
+            ModelStatus::AutoEligible => "auto-eligible",
+            ModelStatus::Blocked => "blocked",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Capabilities {
     pub tools: bool,
@@ -83,6 +107,9 @@ pub struct ModelCatalogEntry {
     pub max_output: i64,
     pub capabilities: Capabilities,
     pub pricing: Pricing,
+    pub group: Tier,
+    #[serde(default)]
+    pub status: ModelStatus,
     #[serde(default)]
     pub free: bool,
     #[serde(default)]
@@ -102,7 +129,8 @@ pub struct ModelView {
     pub context: i64,
     pub max_output: i64,
     pub capabilities: Capabilities,
-    pub pricing: Pricing,
+    pub group: Tier,
+    pub status: ModelStatus,
     pub free: bool,
     pub tier: Tier,
     pub enabled: bool,
@@ -119,7 +147,8 @@ impl ModelCatalogEntry {
             context: self.context,
             max_output: self.max_output,
             capabilities: self.capabilities.clone(),
-            pricing: self.pricing.clone(),
+            group: self.group,
+            status: self.status,
             free: self.free,
             tier: self.tier,
             enabled,
@@ -129,6 +158,14 @@ impl ModelCatalogEntry {
 
     pub fn id(&self) -> &str {
         &self.id
+    }
+
+    pub fn is_blocked(&self) -> bool {
+        self.status == ModelStatus::Blocked
+    }
+
+    pub fn is_auto_eligible(&self) -> bool {
+        self.status == ModelStatus::AutoEligible
     }
 }
 
@@ -172,6 +209,21 @@ impl CatalogCache {
             .find(|entry| {
                 entry.upstream_model == deployed_model || entry.upstream_model == normalized
             })
+            .cloned()
+    }
+
+    pub fn find_by_deployed_id(&self, deployed_id: &str) -> Option<ModelCatalogEntry> {
+        let base = deployed_id
+            .split("-auto-")
+            .next()
+            .unwrap_or(deployed_id)
+            .strip_suffix("-auto")
+            .unwrap_or_else(|| deployed_id.split("-auto-").next().unwrap_or(deployed_id));
+        self.inner
+            .read()
+            .expect("catalog lock")
+            .iter()
+            .find(|entry| entry.id.replace('/', "-") == base)
             .cloned()
     }
 }

@@ -7,6 +7,9 @@ raw-forwarded to a dedicated LiteLLM proxy, which owns model routing and
 retries against OpenRouter. Voice still connects directly to Google Gemini.
 It ships as a Rust (Axum + Postgres) API plus a Next.js console.
 
+Billing is subscription-only. Plans are paid through Dodo; credit wallets,
+credit packs, auto-recharge, and in-app credit top-ups are not part of the product.
+
 ## Layout
 
 ```

@@ -10,7 +10,7 @@ use crate::state::AppState;
 
 use super::frames::{extract_error_code, extract_model_text, extract_rate_limit_secs};
 use super::models::{LiveModelSpec, find_live_model};
-use super::usage::{LiveUsage, record_with_reservation};
+use super::usage::{LiveUsage, record};
 
 const GOOGLE_LIVE_WS_BASE: &str = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent";
 
@@ -51,50 +51,9 @@ pub(super) async fn handle_socket(
     remaining_minutes: i64,
     gemini_key: Option<String>,
     session_id: &str,
-    credit_reservation_id: Option<String>,
 ) {
     let start = Instant::now();
     let max_duration = Duration::from_secs((remaining_minutes.max(1) as u64) * 60);
-
-    if let Some(reservation_id) = credit_reservation_id.as_deref() {
-        if let Err(error) = state
-            .app_db
-            .mark_generation_dispatched(reservation_id)
-            .await
-        {
-            tracing::error!(%error, reservation_id, "live credit reservation dispatch failed");
-            let (mut sender, _) = client_ws.split();
-            let _ = sender
-                .send(Message::Text(
-                    serde_json::json!({
-                        "error": {
-                            "code": "UPSTREAM_ERROR",
-                            "message": "An error has occurred. Try again later."
-                        }
-                    })
-                    .to_string()
-                    .into(),
-                ))
-                .await;
-            let _ = sender.close().await;
-            let _ = record_with_reservation(
-                &state,
-                LiveUsage {
-                    key_id: Some(&key_id),
-                    user_id: Some(&user_id),
-                    plan_id: Some(&plan_id),
-                    model: &model,
-                    status: 500,
-                    latency_ms: start.elapsed().as_millis() as i64,
-                    error_code: Some("credit_dispatch_failed"),
-                    cost_usd: 0.0,
-                },
-                credit_reservation_id.as_deref(),
-            )
-            .await;
-            return;
-        }
-    }
 
     let Some(api_key) = gemini_key else {
         tracing::error!("GEMINI_API_KEY is not configured on the router");
@@ -112,7 +71,7 @@ pub(super) async fn handle_socket(
             ))
             .await;
         let _ = sender.close().await;
-        let _ = record_with_reservation(
+        record(
             &state,
             LiveUsage {
                 key_id: Some(&key_id),
@@ -124,9 +83,7 @@ pub(super) async fn handle_socket(
                 error_code: Some("provider_unconfigured"),
                 cost_usd: 0.0,
             },
-            credit_reservation_id.as_deref(),
-        )
-        .await;
+        );
         return;
     };
 
@@ -149,7 +106,7 @@ pub(super) async fn handle_socket(
                 ))
                 .await;
             let _ = sender.close().await;
-            let _ = record_with_reservation(
+            let _ = record(
                 &state,
                 LiveUsage {
                     key_id: Some(&key_id),
@@ -161,9 +118,7 @@ pub(super) async fn handle_socket(
                     error_code: Some("upstream_error"),
                     cost_usd: 0.0,
                 },
-                credit_reservation_id.as_deref(),
-            )
-            .await;
+            );
             return;
         }
     };
@@ -452,7 +407,6 @@ pub(super) async fn handle_socket(
         &model,
         start,
         quota_exhausted,
-        credit_reservation_id.as_deref(),
     )
     .await;
 }
@@ -465,7 +419,6 @@ async fn record_final_usage(
     model: &str,
     start: Instant,
     quota_exhausted: bool,
-    credit_reservation_id: Option<&str>,
 ) {
     let elapsed_ms = start.elapsed().as_millis() as i64;
     let cost_per_min = find_live_model(model)
@@ -478,7 +431,7 @@ async fn record_final_usage(
         (200, None)
     };
 
-    if let Err(error) = record_with_reservation(
+    record(
         state,
         LiveUsage {
             key_id: Some(key_id),
@@ -490,10 +443,5 @@ async fn record_final_usage(
             error_code,
             cost_usd: elapsed_minutes * cost_per_min,
         },
-        credit_reservation_id,
-    )
-    .await
-    {
-        tracing::error!(%error, ?credit_reservation_id, "live usage settlement failed");
-    }
+    );
 }

@@ -23,6 +23,16 @@ fn user_id(session: &CurrentSession<AppAuthSchema>) -> String {
     session.user.id.typed().ok().cloned().unwrap_or_default()
 }
 
+fn display_model(model: Option<String>) -> Option<String> {
+    model.map(|model| {
+        if model == crate::services::catalog::AUTO_MODEL_ID {
+            "Auto".to_owned()
+        } else {
+            model
+        }
+    })
+}
+
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(list_usage))
@@ -63,7 +73,7 @@ async fn list_usage(
     let rows = match (q.key_id.as_deref(), since) {
         (Some(key_id), Some(since)) => {
             sqlx::query(
-                "SELECT id, created_at, key_id, user_id, plan_id, model, provider, input_tokens, output_tokens, cache_read_tokens, cost_usd, status, latency_ms, error_code FROM usage_logs WHERE user_id = $1 AND key_id = $2 AND created_at >= $3 ORDER BY created_at DESC LIMIT $4",
+                "SELECT id, created_at, key_id, user_id, plan_id, model, requested_model, provider, input_tokens, output_tokens, cache_read_tokens, status, latency_ms, error_code FROM usage_logs WHERE user_id = $1 AND key_id = $2 AND created_at >= $3 ORDER BY created_at DESC LIMIT $4",
             )
             .bind(&user)
             .bind(key_id)
@@ -74,7 +84,7 @@ async fn list_usage(
         }
         (Some(key_id), None) => {
             sqlx::query(
-                "SELECT id, created_at, key_id, user_id, plan_id, model, provider, input_tokens, output_tokens, cache_read_tokens, cost_usd, status, latency_ms, error_code FROM usage_logs WHERE user_id = $1 AND key_id = $2 ORDER BY created_at DESC LIMIT $3",
+                "SELECT id, created_at, key_id, user_id, plan_id, model, requested_model, provider, input_tokens, output_tokens, cache_read_tokens, status, latency_ms, error_code FROM usage_logs WHERE user_id = $1 AND key_id = $2 ORDER BY created_at DESC LIMIT $3",
             )
             .bind(&user)
             .bind(key_id)
@@ -84,7 +94,7 @@ async fn list_usage(
         }
         (None, Some(since)) => {
             sqlx::query(
-                "SELECT id, created_at, key_id, user_id, plan_id, model, provider, input_tokens, output_tokens, cache_read_tokens, cost_usd, status, latency_ms, error_code FROM usage_logs WHERE user_id = $1 AND created_at >= $2 ORDER BY created_at DESC LIMIT $3",
+                "SELECT id, created_at, key_id, user_id, plan_id, model, requested_model, provider, input_tokens, output_tokens, cache_read_tokens, status, latency_ms, error_code FROM usage_logs WHERE user_id = $1 AND created_at >= $2 ORDER BY created_at DESC LIMIT $3",
             )
             .bind(&user)
             .bind(since)
@@ -94,7 +104,7 @@ async fn list_usage(
         }
         (None, None) => {
             sqlx::query(
-                "SELECT id, created_at, key_id, user_id, plan_id, model, provider, input_tokens, output_tokens, cache_read_tokens, cost_usd, status, latency_ms, error_code FROM usage_logs WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2",
+                "SELECT id, created_at, key_id, user_id, plan_id, model, requested_model, provider, input_tokens, output_tokens, cache_read_tokens, status, latency_ms, error_code FROM usage_logs WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2",
             )
             .bind(&user)
             .bind(limit)
@@ -117,12 +127,14 @@ async fn list_usage(
             "keyId": row.try_get::<Option<String>, _>("key_id").ok().flatten(),
             "userId": row.try_get::<Option<String>, _>("user_id").ok().flatten(),
             "planId": row.try_get::<Option<String>, _>("plan_id").ok().flatten(),
-            "model": row.try_get::<String, _>("model").ok(),
+            "model": display_model(
+                row.try_get::<Option<String>, _>("requested_model").ok().flatten()
+                    .or_else(|| row.try_get::<String, _>("model").ok()),
+            ),
             "provider": row.try_get::<Option<String>, _>("provider").ok().flatten(),
             "inputTokens": row.try_get::<i64, _>("input_tokens").ok(),
             "outputTokens": row.try_get::<i64, _>("output_tokens").ok(),
             "cacheReadTokens": row.try_get::<i64, _>("cache_read_tokens").ok(),
-            "costUsd": row.try_get::<f64, _>("cost_usd").ok(),
             "status": row.try_get::<i32, _>("status").ok(),
             "latencyMs": row.try_get::<Option<i64>, _>("latency_ms").ok().flatten(),
             "errorCode": row.try_get::<Option<String>, _>("error_code").ok().flatten(),
@@ -215,7 +227,7 @@ async fn usage_summary(
     }
     macro_rules! agg {
         () => {
-            "COUNT(*)::bigint AS requests, (COUNT(*) FILTER (WHERE status >= 400))::bigint AS errors, COALESCE(SUM(input_tokens), 0)::bigint AS input_tokens, COALESCE(SUM(output_tokens), 0)::bigint AS output_tokens, COALESCE(SUM(cache_read_tokens), 0)::bigint AS cache_read_tokens, COALESCE(SUM(cost_usd), 0)::float8 AS cost_usd"
+            "COUNT(*)::bigint AS requests, (COUNT(*) FILTER (WHERE status >= 400))::bigint AS errors, COALESCE(SUM(input_tokens), 0)::bigint AS input_tokens, COALESCE(SUM(output_tokens), 0)::bigint AS output_tokens, COALESCE(SUM(cache_read_tokens), 0)::bigint AS cache_read_tokens"
         };
     }
 
@@ -226,7 +238,6 @@ async fn usage_summary(
             "inputTokens": row.try_get::<i64, _>("input_tokens").unwrap_or(0),
             "outputTokens": row.try_get::<i64, _>("output_tokens").unwrap_or(0),
             "cacheReadTokens": row.try_get::<i64, _>("cache_read_tokens").unwrap_or(0),
-            "costUsd": row.try_get::<f64, _>("cost_usd").unwrap_or(0.0),
         })
     };
 
@@ -246,11 +257,11 @@ async fn usage_summary(
     .map_err(db_err)?;
 
     let by_model_rows = sqlx::query(concat!(
-        "SELECT model, ",
+        "SELECT COALESCE(NULLIF(requested_model, ''), model) AS model, ",
         agg!(),
         " FROM usage_logs WHERE ",
         filter!(),
-        " GROUP BY model ORDER BY SUM(cost_usd) DESC, COUNT(*) DESC LIMIT 50"
+        " GROUP BY 1 ORDER BY SUM(input_tokens + output_tokens) DESC, COUNT(*) DESC LIMIT 50"
     ))
     .bind(&user)
     .bind(key_id)
@@ -264,7 +275,7 @@ async fn usage_summary(
         agg!(),
         " FROM usage_logs WHERE ",
         filter!(),
-        " GROUP BY key_id ORDER BY SUM(cost_usd) DESC, COUNT(*) DESC LIMIT 50"
+        " GROUP BY key_id ORDER BY SUM(input_tokens + output_tokens) DESC, COUNT(*) DESC LIMIT 50"
     ))
     .bind(&user)
     .bind(key_id)
@@ -276,8 +287,7 @@ async fn usage_summary(
     let series_rows = sqlx::query(concat!(
         "SELECT to_char(date_trunc($4::text, created_at AT TIME ZONE $5::text), 'YYYY-MM-DD\"T\"HH24:MI') AS bucket, ",
         "COUNT(*)::bigint AS requests, ",
-        "COALESCE(SUM(input_tokens + output_tokens), 0)::bigint AS tokens, ",
-        "COALESCE(SUM(cost_usd), 0)::float8 AS cost_usd ",
+        "COALESCE(SUM(input_tokens + output_tokens), 0)::bigint AS tokens ",
         "FROM usage_logs WHERE ", filter!(), " GROUP BY 1 ORDER BY 1"
     ))
     .bind(&user)
@@ -293,7 +303,9 @@ async fn usage_summary(
         .iter()
         .map(|row| {
             let mut v = agg_json(row);
-            v["model"] = serde_json::json!(row.try_get::<String, _>("model").unwrap_or_default());
+            v["model"] = serde_json::json!(display_model(
+                row.try_get::<String, _>("model").ok()
+            ));
             v
         })
         .collect();
@@ -313,17 +325,15 @@ async fn usage_summary(
                 "bucket": row.try_get::<String, _>("bucket").unwrap_or_default(),
                 "requests": row.try_get::<i64, _>("requests").unwrap_or(0),
                 "tokens": row.try_get::<i64, _>("tokens").unwrap_or(0),
-                "costUsd": row.try_get::<f64, _>("cost_usd").unwrap_or(0.0),
             })
         })
         .collect();
 
     let by_model_series_rows = sqlx::query(concat!(
         "SELECT to_char(date_trunc($4::text, created_at AT TIME ZONE $5::text), 'YYYY-MM-DD\"T\"HH24:MI') AS bucket, ",
-        "model, ",
+        "COALESCE(NULLIF(requested_model, ''), model) AS model, ",
         "COUNT(*)::bigint AS requests, ",
-        "COALESCE(SUM(input_tokens + output_tokens), 0)::bigint AS tokens, ",
-        "COALESCE(SUM(cost_usd), 0)::float8 AS cost_usd ",
+        "COALESCE(SUM(input_tokens + output_tokens), 0)::bigint AS tokens ",
         "FROM usage_logs WHERE ", filter!(), " GROUP BY 1, 2 ORDER BY 1, 2"
     ))
     .bind(&user)
@@ -340,10 +350,9 @@ async fn usage_summary(
         .map(|row| {
             serde_json::json!({
                 "bucket": row.try_get::<String, _>("bucket").unwrap_or_default(),
-                "model": row.try_get::<String, _>("model").unwrap_or_default(),
+                "model": display_model(row.try_get::<String, _>("model").ok()),
                 "requests": row.try_get::<i64, _>("requests").unwrap_or(0),
                 "tokens": row.try_get::<i64, _>("tokens").unwrap_or(0),
-                "costUsd": row.try_get::<f64, _>("cost_usd").unwrap_or(0.0),
             })
         })
         .collect();

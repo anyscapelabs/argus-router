@@ -15,17 +15,12 @@ type Bucket = {
   requests: number;
 };
 
-function formatAxisValue(value: number, metric: "cost" | "tokens"): string {
+function formatAxisValue(value: number): string {
   const abs = Math.abs(value);
   const sign = value < 0 ? "-" : "";
   if (abs >= 1_000_000_000) return `${sign}${trimCompact(abs / 1_000_000_000)}B`;
   if (abs >= 1_000_000) return `${sign}${trimCompact(abs / 1_000_000)}M`;
   if (abs >= 1_000) return `${sign}${trimCompact(abs / 1_000)}K`;
-  if (metric === "cost") {
-    if (abs === 0) return "0";
-    if (abs < 0.01) return value.toFixed(4).replace(/\.?0+$/, "");
-    return value.toFixed(2).replace(/\.?0+$/, "");
-  }
   if (Number.isInteger(value)) return String(value);
   return trimCompact(abs);
 }
@@ -55,7 +50,7 @@ function localKey(d: Date, unit: "hour" | "day"): string {
   return unit === "hour" ? `${date}T${pad(d.getHours())}:00` : `${date}T00:00`;
 }
 
-function bucketSeries(series: UsageSeriesPoint[], metric: "cost" | "tokens", range: UsageRange): Bucket[] {
+function bucketSeries(series: UsageSeriesPoint[], range: UsageRange): Bucket[] {
   const now = new Date();
   const byKey = new Map(series.map((p) => [p.bucket, p]));
   const unit = range === "24h" ? "hour" : "day";
@@ -69,7 +64,7 @@ function bucketSeries(series: UsageSeriesPoint[], metric: "cost" | "tokens", ran
     const point = byKey.get(localKey(d, unit));
     return {
       label: unit === "hour" ? `${d.getHours()}` : `${d.getMonth() + 1}/${d.getDate()}`,
-      value: point ? (metric === "cost" ? point.costUsd : point.tokens) : 0,
+      value: point?.tokens ?? 0,
       requests: point?.requests ?? 0,
     };
   });
@@ -77,14 +72,12 @@ function bucketSeries(series: UsageSeriesPoint[], metric: "cost" | "tokens", ran
 
 export function UsageChart({
   series,
-  metric = "cost",
   range = "24h",
 }: {
   series: UsageSeriesPoint[];
-  metric?: "cost" | "tokens";
   range?: UsageRange;
 }) {
-  const buckets = useMemo(() => bucketSeries(series, metric, range), [series, metric, range]);
+  const buckets = useMemo(() => bucketSeries(series, range), [series, range]);
   const hasData = series.length > 0;
 
   const definition = useMemo(() => {
@@ -116,7 +109,7 @@ export function UsageChart({
             grid: true,
             axis: {
               ticks: {
-                format: (value: number) => formatAxisValue(value, metric),
+                format: (value: number) => formatAxisValue(value),
               },
             },
           },
@@ -137,11 +130,8 @@ export function UsageChart({
               title: range === "24h" ? `${label}:00` : label,
               rows: [
                 {
-                  label: metric === "cost" ? "Cost" : "Tokens",
-                  value:
-                    metric === "cost"
-                      ? Number(points[0]?.yValue ?? 0).toFixed(4)
-                      : Number(points[0]?.yValue ?? 0).toLocaleString(),
+                  label: "Tokens",
+                  value: Number(points[0]?.yValue ?? 0).toLocaleString(),
                   color: points[0]?.color,
                 },
                 {
@@ -155,7 +145,7 @@ export function UsageChart({
         },
       },
     );
-  }, [buckets, hasData, metric, range]);
+  }, [buckets, hasData, range]);
 
   const renderer = motion({ initial: "always" });
   const width = 750;

@@ -1,7 +1,7 @@
 use std::fmt;
 
 use reqwest::{RequestBuilder, StatusCode};
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 
 const EMBEDDED_PRODUCTS: &str = include_str!("../../billing/products.json");
@@ -10,7 +10,6 @@ const EMBEDDED_PRODUCTS: &str = include_str!("../../billing/products.json");
 #[serde(rename_all = "camelCase")]
 pub struct BillingCatalog {
     pub subscriptions: Vec<SubscriptionProduct>,
-    pub credit_packs: Vec<CreditPack>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -23,16 +22,6 @@ pub struct SubscriptionProduct {
     pub product_id: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CreditPack {
-    pub id: String,
-    pub label: String,
-    pub price_usd: i64,
-    pub credits_micros: i64,
-    #[serde(skip_serializing)]
-    pub product_id: String,
-}
 
 impl BillingCatalog {
     pub fn load() -> Result<Self, Box<dyn std::error::Error>> {
@@ -63,15 +52,7 @@ impl BillingCatalog {
             .map(|item| item.plan_id.as_str())
     }
 
-    pub fn credit_pack(&self, pack_id: &str) -> Option<&CreditPack> {
-        self.credit_packs.iter().find(|item| item.id == pack_id)
-    }
 
-    pub fn credit_pack_for_product(&self, product_id: &str) -> Option<&CreditPack> {
-        self.credit_packs
-            .iter()
-            .find(|item| item.product_id == product_id)
-    }
 }
 
 #[derive(Clone)]
@@ -99,64 +80,9 @@ pub struct DodoCustomer {
     pub customer_id: String,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
-pub struct DodoPaymentMethod {
-    #[serde(default)]
-    pub payment_method_id: String,
-    #[serde(default)]
-    pub payment_type: Option<String>,
-    #[serde(default)]
-    pub card_issuing_country: Option<String>,
-    #[serde(default)]
-    pub card_network: Option<String>,
-    #[serde(default)]
-    pub card_last_four: Option<String>,
-    #[serde(default)]
-    pub card_expiry_month: Option<i64>,
-    #[serde(default)]
-    pub card_expiry_year: Option<i64>,
-    #[serde(default)]
-    pub payment_method_token: Option<String>,
-}
 
-impl DodoPaymentMethod {
-    pub fn card_id(&self) -> Option<&str> {
-        let id = if self.payment_method_id.is_empty() {
-            self.payment_method_token.as_deref().unwrap_or("")
-        } else {
-            &self.payment_method_id
-        };
-        (!id.is_empty()).then_some(id)
-    }
 
-    pub fn is_card(&self) -> bool {
-        self.payment_type
-            .as_deref()
-            .is_none_or(|kind| kind.eq_ignore_ascii_case("card"))
-    }
-}
 
-#[derive(Clone, Debug, Default, Deserialize)]
-pub struct DodoBillingAddress {
-    #[serde(default)]
-    pub country: Option<String>,
-    #[serde(default)]
-    pub zipcode: Option<String>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-pub struct DodoPayment {
-    pub payment_id: String,
-    pub total_amount: i64,
-    pub currency: String,
-    pub status: Option<String>,
-    pub created_at: String,
-    pub invoice_id: Option<String>,
-    pub subscription_id: Option<String>,
-    pub charge_type: Option<String>,
-    #[serde(default)]
-    pub customer: Option<DodoCustomer>,
-}
 
 #[derive(Debug)]
 pub struct DodoError {
@@ -289,36 +215,6 @@ impl DodoClient {
             .ok_or_else(|| DodoError::invalid("Dodo Payments returned no checkout URL"))
     }
 
-    pub async fn create_credit_product(
-        &self,
-        name: &str,
-        price_cents: i64,
-        metadata: Value,
-    ) -> Result<String, DodoError> {
-        #[derive(Deserialize)]
-        struct Response {
-            product_id: String,
-        }
-
-        let response: Response = self
-            .send(
-                self.http
-                    .post(format!("{}/products", self.base_url))
-                    .header("Idempotency-Key", format!("argus-credit-product-{price_cents}"))
-                    .json(&json!({
-                        "name": name,
-                        "price": {
-                            "currency": "USD",
-                            "price": price_cents,
-                            "type": "one_time_price"
-                        },
-                        "tax_category": "digital_products",
-                        "metadata": metadata
-                    })),
-            )
-            .await?;
-        Ok(response.product_id)
-    }
 
     pub async fn create_subscription_product(
         &self,
@@ -354,33 +250,7 @@ impl DodoClient {
         Ok(response.product_id)
     }
 
-    pub async fn list_payments(&self, customer_id: &str) -> Result<Vec<DodoPayment>, DodoError> {
-        #[derive(Deserialize)]
-        struct Response {
-            items: Vec<DodoPayment>,
-        }
 
-        let response: Response = self
-            .send(
-                self.http
-                    .get(format!("{}/payments", self.base_url))
-                    .query(&[
-                        ("customer_id", customer_id),
-                        ("page_size", "50"),
-                        ("status", "succeeded"),
-                    ]),
-            )
-            .await?;
-        Ok(response.items)
-    }
-
-    pub async fn payment(&self, payment_id: &str) -> Result<DodoPayment, DodoError> {
-        self.send(self.http.get(format!(
-            "{}/payments/{}",
-            self.base_url, payment_id
-        )))
-        .await
-    }
 
     pub async fn product_exists(&self, product_id: &str) -> Result<bool, DodoError> {
         let response = self
@@ -403,28 +273,6 @@ impl DodoClient {
         ))
     }
 
-    pub async fn invoice_pdf(&self, payment_id: &str) -> Result<Vec<u8>, DodoError> {
-        let response = self
-            .http
-            .get(format!(
-                "{}/invoices/payments/{}",
-                self.base_url, payment_id
-            ))
-            .bearer_auth(&self.api_key)
-            .send()
-            .await
-            .map_err(DodoError::request)?;
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            return Err(DodoError::response(status, body));
-        }
-        Ok(response
-            .bytes()
-            .await
-            .map_err(DodoError::request)?
-            .to_vec())
-    }
 
     pub async fn create_portal(
         &self,
@@ -457,113 +305,9 @@ impl DodoClient {
         .await
     }
 
-    pub async fn list_payment_methods(
-        &self,
-        customer_id: &str,
-    ) -> Result<Vec<DodoPaymentMethod>, DodoError> {
-        #[derive(Deserialize)]
-        struct Response {
-            items: Vec<DodoPaymentMethod>,
-        }
 
-        let response: Response = self
-            .send(self.http.get(format!(
-                "{}/customers/{}/payment-methods",
-                self.base_url, customer_id
-            )))
-            .await?;
-        Ok(response.items)
-    }
 
-    pub async fn customer_billing_address(
-        &self,
-        customer_id: &str,
-    ) -> Result<DodoBillingAddress, DodoError> {
-        #[derive(Deserialize)]
-        struct Response {
-            #[serde(default)]
-            billing_address: DodoBillingAddress,
-        }
 
-        let response: Response = self
-            .send(self.http.get(format!(
-                "{}/customers/{}",
-                self.base_url, customer_id
-            )))
-            .await?;
-        Ok(response.billing_address)
-    }
-
-    /// Charges a saved payment method directly (one-click purchase): no
-    /// checkout page is shown and the result arrives via `payment.succeeded`.
-    pub async fn charge_saved_payment_method(
-        &self,
-        customer_id: &str,
-        product_id: &str,
-        payment_method_id: &str,
-        country: &str,
-        zipcode: Option<&str>,
-        metadata: Value,
-        idempotency_key: &str,
-    ) -> Result<String, DodoError> {
-        #[derive(Deserialize)]
-        struct Response {
-            payment_id: String,
-        }
-
-        let mut address = json!({ "country": country });
-        if let Some(zipcode) = zipcode {
-            address["zipcode"] = json!(zipcode);
-        }
-        let response: Response = self
-            .send(
-                self.http
-                    .post(format!("{}/checkouts", self.base_url))
-                    .header("Idempotency-Key", idempotency_key)
-                    .json(&json!({
-                        "product_cart": [{ "product_id": product_id, "quantity": 1 }],
-                        "customer": { "customer_id": customer_id },
-                        "payment_method_id": payment_method_id,
-                        "confirm": true,
-                        "minimal_address": true,
-                        "billing_address": address,
-                        "metadata": metadata
-                    })),
-            )
-            .await?;
-        Ok(response.payment_id)
-    }
-
-    /// Sends the customer through Dodo's payment-method update flow for their
-    /// subscription and returns the hosted page to open.
-    pub async fn subscription_payment_method_link(
-        &self,
-        subscription_id: &str,
-        return_url: &str,
-    ) -> Result<String, DodoError> {
-        #[derive(Deserialize)]
-        struct Response {
-            payment_link: Option<String>,
-        }
-
-        let response: Response = self
-            .send(
-                self.http
-                    .post(format!(
-                        "{}/subscriptions/{}/update-payment-method",
-                        self.base_url, subscription_id
-                    ))
-                    .json(&json!({
-                        "type": "new",
-                        "return_url": return_url
-                    })),
-            )
-            .await?;
-        response
-            .payment_link
-            .filter(|url| !url.is_empty())
-            .ok_or_else(|| DodoError::invalid("Dodo Payments returned no payment link"))
-    }
 }
 
 #[cfg(test)]

@@ -48,7 +48,10 @@ async fn refresh_plans(
             ),
         ));
     }
-    let plans = crate::services::plans::seed_entries();
+    let plans = crate::services::plans::expand_groups(
+        crate::services::plans::seed_entries(),
+        &state.catalog.snapshot(),
+    );
     if let Err(_error) = state.app_db.seed_plans(&plans).await {
         return Err((
             StatusCode::INTERNAL_SERVER_ERROR,

@@ -109,6 +109,7 @@ impl AppDb {
                 user_id TEXT,
                 plan_id TEXT,
                 model TEXT NOT NULL,
+                requested_model TEXT,
                 provider TEXT,
                 input_tokens BIGINT NOT NULL DEFAULT 0,
                 output_tokens BIGINT NOT NULL DEFAULT 0,
@@ -124,6 +125,14 @@ impl AppDb {
         sqlx::query("ALTER TABLE usage_logs ADD COLUMN IF NOT EXISTS event_id TEXT")
             .execute(&self.pool)
             .await?;
+        sqlx::query("ALTER TABLE usage_logs ADD COLUMN IF NOT EXISTS requested_model TEXT")
+            .execute(&self.pool)
+            .await?;
+        let _ = sqlx::query(
+            "UPDATE usage_logs SET requested_model = model WHERE requested_model IS NULL",
+        )
+        .execute(&self.pool)
+        .await;
         sqlx::query("DROP INDEX IF EXISTS usage_logs_event_id")
             .execute(&self.pool)
             .await?;
@@ -272,22 +281,10 @@ impl AppDb {
         .await;
 
         sqlx::query(
-            "CREATE TABLE IF NOT EXISTS credit_wallet (
-                user_id TEXT PRIMARY KEY,
-                balance_micros BIGINT NOT NULL DEFAULT 0 CHECK (balance_micros >= 0),
-                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-            )",
-        )
-        .execute(&self.pool)
-        .await?;
-
-        sqlx::query(
             "CREATE TABLE IF NOT EXISTS generation_reservations (
                 id TEXT PRIMARY KEY,
                 user_id TEXT NOT NULL,
                 reserved_tokens BIGINT NOT NULL CHECK (reserved_tokens >= 0),
-                held_micros BIGINT NOT NULL CHECK (held_micros >= 0),
-                credits_paid BOOLEAN NOT NULL,
                 dispatched_at TIMESTAMPTZ,
                 expires_at TIMESTAMPTZ NOT NULL,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -305,39 +302,6 @@ impl AppDb {
         )
         .execute(&self.pool)
         .await;
-
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS credit_transactions (
-                id BIGSERIAL PRIMARY KEY,
-                user_id TEXT NOT NULL,
-                delta_micros BIGINT NOT NULL,
-                reason TEXT NOT NULL,
-                reference TEXT NOT NULL,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                UNIQUE (reason, reference)
-            )",
-        )
-        .execute(&self.pool)
-        .await?;
-        let _ = sqlx::query(
-            "CREATE INDEX IF NOT EXISTS credit_transactions_user ON credit_transactions (user_id, created_at)",
-        )
-        .execute(&self.pool)
-        .await;
-
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS auto_recharge (
-                user_id TEXT PRIMARY KEY,
-                enabled BOOLEAN NOT NULL DEFAULT FALSE,
-                amount_cents BIGINT NOT NULL CHECK (amount_cents > 0),
-                threshold_micros BIGINT NOT NULL CHECK (threshold_micros >= 0),
-                consecutive_failures INT NOT NULL DEFAULT 0,
-                last_attempt_at TIMESTAMPTZ,
-                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-            )",
-        )
-        .execute(&self.pool)
-        .await?;
 
         sqlx::query(
             "ALTER TABLE generation_reservations ADD COLUMN IF NOT EXISTS tier TEXT",
@@ -373,17 +337,31 @@ impl AppDb {
         )
         .execute(&self.pool)
         .await?;
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS billing_credit_products (
-                amount_cents INTEGER PRIMARY KEY,
-                product_id TEXT NOT NULL UNIQUE,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-            )",
-        )
-        .execute(&self.pool)
-        .await?;
         let _ = sqlx::query(
             "DELETE FROM webhook_events WHERE processed_at < NOW() - INTERVAL '90 days'",
+        )
+        .execute(&self.pool)
+        .await;
+
+        let _ = sqlx::query("DROP TABLE IF EXISTS credit_wallet")
+            .execute(&self.pool)
+            .await;
+        let _ = sqlx::query("DROP TABLE IF EXISTS credit_transactions")
+            .execute(&self.pool)
+            .await;
+        let _ = sqlx::query("DROP TABLE IF EXISTS auto_recharge")
+            .execute(&self.pool)
+            .await;
+        let _ = sqlx::query("DROP TABLE IF EXISTS billing_credit_products")
+            .execute(&self.pool)
+            .await;
+        let _ = sqlx::query(
+            "ALTER TABLE generation_reservations DROP COLUMN IF EXISTS held_micros",
+        )
+        .execute(&self.pool)
+        .await;
+        let _ = sqlx::query(
+            "ALTER TABLE generation_reservations DROP COLUMN IF EXISTS credits_paid",
         )
         .execute(&self.pool)
         .await;

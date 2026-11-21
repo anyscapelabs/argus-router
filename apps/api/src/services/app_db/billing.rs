@@ -25,18 +25,6 @@ pub struct SubscriptionRow {
     pub status: String,
 }
 
-const AUTO_RECHARGE_MAX_FAILURES: i32 = 3;
-const AUTO_RECHARGE_COOLDOWN_MINUTES: i64 = 10;
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AutoRechargeView {
-    pub enabled: bool,
-    pub amount_cents: i64,
-    pub threshold_micros: i64,
-    pub disabled_by_failures: bool,
-}
-
 impl AppDb {
     pub async fn claim_billing_checkout(
         &self,
@@ -110,17 +98,6 @@ impl AppDb {
         sqlx::query(
             "DELETE FROM billing_checkout_sessions
              WHERE user_id = $1 AND checkout_key LIKE 'plan:%'",
-        )
-        .bind(user_id)
-        .execute(&self.pool)
-        .await?;
-        Ok(())
-    }
-
-    pub async fn clear_user_credit_checkouts(&self, user_id: &str) -> Result<(), sqlx::Error> {
-        sqlx::query(
-            "DELETE FROM billing_checkout_sessions
-             WHERE user_id = $1 AND checkout_key LIKE 'credits:%'",
         )
         .bind(user_id)
         .execute(&self.pool)
@@ -358,181 +335,6 @@ impl AppDb {
         Ok(())
     }
 
-    pub async fn credit_balance(&self, user_id: &str) -> Result<i64, sqlx::Error> {
-        sqlx::query_scalar(
-            "SELECT COALESCE(balance_micros, 0) FROM credit_wallet WHERE user_id = $1",
-        )
-        .bind(user_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map(|found: Option<i64>| found.unwrap_or(0))
-    }
-
-    pub async fn auto_recharge_of(&self, user_id: &str) -> Result<Option<AutoRechargeView>, sqlx::Error> {
-        sqlx::query(
-            "SELECT enabled, amount_cents, threshold_micros, consecutive_failures
-             FROM auto_recharge WHERE user_id = $1",
-        )
-        .bind(user_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map(|row| {
-            row.map(|row| AutoRechargeView {
-                enabled: row.try_get("enabled").unwrap_or(false),
-                amount_cents: row.try_get("amount_cents").unwrap_or(0),
-                threshold_micros: row.try_get("threshold_micros").unwrap_or(0),
-                disabled_by_failures: row.try_get::<i32, _>("consecutive_failures")
-                    .unwrap_or(0)
-                    >= AUTO_RECHARGE_MAX_FAILURES,
-            })
-        })
-    }
-
-    pub async fn upsert_auto_recharge(
-        &self,
-        user_id: &str,
-        enabled: bool,
-        amount_cents: i64,
-        threshold_micros: i64,
-    ) -> Result<(), sqlx::Error> {
-        sqlx::query(
-            "INSERT INTO auto_recharge
-               (user_id, enabled, amount_cents, threshold_micros, consecutive_failures, updated_at)
-             VALUES ($1, $2, $3, $4, 0, NOW())
-             ON CONFLICT (user_id) DO UPDATE
-               SET enabled = $2,
-                   amount_cents = $3,
-                   threshold_micros = $4,
-                   consecutive_failures = 0,
-                   updated_at = NOW()",
-        )
-        .bind(user_id)
-        .bind(enabled)
-        .bind(amount_cents)
-        .bind(threshold_micros)
-        .execute(&self.pool)
-        .await?;
-        Ok(())
-    }
-
-    /// Claims the right to fire one auto-recharge charge, enforcing a cooldown
-    /// so concurrent requests that hit the credit floor trigger a single charge.
-    pub async fn claim_auto_recharge(
-        &self,
-        user_id: &str,
-        amount_cents: &mut i64,
-        threshold_micros: &mut i64,
-    ) -> Result<bool, sqlx::Error> {
-        let row = sqlx::query(
-            "UPDATE auto_recharge
-             SET last_attempt_at = NOW(), updated_at = NOW()
-             WHERE user_id = $1
-               AND enabled
-               AND consecutive_failures < $2
-               AND (last_attempt_at IS NULL
-                    OR last_attempt_at < NOW() - $3 * INTERVAL '1 minute')
-             RETURNING amount_cents, threshold_micros",
-        )
-        .bind(user_id)
-        .bind(AUTO_RECHARGE_MAX_FAILURES)
-        .bind(AUTO_RECHARGE_COOLDOWN_MINUTES)
-        .fetch_optional(&self.pool)
-        .await?;
-        match row {
-            Some(row) => {
-                *amount_cents = row.try_get("amount_cents").unwrap_or(0);
-                *threshold_micros = row.try_get("threshold_micros").unwrap_or(0);
-                Ok(true)
-            }
-            None => Ok(false),
-        }
-    }
-
-    pub async fn release_auto_recharge_claim(&self, user_id: &str) -> Result<(), sqlx::Error> {
-        sqlx::query(
-            "UPDATE auto_recharge
-             SET last_attempt_at = NULL, updated_at = NOW()
-             WHERE user_id = $1 AND last_attempt_at IS NOT NULL",
-        )
-        .bind(user_id)
-        .execute(&self.pool)
-        .await?;
-        Ok(())
-    }
-
-    pub async fn record_auto_recharge_success(&self, user_id: &str) -> Result<(), sqlx::Error> {
-        sqlx::query(
-            "UPDATE auto_recharge
-             SET consecutive_failures = 0, last_attempt_at = NULL, updated_at = NOW()
-             WHERE user_id = $1",
-        )
-        .bind(user_id)
-        .execute(&self.pool)
-        .await?;
-        Ok(())
-    }
-
-    pub async fn record_auto_recharge_failure(&self, user_id: &str) -> Result<bool, sqlx::Error> {
-        let failures = sqlx::query_scalar::<_, i32>(
-            "UPDATE auto_recharge
-             SET consecutive_failures = consecutive_failures + 1, updated_at = NOW()
-             WHERE user_id = $1
-             RETURNING consecutive_failures",
-        )
-        .bind(user_id)
-        .fetch_optional(&self.pool)
-        .await?
-        .unwrap_or(0);
-        Ok(failures >= AUTO_RECHARGE_MAX_FAILURES)
-    }
-
-    pub async fn add_credits(
-        &self,
-        user_id: &str,
-        delta_micros: i64,
-        reason: &str,
-        reference: &str,
-    ) -> Result<(), sqlx::Error> {
-        let mut tx = self.pool.begin().await?;
-        let inserted = sqlx::query(
-            "INSERT INTO credit_transactions (user_id, delta_micros, reason, reference)
-             VALUES ($1, $2, $3, $4)
-             ON CONFLICT (reason, reference) DO NOTHING",
-        )
-        .bind(user_id)
-        .bind(delta_micros)
-        .bind(reason)
-        .bind(reference)
-        .execute(&mut *tx)
-        .await?
-        .rows_affected();
-        if inserted > 0 {
-            sqlx::query(
-                "INSERT INTO credit_wallet (user_id, balance_micros, updated_at)
-                 VALUES ($1, GREATEST($2, 0), NOW())
-                 ON CONFLICT (user_id) DO UPDATE
-                   SET balance_micros = GREATEST(credit_wallet.balance_micros + $2, 0),
-                       updated_at = NOW()",
-            )
-            .bind(user_id)
-            .bind(delta_micros)
-            .execute(&mut *tx)
-            .await?;
-        }
-        tx.commit().await?;
-        Ok(())
-    }
-
-    pub async fn credit_product_of_amount(
-        &self,
-        amount_cents: i64,
-    ) -> Result<Option<String>, sqlx::Error> {
-        sqlx::query_scalar("SELECT product_id FROM billing_credit_products WHERE amount_cents = $1")
-            .bind(amount_cents)
-            .fetch_optional(&self.pool)
-            .await
-    }
-
     pub async fn plan_product_of(&self, plan_id: &str) -> Result<Option<String>, sqlx::Error> {
         sqlx::query_scalar("SELECT product_id FROM billing_plan_products WHERE plan_id = $1")
             .bind(plan_id)
@@ -562,36 +364,6 @@ impl AppDb {
                SET product_id = EXCLUDED.product_id",
         )
         .bind(plan_id)
-        .bind(product_id)
-        .execute(&self.pool)
-        .await?;
-        Ok(())
-    }
-
-    pub async fn credit_amount_of_product(
-        &self,
-        product_id: &str,
-    ) -> Result<Option<i64>, sqlx::Error> {
-        sqlx::query_scalar(
-            "SELECT amount_cents FROM billing_credit_products WHERE product_id = $1",
-        )
-        .bind(product_id)
-        .fetch_optional(&self.pool)
-        .await
-    }
-
-    pub async fn upsert_credit_product(
-        &self,
-        amount_cents: i64,
-        product_id: &str,
-    ) -> Result<(), sqlx::Error> {
-        sqlx::query(
-            "INSERT INTO billing_credit_products (amount_cents, product_id)
-             VALUES ($1, $2)
-             ON CONFLICT (amount_cents) DO UPDATE
-               SET product_id = EXCLUDED.product_id",
-        )
-        .bind(amount_cents)
         .bind(product_id)
         .execute(&self.pool)
         .await?;

@@ -23,7 +23,6 @@ fn error_type(code: ErrCode) -> &'static str {
         | ErrCode::DailyLimitReached
         | ErrCode::WeeklyLimitReached
         | ErrCode::MonthlyLimitReached => "rate_limit_error",
-        ErrCode::CreditsExhausted => "insufficient_quota",
         ErrCode::Overloaded => "overloaded_error",
         ErrCode::Upstream | ErrCode::Network | ErrCode::Timeout => "api_error",
         ErrCode::ProviderUnconfigured => "api_error",

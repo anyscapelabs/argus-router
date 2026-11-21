@@ -4,109 +4,96 @@
     "name": "Free",
     "price": "0",
     "tagline": "For Students",
-    "searchesPerMonth": 25,
-    "voiceMinutes": 10,
+    "searchesPerMonth": 5,
+    "voiceMinutes": 0,
     "limits": {
-      "monthlyTokens": "5,000,000 monthly tokens",
-      "weeklyTokens": "1,500,000 weekly tokens",
-      "dailyRequests": "100 requests/day"
+      "monthlyTokens": "8,570,000 monthly tokens",
+      "weeklyTokens": "3,428,000 weekly tokens",
+      "dailyRequests": "0 requests/day"
     },
     "tierLimits": {
       "lite": {
-        "monthlyTokens": "5,000,000",
-        "weeklyTokens": "1,500,000"
+        "monthlyTokens": "8,570,000",
+        "weeklyTokens": "3,428,000"
       }
     },
     "tiers": [
       "lite"
     ],
-    "models": [
-      "argus/auto",
-      "z-ai/glm-5.3-flash",
-      "deepseek/deepseek-v4.1-flash-1017",
-      "minimax/minimax-m3.1-flash",
-      "qwen/qwen3.8-flash",
-      "openai/gpt-6-luna",
-      "bedrock/nova-lite",
-      "bedrock/glm-4.7-flash",
-      "bedrock/minimax-m2.1",
-      "bedrock/minimax-m2.5"
-    ]
+    "models": [],
+    "computeBudgetUsd": 0.5,
+    "allowanceUsd": 0.48,
+    "weeklyFraction": 0.4,
+    "groups": [
+      "lite"
+    ],
+    "groupCaps": {
+      "lite": 100
+    }
   },
   {
     "id": "starter",
     "name": "Starter",
-    "price": "3",
+    "price": "5",
     "tagline": "For Individuals",
-    "searchesPerMonth": 150,
-    "voiceMinutes": 60,
+    "searchesPerMonth": 60,
+    "voiceMinutes": 10,
     "limits": {
-      "monthlyTokens": "12,500,000 monthly tokens",
-      "weeklyTokens": "3,750,000 weekly tokens",
-      "dailyRequests": "500 requests/day"
+      "monthlyTokens": "34,070,000 monthly tokens",
+      "weeklyTokens": "13,628,000 weekly tokens",
+      "dailyRequests": "0 requests/day"
     },
     "tierLimits": {
       "lite": {
-        "monthlyTokens": "10,000,000",
-        "weeklyTokens": "3,000,000"
+        "monthlyTokens": "31,620,000",
+        "weeklyTokens": "12,648,000"
       },
       "standard": {
-        "monthlyTokens": "2,500,000",
-        "weeklyTokens": "750,000"
+        "monthlyTokens": "2,450,000",
+        "weeklyTokens": "980,000"
       }
     },
     "tiers": [
       "lite",
       "standard"
     ],
-    "models": [
-      "argus/auto",
-      "z-ai/glm-5.3-flash",
-      "deepseek/deepseek-v4.1-flash-1017",
-      "minimax/minimax-m3.1-flash",
-      "qwen/qwen3.8-flash",
-      "openai/gpt-6-luna",
-      "anthropic/claude-haiku-5.5",
-      "minimax/minimax-m3",
-      "deepseek/deepseek-v4-pro",
-      "google/gemini-3.8-flash",
-      "z-ai/glm-5.3",
-      "bedrock/nova-lite",
-      "bedrock/nova-2-lite",
-      "bedrock/nova-pro",
-      "bedrock/kimi-k2.5",
-      "bedrock/glm-4.7-flash",
-      "bedrock/glm-4.7",
-      "bedrock/glm-5",
-      "bedrock/minimax-m2.1",
-      "bedrock/minimax-m2.5",
-      "bedrock/deepseek-v3.2"
-    ]
+    "models": [],
+    "computeBudgetUsd": 3.0,
+    "allowanceUsd": 2.53,
+    "weeklyFraction": 0.4,
+    "groups": [
+      "lite",
+      "standard"
+    ],
+    "groupCaps": {
+      "lite": 70,
+      "standard": 30
+    }
   },
   {
     "id": "max",
     "name": "Max",
-    "price": "9",
+    "price": "10",
     "tagline": "For Power Users",
-    "searchesPerMonth": 600,
-    "voiceMinutes": 240,
+    "searchesPerMonth": 150,
+    "voiceMinutes": 25,
     "limits": {
-      "monthlyTokens": "37,000,000 monthly tokens",
-      "weeklyTokens": "11,100,000 weekly tokens",
-      "dailyRequests": "2,000 requests/day"
+      "monthlyTokens": "79,600,000 monthly tokens",
+      "weeklyTokens": "31,840,000 weekly tokens",
+      "dailyRequests": "0 requests/day"
     },
     "tierLimits": {
       "lite": {
-        "monthlyTokens": "25,000,000",
-        "weeklyTokens": "7,500,000"
+        "monthlyTokens": "73,180,000",
+        "weeklyTokens": "29,272,000"
       },
       "standard": {
-        "monthlyTokens": "10,000,000",
-        "weeklyTokens": "3,000,000"
+        "monthlyTokens": "5,510,000",
+        "weeklyTokens": "2,204,000"
       },
       "premium": {
-        "monthlyTokens": "2,000,000",
-        "weeklyTokens": "600,000"
+        "monthlyTokens": "910,000",
+        "weeklyTokens": "364,000"
       }
     },
     "tiers": [
@@ -114,67 +101,49 @@
       "standard",
       "premium"
     ],
-    "models": [
-      "argus/auto",
-      "z-ai/glm-5.3-flash",
-      "deepseek/deepseek-v4.1-flash-1017",
-      "minimax/minimax-m3.1-flash",
-      "qwen/qwen3.8-flash",
-      "openai/gpt-6-luna",
-      "anthropic/claude-haiku-5.5",
-      "minimax/minimax-m3",
-      "deepseek/deepseek-v4-pro",
-      "google/gemini-3.8-flash",
-      "z-ai/glm-5.3",
-      "anthropic/claude-sonnet-5.5",
-      "google/gemini-4-carbon",
-      "openai/gpt-6.1-sol",
-      "moonshotai/kimi-k3.1-pro",
-      "qwen/qwen3.8-max",
-      "x-ai/grok-4.7",
-      "bedrock/nova-lite",
-      "bedrock/nova-2-lite",
-      "bedrock/nova-pro",
-      "bedrock/kimi-k2.5",
-      "bedrock/kimi-k3",
-      "bedrock/kimi-k3.1",
-      "bedrock/claude-haiku-4.5",
-      "bedrock/glm-4.7-flash",
-      "bedrock/glm-4.7",
-      "bedrock/glm-5",
-      "bedrock/minimax-m2.1",
-      "bedrock/minimax-m2.5",
-      "bedrock/deepseek-v3.2"
-    ]
+    "models": [],
+    "computeBudgetUsd": 8.0,
+    "allowanceUsd": 6.83,
+    "weeklyFraction": 0.4,
+    "groups": [
+      "lite",
+      "standard",
+      "premium"
+    ],
+    "groupCaps": {
+      "lite": 60,
+      "standard": 25,
+      "premium": 15
+    }
   },
   {
     "id": "max-plus",
     "name": "Max Plus",
     "price": "15",
     "tagline": "For Maximum Power",
-    "searchesPerMonth": 1500,
-    "voiceMinutes": 600,
+    "searchesPerMonth": 250,
+    "voiceMinutes": 45,
     "limits": {
-      "monthlyTokens": "59,750,000 monthly tokens",
-      "weeklyTokens": "17,920,000 weekly tokens",
-      "dailyRequests": "4,000 requests/day"
+      "monthlyTokens": "107,440,000 monthly tokens",
+      "weeklyTokens": "42,976,000 weekly tokens",
+      "dailyRequests": "0 requests/day"
     },
     "tierLimits": {
       "lite": {
-        "monthlyTokens": "40,000,000",
-        "weeklyTokens": "12,000,000"
+        "monthlyTokens": "97,920,000",
+        "weeklyTokens": "39,168,000"
       },
       "standard": {
-        "monthlyTokens": "16,000,000",
-        "weeklyTokens": "4,800,000"
+        "monthlyTokens": "8,040,000",
+        "weeklyTokens": "3,216,000"
       },
       "premium": {
-        "monthlyTokens": "3,000,000",
-        "weeklyTokens": "900,000"
+        "monthlyTokens": "1,330,000",
+        "weeklyTokens": "532,000"
       },
       "ultra": {
-        "monthlyTokens": "750,000",
-        "weeklyTokens": "220,000"
+        "monthlyTokens": "150,000",
+        "weeklyTokens": "60,000"
       }
     },
     "tiers": [
@@ -183,40 +152,21 @@
       "premium",
       "ultra"
     ],
-    "models": [
-      "argus/auto",
-      "z-ai/glm-5.3-flash",
-      "deepseek/deepseek-v4.1-flash-1017",
-      "minimax/minimax-m3.1-flash",
-      "qwen/qwen3.8-flash",
-      "openai/gpt-6-luna",
-      "anthropic/claude-haiku-5.5",
-      "minimax/minimax-m3",
-      "deepseek/deepseek-v4-pro",
-      "google/gemini-3.8-flash",
-      "z-ai/glm-5.3",
-      "anthropic/claude-sonnet-5.5",
-      "google/gemini-4-carbon",
-      "openai/gpt-6.1-sol",
-      "moonshotai/kimi-k3.1-pro",
-      "qwen/qwen3.8-max",
-      "x-ai/grok-4.7",
-      "anthropic/claude-opus-5.5",
-      "anthropic/claude-fable-5.2",
-      "bedrock/nova-lite",
-      "bedrock/nova-2-lite",
-      "bedrock/nova-pro",
-      "bedrock/kimi-k2.5",
-      "bedrock/kimi-k3",
-      "bedrock/kimi-k3.1",
-      "bedrock/claude-haiku-4.5",
-      "bedrock/claude-opus-4.5",
-      "bedrock/glm-4.7-flash",
-      "bedrock/glm-4.7",
-      "bedrock/glm-5",
-      "bedrock/minimax-m2.1",
-      "bedrock/minimax-m2.5",
-      "bedrock/deepseek-v3.2"
-    ]
+    "models": [],
+    "computeBudgetUsd": 12.0,
+    "allowanceUsd": 9.97,
+    "weeklyFraction": 0.4,
+    "groups": [
+      "lite",
+      "standard",
+      "premium",
+      "ultra"
+    ],
+    "groupCaps": {
+      "lite": 55,
+      "standard": 25,
+      "premium": 15,
+      "ultra": 5
+    }
   }
 ]

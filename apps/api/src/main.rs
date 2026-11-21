@@ -60,7 +60,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         _ => None,
     };
 
-    let plans = services::plans::expand_tiers(services::plans::seed_entries(), &seeded);
+    let plans = services::plans::expand_groups(services::plans::seed_entries(), &seeded);
     if let Err(error) = app_db.seed_plans(&plans).await {
         tracing::warn!(%error, "plan seeding failed");
     }
