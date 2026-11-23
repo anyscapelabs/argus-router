@@ -103,7 +103,8 @@ async fn list_usage(
         qb.push(" AND created_at <= ").push_bind(until);
     }
     qb.push(" ORDER BY created_at DESC LIMIT ").push_bind(limit);
-    let rows = qb.build().fetch_all(&pool).await.map_err(|_e| {
+    let rows = qb.build().fetch_all(&pool).await.map_err(|error| {
+        tracing::error!(%error, "usage list query failed");
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             AxumJson(serde_json::json!({"error": {"code": "USAGE_LIST", "message": "An error has occurred. Try again later."}})),
@@ -191,7 +192,8 @@ async fn usage_summary(
         "day"
     };
     let pool = state.app_db.pool();
-    let db_err = |_e: sqlx::Error| {
+    let db_err = |error: sqlx::Error| {
+        tracing::error!(%error, "usage summary database operation failed");
         api_err(
             StatusCode::INTERNAL_SERVER_ERROR,
             "USAGE_SUMMARY",
