@@ -3,13 +3,12 @@ pub mod openai;
 
 use axum::http::HeaderMap;
 use better_auth::plugins::api_key::VerifyApiKey;
-use chrono::{TimeZone, Utc};
 
 use std::time::{Duration, Instant};
 
 use crate::error::{ErrCode, Errx};
 use crate::services::app_db::{
-    GenerationReservation, GenerationReservationOutcome, QuotaCheck, UsagePeriod,
+    GenerationReservation, GenerationReservationOutcome, UsagePeriod,
 };
 use crate::services::catalog::{AUTO_MODEL_ID, ModelCatalogEntry, Tier};
 use crate::services::usage::{LogType, UsageRow};
@@ -123,19 +122,6 @@ pub(crate) async fn enforce_plan_quotas(
         .await
         .map_err(|_| db_error("the plan quota lookup"))?;
 
-    if let QuotaCheck::Exceeded { used, quota } = state
-        .app_db
-        .reserve_daily_request(user_id, plan)
-        .await
-        .map_err(|_| db_error("the daily request reservation"))?
-    {
-        let period = state
-            .app_db
-            .usage_period(user_id)
-            .await
-            .map_err(|_| db_error("the usage period lookup"))?;
-        return Err(limit_error(LimitWindow::Daily, quota, used, &period));
-    }
     let (monthly, weekly) = state
         .app_db
         .tokens_used(user_id)
@@ -172,7 +158,6 @@ pub(crate) async fn enforce_plan_quotas(
 
 #[derive(Clone, Copy)]
 enum LimitWindow {
-    Daily,
     Weekly,
     Monthly,
 }
@@ -180,7 +165,6 @@ enum LimitWindow {
 impl LimitWindow {
     fn code(self) -> ErrCode {
         match self {
-            LimitWindow::Daily => ErrCode::DailyLimitReached,
             LimitWindow::Weekly => ErrCode::WeeklyLimitReached,
             LimitWindow::Monthly => ErrCode::MonthlyLimitReached,
         }
@@ -189,7 +173,6 @@ impl LimitWindow {
 
 fn limit_error(window: LimitWindow, quota: i64, used: i64, period: &UsagePeriod) -> Errx {
     let reset = match window {
-        LimitWindow::Daily => next_day_start(),
         LimitWindow::Weekly => period.weekly_reset,
         LimitWindow::Monthly => period.monthly_reset,
     };
@@ -201,15 +184,8 @@ fn limit_error(window: LimitWindow, quota: i64, used: i64, period: &UsagePeriod)
     .with_retry_after(reset_seconds_left(reset))
 }
 
-fn next_day_start() -> chrono::DateTime<Utc> {
-    let today = Utc::now().date_naive();
-    let tomorrow = today.succ_opt().unwrap_or(today);
-    Utc.from_utc_datetime(&tomorrow.and_hms_opt(0, 0, 0).unwrap_or_default())
-}
-
 fn window_label(window: LimitWindow) -> &'static str {
     match window {
-        LimitWindow::Daily => "Daily",
         LimitWindow::Weekly => "Weekly",
         LimitWindow::Monthly => "Monthly",
     }

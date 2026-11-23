@@ -103,40 +103,6 @@ impl AppDb {
         Ok(())
     }
 
-    pub async fn reserve_daily_request(
-        &self,
-        user_id: &str,
-        plan_id: &str,
-    ) -> Result<QuotaCheck, sqlx::Error> {
-        let quota_row = sqlx::query("SELECT daily_requests FROM plans WHERE id = $1")
-            .bind(plan_id)
-            .fetch_optional(&self.pool)
-            .await?;
-        let quota = quota_row
-            .and_then(|r| r.try_get::<i64, _>("daily_requests").ok())
-            .unwrap_or(0);
-        if quota <= 0 {
-            return Ok(QuotaCheck::Allowed { used: 0, quota: 0 });
-        }
-
-        let used = sqlx::query_scalar::<_, i64>(
-            "INSERT INTO daily_request_usage (user_id, day_start, used)
-             VALUES ($1, CURRENT_DATE, 1)
-             ON CONFLICT (user_id, day_start) DO UPDATE
-             SET used = daily_request_usage.used + 1
-             WHERE daily_request_usage.used < $2
-             RETURNING used",
-        )
-        .bind(user_id)
-        .bind(quota)
-        .fetch_optional(&self.pool)
-        .await?;
-        match used {
-            Some(used) => Ok(QuotaCheck::Allowed { used, quota }),
-            None => Ok(QuotaCheck::Exceeded { used: quota, quota }),
-        }
-    }
-
     pub async fn tokens_used(&self, user_id: &str) -> Result<(i64, i64), sqlx::Error> {
         let period = self.usage_period(user_id).await?;
         let row = sqlx::query(

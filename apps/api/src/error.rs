@@ -5,7 +5,6 @@ pub enum ErrCode {
     Forbidden,
     NotFound,
     RateLimited,
-    DailyLimitReached,
     WeeklyLimitReached,
     MonthlyLimitReached,
     Overloaded,
@@ -23,7 +22,6 @@ impl ErrCode {
             ErrCode::Forbidden => "forbidden",
             ErrCode::NotFound => "not_found",
             ErrCode::RateLimited => "rate_limit_error",
-            ErrCode::DailyLimitReached => "daily_limit_reached",
             ErrCode::WeeklyLimitReached => "weekly_limit_reached",
             ErrCode::MonthlyLimitReached => "monthly_limit_reached",
             ErrCode::Overloaded => "overloaded_error",
@@ -70,7 +68,6 @@ impl Errx {
     pub fn public_message(&self) -> String {
         match self.code {
             ErrCode::RateLimited
-            | ErrCode::DailyLimitReached
             | ErrCode::WeeklyLimitReached
             | ErrCode::MonthlyLimitReached => self.message.clone(),
             _ => "An error has occurred. Try again later.".to_owned(),

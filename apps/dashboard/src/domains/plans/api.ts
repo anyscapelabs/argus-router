@@ -3,7 +3,6 @@ import { API_ROUTES } from "@/config/api";
 export type PlanLimits = {
   monthlyTokens: string;
   weeklyTokens: string;
-  dailyRequests: string;
 };
 
 export type Plan = {

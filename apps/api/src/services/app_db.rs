@@ -31,7 +31,6 @@ impl AppDb {
 pub struct PlanQuota {
     pub monthly_tokens: i64,
     pub weekly_tokens: i64,
-    pub daily_requests: i64,
 }
 
 #[derive(Clone, Debug)]

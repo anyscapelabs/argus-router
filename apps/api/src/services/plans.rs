@@ -6,7 +6,6 @@ use std::collections::HashMap;
 pub struct PlanLimits {
     pub monthly_tokens: String,
     pub weekly_tokens: String,
-    pub daily_requests: String,
 }
 
 impl PlanLimits {
@@ -38,10 +37,6 @@ impl PlanLimits {
 
     pub fn weekly_tokens_count(&self) -> i64 {
         Self::count(&self.weekly_tokens)
-    }
-
-    pub fn daily_requests_count(&self) -> i64 {
-        Self::count(&self.daily_requests)
     }
 
 }

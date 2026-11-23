@@ -20,7 +20,6 @@ fn error_type(code: ErrCode) -> &'static str {
         ErrCode::Forbidden => "permission_error",
         ErrCode::NotFound => "invalid_request_error",
         ErrCode::RateLimited
-        | ErrCode::DailyLimitReached
         | ErrCode::WeeklyLimitReached
         | ErrCode::MonthlyLimitReached => "rate_limit_error",
         ErrCode::Overloaded => "overloaded_error",
