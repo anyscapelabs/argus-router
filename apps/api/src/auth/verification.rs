@@ -1,4 +1,4 @@
-use better_auth::plugins::SendVerificationEmail;
+use better_auth::plugins::{MagicLinkMessage, SendMagicLink, SendVerificationEmail};
 use better_auth_api::plugins::user_management::SendDeleteAccountVerification;
 use better_auth::prelude::AuthRequest;
 use tracing::instrument;
@@ -98,6 +98,45 @@ impl SendVerificationEmail for ResendVerificationSender {
 
         self.email
             .send(&user_email, "Confirm your email — Argus Agent", &html)
+            .await
+            .map_err(|error| better_auth::AuthError::internal(error.to_string()))?;
+        Ok(())
+    }
+}
+
+pub struct ResendMagicLinkSender {
+    email: ResendEmail,
+    dashboard_url: String,
+}
+
+impl ResendMagicLinkSender {
+    pub fn new(settings: &Settings, client: ::reqwest::Client) -> Self {
+        Self {
+            email: ResendEmail {
+                client,
+                api_key: settings.resend_api_key.clone(),
+                from: settings.resend_from.clone(),
+            },
+            dashboard_url: settings.dashboard_url.trim_end_matches('/').to_owned(),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl SendMagicLink for ResendMagicLinkSender {
+    #[instrument(skip_all, fields(email))]
+    async fn send(&self, message: &MagicLinkMessage) -> better_auth::AuthResult<()> {
+        let html = branded_email_shell(
+            &self.dashboard_url,
+            "Sign in to Argus",
+            "Click the button below to sign in to your account. If you do not have an account yet, we will create one for you.",
+            "Sign in to Argus",
+            &message.url,
+            "This link expires in 10 minutes and can be used once. If you didn&#39;t request it, you can safely ignore this email.",
+        );
+
+        self.email
+            .send(&message.email, "Your sign-in link — Argus Agent", &html)
             .await
             .map_err(|error| better_auth::AuthError::internal(error.to_string()))?;
         Ok(())

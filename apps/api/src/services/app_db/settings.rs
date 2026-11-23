@@ -59,8 +59,8 @@ impl AppDb {
             return Ok(());
         }
         sqlx::query(
-            "UPDATE api_keys
-             SET expires_at = NOW() + make_interval(days => $2),
+             "UPDATE api_keys
+              SET expires_at = NOW() + make_interval(days => $2::int),
                  updated_at = NOW()
              WHERE reference_id = $1 AND expires_at IS NULL",
         )

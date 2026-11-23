@@ -14,17 +14,25 @@ export type UsageRow = {
   status: number | null;
   latencyMs: number | null;
   errorCode: string | null;
+  logType?: "chat" | "voice" | "web_search";
+  details?: {
+    turns?: number;
+    query?: string;
+    resultCount?: number;
+  } | null;
 };
 
 export type UsageResult = {
   rows: UsageRow[];
 };
 
-export type UsageRange = "24h" | "7d" | "30d";
+export type UsageRange = "24h" | "7d" | "30d" | "month";
 
 export type GetUsageParams = {
   keyId?: string;
+  logType?: "chat" | "voice" | "web_search";
   since?: string;
+  until?: string;
   limit?: number;
 };
 
@@ -52,7 +60,19 @@ export type UsageByModelSeriesPoint = {
   tokens: number;
 };
 
+export type UsagePeriodSummary = {
+  startAt: string;
+  resetAt: string;
+  tokens: number;
+};
+
 export type UsageSummary = {
+  weeklyResetAt?: string;
+  monthlyResetAt?: string;
+  periods?: {
+    weekly: UsagePeriodSummary;
+    monthly: UsagePeriodSummary;
+  };
   totals: UsageAggregate;
   byModel: UsageByModel[];
   byKey: UsageByKey[];
@@ -60,6 +80,10 @@ export type UsageSummary = {
   byModelSeries: UsageByModelSeriesPoint[];
   bucket: "hour" | "day";
   tz: string;
+  voiceMinutesUsed?: number;
+  voiceMinutesQuota?: number;
+  webSearchUsed?: number;
+  webSearchQuota?: number;
 };
 
 export function sinceForRange(range: UsageRange, now = new Date()): string {
@@ -67,6 +91,9 @@ export function sinceForRange(range: UsageRange, now = new Date()): string {
   if (range === "24h") {
     d.setMinutes(0, 0, 0);
     d.setHours(d.getHours() - 23);
+  } else if (range === "month") {
+    d.setDate(1);
+    d.setHours(0, 0, 0, 0);
   } else {
     d.setHours(0, 0, 0, 0);
     d.setDate(d.getDate() - (range === "7d" ? 6 : 29));
@@ -77,7 +104,9 @@ export function sinceForRange(range: UsageRange, now = new Date()): string {
 export async function getUsage(params: GetUsageParams = {}): Promise<UsageResult> {
   const search = new URLSearchParams();
   if (params.keyId) search.set("key_id", params.keyId);
+  if (params.logType) search.set("type", params.logType);
   if (params.since) search.set("since", params.since);
+  if (params.until) search.set("until", params.until);
   if (params.limit != null) search.set("limit", String(params.limit));
   const qs = search.toString();
   const url = qs ? `${API_ROUTES.usage}?${qs}` : API_ROUTES.usage;

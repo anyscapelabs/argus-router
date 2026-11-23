@@ -11,6 +11,7 @@ export type Profile = {
   name: string | null;
   image: string | null;
   emailVerified: boolean;
+  age: number | null;
   providers: string[];
 };
 

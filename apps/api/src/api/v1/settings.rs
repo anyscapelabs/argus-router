@@ -22,7 +22,8 @@ async fn get_settings(
     session: CurrentSession<AppAuthSchema>,
 ) -> Result<AxumJson<crate::services::app_db::UserSettings>, ApiProblem> {
     let user = user_id(&session);
-    let settings = state.app_db.settings_of(&user).await.map_err(|_error| {
+    let settings = state.app_db.settings_of(&user).await.map_err(|error| {
+        tracing::error!(%error, "settings database operation failed");
         problem(
             StatusCode::INTERNAL_SERVER_ERROR,
             "SETTINGS_LOOKUP",
@@ -64,7 +65,8 @@ async fn update_settings(
             .app_db
             .set_allow_free_training(&user, allow)
             .await
-            .map_err(|_error| {
+            .map_err(|error| {
+        tracing::error!(%error, "settings database operation failed");
                 problem(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "SETTINGS_UPDATE",
@@ -77,7 +79,8 @@ async fn update_settings(
             .app_db
             .set_max_key_lifetime(&user, days)
             .await
-            .map_err(|_error| {
+            .map_err(|error| {
+        tracing::error!(%error, "settings database operation failed");
                 problem(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "SETTINGS_UPDATE",
@@ -88,7 +91,8 @@ async fn update_settings(
             .app_db
             .clamp_key_lifetimes(&user, days)
             .await
-            .map_err(|_error| {
+            .map_err(|error| {
+        tracing::error!(%error, "settings database operation failed");
                 problem(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "SETTINGS_UPDATE",
@@ -96,7 +100,8 @@ async fn update_settings(
                 )
             })?;
     }
-    let settings = state.app_db.settings_of(&user).await.map_err(|_error| {
+    let settings = state.app_db.settings_of(&user).await.map_err(|error| {
+        tracing::error!(%error, "settings database operation failed");
         problem(
             StatusCode::INTERNAL_SERVER_ERROR,
             "SETTINGS_LOOKUP",

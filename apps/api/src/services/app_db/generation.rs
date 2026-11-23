@@ -2,8 +2,10 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use chrono::Utc;
 use sqlx::Row;
 
+use super::period::load_usage_period;
 use super::{AppDb, GenerationReservation, GenerationReservationOutcome};
 use crate::services::plans::PlanCatalogEntry;
 
@@ -61,16 +63,19 @@ impl AppDb {
                     })
                     .collect()
             });
+        let period = load_usage_period(tx.as_mut(), user_id, Utc::now()).await?;
         let used = sqlx::query(
             "SELECT
                COALESCE(SUM(input_tokens + output_tokens)
-                 FILTER (WHERE created_at >= date_trunc('month', CURRENT_TIMESTAMP)), 0)::bigint AS monthly,
+                 FILTER (WHERE created_at >= $2), 0)::bigint AS monthly,
                COALESCE(SUM(input_tokens + output_tokens)
-                 FILTER (WHERE created_at >= date_trunc('week', CURRENT_TIMESTAMP)), 0)::bigint AS weekly
+                 FILTER (WHERE created_at >= $3), 0)::bigint AS weekly
              FROM usage_logs
              WHERE user_id = $1",
         )
         .bind(user_id)
+        .bind(period.monthly_start)
+        .bind(period.weekly_start)
         .fetch_one(tx.as_mut())
         .await?;
         let reserved = sqlx::query_scalar::<_, i64>(
@@ -91,10 +96,10 @@ impl AppDb {
                 let tier_row = sqlx::query(
                     "SELECT
                        COALESCE(SUM(u.input_tokens + u.output_tokens)
-                         FILTER (WHERE u.created_at >= date_trunc('month', CURRENT_TIMESTAMP)), 0)::bigint
+                         FILTER (WHERE u.created_at >= $3), 0)::bigint
                            AS monthly,
                        COALESCE(SUM(u.input_tokens + u.output_tokens)
-                         FILTER (WHERE u.created_at >= date_trunc('week', CURRENT_TIMESTAMP)), 0)::bigint
+                         FILTER (WHERE u.created_at >= $4), 0)::bigint
                            AS weekly
                      FROM usage_logs u
                      LEFT JOIN model_catalog m ON m.id = u.model
@@ -102,6 +107,8 @@ impl AppDb {
                 )
                 .bind(user_id)
                 .bind(tier_name)
+                .bind(period.monthly_start)
+                .bind(period.weekly_start)
                 .fetch_one(tx.as_mut())
                 .await?;
                 let tier_reserved = sqlx::query_scalar::<_, i64>(

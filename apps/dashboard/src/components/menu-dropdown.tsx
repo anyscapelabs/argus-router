@@ -6,14 +6,17 @@ export type MenuItem = {
   label: string;
   icon?: ComponentType<{ size?: number; className?: string }>;
   tone?: "default" | "warning" | "danger";
+  selected?: boolean;
+  disabled?: boolean;
   onSelect: () => void;
   dividerAfter?: boolean;
+  dividerBefore?: boolean;
 };
 
 const TONES: Record<NonNullable<MenuItem["tone"]>, string> = {
   default: "hover:text-primary",
-  warning: "hover:text-yellow-400",
-  danger: "hover:text-red-400",
+  warning: "hover:text-warning",
+  danger: "hover:text-danger",
 };
 
 export function MenuDropdown({
@@ -21,12 +24,14 @@ export function MenuDropdown({
   items,
   trigger,
   header,
+  placement = "bottom",
   triggerClassName,
 }: {
   label?: string;
   items: MenuItem[];
   trigger?: ReactNode;
   header?: ReactNode;
+  placement?: "top" | "bottom";
   triggerClassName?: string;
 }) {
   const [open, setOpen] = useState(false);
@@ -48,7 +53,7 @@ export function MenuDropdown({
         onClick={() => setOpen((v) => !v)}
         className={
           triggerClassName ??
-          "flex size-6 cursor-pointer items-center justify-center rounded-sm bg-[#202020] text-white/60 transition-colors hover:text-primary"
+          "flex size-6 cursor-pointer items-center justify-center rounded-sm bg-tertiary text-primary/60 transition-colors hover:text-primary"
         }
         aria-label={label}
         aria-haspopup="menu"
@@ -59,7 +64,9 @@ export function MenuDropdown({
       {open && (
         <div
           role="menu"
-          className="absolute top-full right-0 z-20 mt-1 w-52 overflow-hidden rounded-md border border-border-secondary bg-secondary py-1 shadow-lg"
+          className={`absolute right-0 z-20 w-52 overflow-hidden rounded-xl border border-border-secondary bg-secondary py-1 shadow-lg ${
+            placement === "top" ? "bottom-full mb-1" : "top-full mt-1"
+          }`}
         >
           {header && (
             <>
@@ -72,16 +79,20 @@ export function MenuDropdown({
             const tone = TONES[item.tone ?? "default"];
             return (
               <div key={item.label}>
+                {item.dividerBefore && <div className="my-1 border-t border-border-secondary" />}
                 <button
                   type="button"
                   role="menuitem"
+                  disabled={item.disabled}
                   onClick={() => {
                     setOpen(false);
                     item.onSelect();
                   }}
-                  className={`mx-1 flex w-[calc(100%-0.5rem)] cursor-pointer items-center gap-2 rounded-sm px-2 py-1 text-left text-sm text-white/80 transition-colors hover:bg-tertiary ${tone}`}
+                  className={`mx-1 flex w-[calc(100%-0.5rem)] cursor-pointer items-center gap-2 rounded-xl px-2 py-1 text-left text-sm transition-colors hover:bg-tertiary disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent ${
+                    item.selected ? "text-primary" : "text-primary/80"
+                  } ${tone}`}
                 >
-                  {Icon && <Icon size={12} />}
+                  {Icon && <Icon size={16} />}
                   {item.label}
                 </button>
                 {item.dividerAfter && <div className="my-1 border-t border-border-secondary" />}

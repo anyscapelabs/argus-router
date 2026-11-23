@@ -128,6 +128,23 @@ impl AppDb {
         sqlx::query("ALTER TABLE usage_logs ADD COLUMN IF NOT EXISTS requested_model TEXT")
             .execute(&self.pool)
             .await?;
+        sqlx::query("ALTER TABLE usage_logs ADD COLUMN IF NOT EXISTS log_type TEXT NOT NULL DEFAULT 'chat'")
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("ALTER TABLE usage_logs ADD COLUMN IF NOT EXISTS details TEXT NOT NULL DEFAULT '{}'")
+            .execute(&self.pool)
+            .await?;
+        let _ = sqlx::query(
+            "UPDATE usage_logs SET log_type = CASE WHEN model = 'web-search' THEN 'web_search' WHEN provider = 'gemini-live' THEN 'voice' ELSE 'chat' END
+             WHERE log_type = 'chat' AND (model = 'web-search' OR provider = 'gemini-live')",
+        )
+        .execute(&self.pool)
+        .await;
+        let _ = sqlx::query(
+            "CREATE INDEX IF NOT EXISTS usage_logs_user_type_created ON usage_logs (user_id, log_type, created_at DESC)",
+        )
+        .execute(&self.pool)
+        .await;
         let _ = sqlx::query(
             "UPDATE usage_logs SET requested_model = model WHERE requested_model IS NULL",
         )

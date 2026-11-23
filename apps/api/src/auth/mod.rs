@@ -8,12 +8,13 @@ use std::sync::Arc;
 
 use better_auth::plugins::oauth::{OAuthPlugin, OAuthProvider};
 use better_auth::plugins::{
-    ApiKeyPlugin, EmailPasswordPlugin, EmailVerificationPlugin, OrganizationPlugin,
+    ApiKeyPlugin, EmailVerificationPlugin, MagicLinkPlugin, OrganizationPlugin,
     SessionManagementPlugin, UserManagementPlugin,
 };
 use better_auth::seaorm::sea_orm::ConnectionTrait;
 use better_auth::seaorm::{Database, DatabaseConnection, SeaOrmStore};
 use better_auth::{AuthConfig, BetterAuth};
+use better_auth_core::user_fields::{UserFieldConfig, UserFieldType};
 
 pub use schema::AppAuthSchema;
 
@@ -21,13 +22,21 @@ use crate::config::Settings;
 use crate::services::workspace::DEFAULT_WORKSPACE_ROLE;
 
 pub fn auth_config(settings: &Settings) -> AuthConfig {
-    AuthConfig::new(settings.secret.clone())
+    let mut config = AuthConfig::new(settings.secret.clone())
         .app_name("Argus Agent")
         .base_url(settings.base_url.clone())
         .base_path("/api/v1/auth")
         .trusted_origin(settings.dashboard_url.clone())
         .password_min_length(8)
-        .disabled_path("/organization/create")
+        .disabled_path("/organization/create");
+    config.user.fields_mut().insert(
+        "age".to_owned(),
+        UserFieldConfig {
+            field_type: UserFieldType::Number,
+            ..Default::default()
+        },
+    );
+    config
 }
 
 pub async fn connect_database(
@@ -65,6 +74,7 @@ pub async fn run_migrations(
     migrate_from!(verification);
     migrate_from_api_keys(&engine, database).await?;
     migrate_from_organization(&engine, database).await?;
+    ensure_user_columns(database).await?;
     ensure_workspace_columns(database).await?;
     ensure_auth_indexes(database).await;
     Ok(())
@@ -109,6 +119,15 @@ async fn migrate_from_organization(
     Ok(())
 }
 
+async fn ensure_user_columns(
+    database: &DatabaseConnection,
+) -> Result<(), Box<dyn std::error::Error>> {
+    for statement in ["ALTER TABLE users ADD COLUMN IF NOT EXISTS age INTEGER"] {
+        database.execute_unprepared(statement).await?;
+    }
+    Ok(())
+}
+
 async fn ensure_workspace_columns(
     database: &DatabaseConnection,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -140,11 +159,15 @@ pub async fn build_auth(
     settings: &Settings,
     store: SeaOrmStore<AppAuthSchema>,
 ) -> Result<(Arc<BetterAuth<AppAuthSchema>>, Arc<ApiKeyPlugin>), better_auth::AuthError> {
-    let sender = verification::ResendVerificationSender::new(settings, ::reqwest::Client::new());
+    let email_client = ::reqwest::Client::new();
+    let sender = verification::ResendVerificationSender::new(settings, email_client.clone());
+    let magic_link_sender =
+        verification::ResendMagicLinkSender::new(settings, email_client.clone());
     let config = auth_config(settings);
 
     let api_keys = ApiKeyPlugin::builder()
-        .prefix("argus_pk_".to_owned())
+        .prefix("asp_live".to_owned())
+        .starting_characters_length(12)
         .enable_session_for_api_keys(false)
         .rate_limit(better_auth::plugins::api_key::RateLimitDefaults {
             enabled: true,
@@ -172,9 +195,9 @@ pub async fn build_auth(
             ..Default::default()
         })
         .plugin(
-            EmailPasswordPlugin::new()
-                .enable_signup(true)
-                .require_email_verification(true),
+            MagicLinkPlugin::new()
+                .expires_in(chrono::Duration::minutes(10))
+                .custom_send_magic_link(Arc::new(magic_link_sender)),
         )
         .plugin(
             EmailVerificationPlugin::new()

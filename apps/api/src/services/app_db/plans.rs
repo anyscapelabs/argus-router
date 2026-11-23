@@ -113,7 +113,7 @@ impl AppDb {
                 .push(row.get("model_id"));
         }
         let rows = sqlx::query(
-            "SELECT id, name, price, searches_per_month, voice_minutes, payload::text AS payload FROM plans",
+            "SELECT id, name, price, weekly_tokens, monthly_tokens, searches_per_month, voice_minutes, payload::text AS payload FROM plans",
         )
         .fetch_all(&self.pool)
         .await?;
@@ -122,6 +122,8 @@ impl AppDb {
             let id: String = row.get("id");
             let name: String = row.get("name");
             let price: String = row.try_get("price").unwrap_or_else(|_| "0".to_owned());
+            let weekly_tokens: i64 = row.try_get("weekly_tokens").unwrap_or(0);
+            let monthly_tokens: i64 = row.try_get("monthly_tokens").unwrap_or(0);
             let searches_per_month: i64 = row.try_get("searches_per_month").unwrap_or(0);
             let voice_minutes: i64 = row.try_get("voice_minutes").unwrap_or(0);
             let payload: String = row.try_get("payload").unwrap_or_default();
@@ -157,6 +159,8 @@ impl AppDb {
                 id,
                 name,
                 price,
+                weekly_tokens,
+                monthly_tokens,
                 searches_per_month,
                 voice_minutes,
             });

@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { createKey, listKeys, revokeKey, type CreateKeyResult } from "./api";
+import { createKey, deleteKey, listKeys, renameKey, revokeKey, type CreateKeyResult } from "./api";
 
 export function useApiKeys() {
   return useQuery({
@@ -25,6 +25,26 @@ export function useRevokeApiKey() {
   const qc = useQueryClient();
   return useMutation<void, Error, string>({
     mutationFn: (keyId) => revokeKey(keyId),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["api-keys"] });
+    },
+  });
+}
+
+export function useRenameApiKey() {
+  const qc = useQueryClient();
+  return useMutation<void, Error, { keyId: string; name: string }>({
+    mutationFn: ({ keyId, name }) => renameKey(keyId, name),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["api-keys"] });
+    },
+  });
+}
+
+export function useDeleteApiKey() {
+  const qc = useQueryClient();
+  return useMutation<void, Error, string>({
+    mutationFn: (keyId) => deleteKey(keyId),
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ["api-keys"] });
     },

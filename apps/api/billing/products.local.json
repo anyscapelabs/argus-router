@@ -1,0 +1,19 @@
+{
+  "subscriptions": [
+    {
+      "planId": "starter",
+      "priceUsd": 5,
+      "productId": "pdt_0NrnCdC1GdaqRLbWeeAAb"
+    },
+    {
+      "planId": "max",
+      "priceUsd": 10,
+      "productId": "pdt_0NrnD20boBOFdQVNU2LJS"
+    },
+    {
+      "planId": "max-plus",
+      "priceUsd": 15,
+      "productId": "pdt_0NrnDEg2hTIvaCQYlAJ4e"
+    }
+  ]
+}

@@ -1,342 +1,99 @@
 "use client";
 
-import { useState } from "react";
-import { GoKebabHorizontal, GoSync, GoSearch } from "react-icons/go";
-import { CiImageOn } from "react-icons/ci";
-import { RxText } from "react-icons/rx";
-import { IoTerminalOutline } from "react-icons/io5";
-import { LuBrain } from "react-icons/lu";
-import { useQueryClient } from "@tanstack/react-query";
-
 import { Skeleton } from "@/components/skeleton";
-import {
-  useModels,
-  useRefreshModels,
-  useToggleModel,
-} from "@/domains/models/hooks";
-import type { ModelView } from "@/domains/models/api";
+import type { ModelTier } from "@/domains/models/api";
+import { useModels } from "@/domains/models/hooks";
 
-const filters = ["All", "Enabled", "Free"] as const;
+const GRID = "grid-cols-[1.8fr_0.8fr_0.8fr_0.8fr_1.4fr]";
 
-function relativeTime(timestamp: number | undefined): string {
-  if (!timestamp) return "-";
-  const seconds = Math.round((Date.now() - timestamp) / 1000);
-  if (seconds < 10) return "just now";
-  if (seconds < 60) return `${seconds}s ago`;
-  if (seconds < 3600) return `${Math.round(seconds / 60)}m ago`;
-  if (seconds < 86400) return `${Math.round(seconds / 3600)}h ago`;
-  return `${Math.round(seconds / 86400)}d ago`;
+const TIER_ORDER: Record<ModelTier, number> = {
+  lite: 0,
+  standard: 1,
+  premium: 2,
+  ultra: 3,
+};
+
+function baseName(name: string) {
+  return name.replace(/\s*\((?:Bedrock|bedrock)\)\s*$/, "");
 }
 
-function Toggle({
-  on,
-  busy,
-  disabled,
-  disabledReason,
-  label,
-  onClick,
-}: {
-  on: boolean;
-  busy?: boolean;
-  disabled?: boolean;
-  disabledReason?: string;
-  label: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={busy || disabled}
-      title={disabled ? disabledReason : undefined}
-      className={`relative inline-block h-5 w-9 rounded-full transition-colors ${
-        disabled ? "cursor-not-allowed opacity-40" : "cursor-pointer"
-      } ${on ? "bg-[#3b82f6]" : "bg-white/20"} ${busy ? "opacity-50" : ""}`}
-      aria-label={label}
-    >
-      <span
-        className={`absolute top-0.5 left-0.5 block size-4 rounded-full bg-white transition-transform ${
-          on ? "translate-x-4" : ""
-        }`}
-      />
-    </button>
-  );
-}
-
-function FeatureChip({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <span
-      className="flex size-5 items-center justify-center rounded-sm border border-border-secondary text-white/60"
-      title={title}
-    >
-      {children}
-    </span>
-  );
-}
+const COMPACT = new Intl.NumberFormat("en-US", {
+  notation: "compact",
+  maximumFractionDigits: 1,
+});
 
 export default function ModelsPage() {
   const models = useModels();
-  const toggle = useToggleModel();
-  const refresh = useRefreshModels();
-  const queryClient = useQueryClient();
-
-  const [activeFilter, setActiveFilter] = useState<(typeof filters)[number]>("All");
-  const [search, setSearch] = useState("");
-
-  const rows = models.data?.models ?? [];
-  const filtered = rows.filter((m) => {
-    if (activeFilter === "Enabled" && !m.enabled) return false;
-    if (activeFilter === "Free" && !m.free) return false;
-    if (search) {
-      const needle = search.toLowerCase();
-      if (!m.name.toLowerCase().includes(needle) && !m.id.toLowerCase().includes(needle)) {
-        return false;
-      }
-    }
-    return true;
-  });
+  const allModels = models.data?.models ?? [];
+  const nameCounts = allModels.reduce<Record<string, number>>((counts, model) => {
+    const base = baseName(model.name ?? model.id);
+    counts[base] = (counts[base] ?? 0) + 1;
+    return counts;
+  }, {});
+  const rows = allModels
+    .slice()
+    .sort((a, b) => (TIER_ORDER[a.tier] ?? 99) - (TIER_ORDER[b.tier] ?? 99));
 
   return (
-    <div className="flex min-h-full flex-1 flex-col px-2">
-      <div className="flex gap-6">
-        <div className="min-w-0 flex-1">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <h2 className="text-sm font-medium text-primary">Models</h2>
-              <p className="mt-1 text-xs text-white/60">
-                Every catalog model is listed. Only models included in your plan can be
-                enabled.
-              </p>
-            </div>
-            <div className="relative">
-              <GoSearch className="pointer-events-none absolute top-1/2 left-2 size-3 -translate-y-1/2 text-white/40" />
-              <input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search"
-                aria-label="Search models"
-                className="w-48 rounded-sm border border-border-secondary bg-tertiary py-1 pr-2 pl-7 text-xs text-primary placeholder:text-white/40 outline-none focus:border-white/30"
-              />
-            </div>
-          </div>
-
-          <div className="mt-4 flex gap-1">
-            {filters.map((f) => (
-              <button
-                key={f}
-                type="button"
-                onClick={() => setActiveFilter(f)}
-                className={`cursor-pointer rounded-sm px-2 py-1 text-xs transition-colors ${
-                  activeFilter === f
-                    ? "bg-white/10 font-medium text-primary"
-                    : "text-white/60 hover:bg-white/10 hover:text-primary"
-                }`}
-              >
-                {f}
-              </button>
-            ))}
-          </div>
-
-          <div className="mt-4 overflow-x-auto rounded-md border border-border-secondary">
-            <table className="w-full text-left text-xs">
-              <thead>
-                <tr className="border-b border-border-secondary bg-tertiary text-white/40">
-                  <th className="rounded-tl-md px-2 py-2 font-medium">Model</th>
-                  <th className="px-2 py-2 font-medium">Features</th>
-                  <th className="rounded-tr-md px-2 py-2 font-medium">Enabled</th>
-                </tr>
-              </thead>
-              <tbody>
-                {models.isLoading && (
-                  <>
-                    {[0, 1, 2, 3, 4].map((row) => (
-                      <tr key={row} className="border-b border-border-secondary/50">
-                        <td colSpan={3} className="px-2 py-2.5">
-                          <Skeleton className={["w-48", "w-40", "w-44", "w-36", "w-40"][row]} />
-                        </td>
-                      </tr>
-                    ))}
-                  </>
-                )}
-                {models.isError && (
-                  <tr>
-                    <td colSpan={3} className="px-2 py-3 text-white/60">
-                      {models.error?.message ?? "Failed to load models"}
-                    </td>
-                  </tr>
-                )}
-                {!models.isLoading &&
-                  !models.isError &&
-                  filtered.length === 0 && (
-                    <tr>
-                      <td colSpan={3} className="px-2 py-3 text-white/60">
-                        No models match.
-                      </td>
-                    </tr>
-                  )}
-                {filtered.map((m) => (
-                  <Row
-                    key={m.id}
-                    model={m}
-                    busy={toggle.isPending && toggle.variables?.modelId === m.id}
-                    onToggle={() =>
-                      toggle.mutate(
-                        { modelId: m.id, enabled: !m.enabled },
-                        {
-                          onError: async () => {
-                            await queryClient.invalidateQueries({ queryKey: ["models"] });
-                          },
-                        },
-                      )
-                    }
-                  />
-                ))}
-              </tbody>
-            </table>
-          </div>
+    <div className="mx-auto w-full max-w-5xl">
+      <h1 className="text-2xl font-medium text-primary">Models</h1>
+      <p className="mt-0.5 text-sm text-primary/60">
+        The models you can use in Argus Agent and API
+      </p>
+      <div className="mt-6 pb-10">
+        <div className={`grid ${GRID} gap-4 border-b border-border p-1 text-xs text-primary/60`}>
+          <span>Model</span>
+          <span>Context</span>
+          <span>Max output</span>
+          <span>Tier</span>
+          <span>Features</span>
         </div>
-
-        <aside className="w-64 shrink-0">
-          <div className="flex items-start justify-between gap-2">
-            <div>
-              <h3 className="text-sm font-medium text-primary">Argus Agent</h3>
-              <p className="mt-0.5 text-xs text-white/60">
-                {models.data ? `${capitalize(models.data.plan)} plan` : "-"}
-              </p>
+        {models.isPending &&
+          Array.from({ length: 5 }, (_, row) => (
+            <div key={row} className={`grid ${GRID} gap-4 border-b border-border/50 p-1 py-3`}>
+              {Array.from({ length: 5 }, (_, col) => (
+                <Skeleton key={col} className="rounded-full px-2 py-1" />
+              ))}
             </div>
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                onClick={() => refresh.mutate()}
-                disabled={refresh.isPending}
-                className="flex size-6 cursor-pointer items-center justify-center rounded-sm border border-border-secondary bg-tertiary text-white/60 transition-colors hover:bg-white/10 hover:text-primary disabled:opacity-50"
-                aria-label="Refresh catalog"
-                title="Re-sync the catalog from our embedded catalog"
-              >
-                <GoSync className="size-3.5" />
-              </button>
-              <button
-                type="button"
-                className="flex size-6 cursor-pointer items-center justify-center rounded-sm border border-border-secondary bg-tertiary text-white/60 transition-colors hover:bg-white/10 hover:text-primary"
-                aria-label="Menu"
-              >
-                <GoKebabHorizontal className="size-3.5" />
-              </button>
-            </div>
-          </div>
-
-          <div className="mt-4 border-t border-border-secondary" />
-
-          <div className="mt-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-white/60">Published models</span>
-              <span className="text-xs text-white/80">{rows.length}</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-white/60">In your plan</span>
-              <span className="text-xs text-white/80">
-                {rows.filter((m) => m.inPlan).length}
+          ))}
+        {rows.map((model) => {
+          const features = Object.entries(model.capabilities ?? {}).filter(([, value]) => value).map(([name]) => name);
+          return (
+            <div
+              key={model.id}
+              className={`grid ${GRID} gap-4 border-b border-border/50 p-1 py-3 text-sm transition-colors duration-200 hover:bg-tertiary`}
+            >
+              <span className="truncate text-primary">
+                {(model.name ?? model.id) && nameCounts[baseName(model.name ?? model.id)] === 1
+                  ? baseName(model.name ?? model.id)
+                  : (model.name ?? model.id)}
+              </span>
+              <span className="tabular-nums text-primary/70">
+                {model.context ? COMPACT.format(model.context) : "—"}
+              </span>
+              <span className="tabular-nums text-primary/70">
+                {model.maxOutput ? COMPACT.format(model.maxOutput) : "—"}
+              </span>
+              <span className="truncate text-primary/70">{model.tier ?? "—"}</span>
+              <span className="flex flex-wrap gap-1">
+                {features.length === 0 && <span className="text-primary/60">—</span>}
+                {features.map((feature) => (
+                  <span
+                    key={feature}
+                    className="rounded-full bg-primary/10 px-2 py-0.5 text-xs capitalize text-primary/70"
+                  >
+                    {feature}
+                  </span>
+                ))}
               </span>
             </div>
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-white/60">Enabled</span>
-              <span className="text-xs text-white/80">
-                {rows.filter((m) => m.enabled).length}
-              </span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-white/60">Last updated</span>
-              <span className="text-xs text-white/80">
-                {refresh.isSuccess
-                  ? "just now"
-                  : relativeTime(models.dataUpdatedAt)}
-              </span>
-            </div>
-            {refresh.isError && (
-              <p className="text-xs text-red-400/80">
-                {refresh.error?.message ?? "Catalog sync failed"}
-              </p>
-            )}
-          </div>
-        </aside>
+          );
+        })}
+        {models.isSuccess && rows.length === 0 && (
+          <p className="mt-6 text-center text-sm text-primary/60">No models yet.</p>
+        )}
+        {models.isError && <p className="mt-4 text-sm text-danger">{models.error.message}</p>}
       </div>
     </div>
   );
-}
-
-function Row({
-  model,
-  busy,
-  onToggle,
-}: {
-  model: ModelView;
-  busy: boolean;
-  onToggle: () => void;
-}) {
-  return (
-    <tr className="border-b border-border-secondary/50">
-      <td className="px-2 py-1">
-        <div className="flex items-center gap-1.5">
-          <span className="text-primary">{model.name}</span>
-          {model.free && (
-            <span className="rounded-sm bg-white/10 px-1 py-0.5 text-[10px] text-white/70">
-              Free
-            </span>
-          )}
-          <span
-            className="rounded-sm border border-border-secondary px-1 py-0.5 text-[10px] uppercase tracking-wide text-white/40"
-            title={`${capitalize(model.tier)} tier`}
-          >
-            {model.tier}
-          </span>
-          {!model.inPlan && (
-            <span
-              className="rounded-sm bg-white/10 px-1 py-0.5 text-[10px] text-white/70"
-              title="Not included in your plan"
-            >
-              Upgrade
-            </span>
-          )}
-        </div>
-        <div className="mt-0.5 text-[11px] text-white/40">{model.id}</div>
-      </td>
-      <td className="px-2 py-1">
-        <div className="flex items-center gap-1">
-          <FeatureChip title="Text">
-            <RxText className="size-3.5" />
-          </FeatureChip>
-          {model.capabilities.vision && (
-            <FeatureChip title="Image">
-              <CiImageOn className="size-3.5" />
-            </FeatureChip>
-          )}
-          {model.capabilities.tools && (
-            <FeatureChip title="Tool use">
-              <IoTerminalOutline className="size-3.5" />
-            </FeatureChip>
-          )}
-          {model.capabilities.reasoning && (
-            <FeatureChip title="Reasoning">
-              <LuBrain className="size-3.5" />
-            </FeatureChip>
-          )}
-        </div>
-      </td>
-      <td className="px-2 py-1">
-        <Toggle
-          on={model.enabled}
-          busy={busy}
-          disabled={!model.inPlan}
-          disabledReason="Not included in your plan"
-          label={`Toggle ${model.name}`}
-          onClick={onToggle}
-        />
-      </td>
-    </tr>
-  );
-}
-
-function capitalize(text: string): string {
-  if (text.length === 0) return text;
-  return text[0].toUpperCase() + text.slice(1);
 }

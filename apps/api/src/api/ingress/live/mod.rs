@@ -108,6 +108,7 @@ pub async fn live_websocket_handler(
                 latency_ms: start.elapsed().as_millis() as i64,
                 error_code: Some("unknown_live_model"),
                 cost_usd: 0.0,
+                turns: 0,
             },
         );
         return (
@@ -139,6 +140,7 @@ pub async fn live_websocket_handler(
                     latency_ms: start.elapsed().as_millis() as i64,
                     error_code: Some(err.code.as_str()),
                     cost_usd: 0.0,
+                    turns: 0,
                 },
             );
             return (
@@ -165,6 +167,7 @@ pub async fn live_websocket_handler(
                 latency_ms: start.elapsed().as_millis() as i64,
                 error_code: Some(err.code.as_str()),
                 cost_usd: 0.0,
+                turns: 0,
             },
         );
         return (
@@ -194,6 +197,7 @@ pub async fn live_websocket_handler(
                     latency_ms: start.elapsed().as_millis() as i64,
                     error_code: Some("voice_not_available"),
                     cost_usd: 0.0,
+                    turns: 0,
                 },
             );
             return (
@@ -219,6 +223,7 @@ pub async fn live_websocket_handler(
                     latency_ms: start.elapsed().as_millis() as i64,
                     error_code: Some("voice_minutes_exhausted"),
                     cost_usd: 0.0,
+                    turns: 0,
                 },
             );
             return (
@@ -248,6 +253,7 @@ pub async fn live_websocket_handler(
                     latency_ms: start.elapsed().as_millis() as i64,
                     error_code: Some("quota_check_failed"),
                     cost_usd: 0.0,
+                    turns: 0,
                 },
             );
             return (

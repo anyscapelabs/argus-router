@@ -1,4 +1,4 @@
-use crate::services::usage::UsageRow;
+use crate::services::usage::{LogType, UsageRow};
 use crate::state::AppState;
 
 pub(super) struct LiveUsage<'a> {
@@ -10,6 +10,7 @@ pub(super) struct LiveUsage<'a> {
     pub latency_ms: i64,
     pub error_code: Option<&'a str>,
     pub cost_usd: f64,
+    pub turns: i64,
 }
 
 pub(super) fn record(state: &AppState, info: LiveUsage<'_>) {
@@ -31,5 +32,8 @@ fn row(info: LiveUsage<'_>) -> UsageRow {
         status: info.status,
         latency_ms: Some(info.latency_ms),
         error_code: info.error_code.map(str::to_owned),
+        log_type: LogType::Voice,
+        details: serde_json::json!({ "turns": info.turns }),
+        ..Default::default()
     }
 }

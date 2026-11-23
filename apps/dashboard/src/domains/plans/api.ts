@@ -12,6 +12,10 @@ export type Plan = {
   price: string;
   tagline?: string;
   limits?: PlanLimits;
+  weeklyTokens?: number;
+  monthlyTokens?: number;
+  searchesPerMonth?: number;
+  voiceMinutes?: number;
   modelNames?: string[];
   modelCount?: string;
   models: string[];

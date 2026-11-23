@@ -6,7 +6,25 @@ use sqlx::PgPool;
 use sqlx::QueryBuilder;
 use tokio::sync::mpsc;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum LogType {
+    #[default]
+    Chat,
+    Voice,
+    WebSearch,
+}
+
+impl LogType {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Chat => "chat",
+            Self::Voice => "voice",
+            Self::WebSearch => "web_search",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
 pub struct UsageRow {
     pub key_id: Option<String>,
     pub user_id: Option<String>,
@@ -21,6 +39,8 @@ pub struct UsageRow {
     pub status: i32,
     pub latency_ms: Option<i64>,
     pub error_code: Option<String>,
+    pub log_type: LogType,
+    pub details: serde_json::Value,
 }
 
 struct Stamped {
@@ -124,7 +144,7 @@ async fn flush(pool: &PgPool, buffer: &mut Vec<Stamped>) {
 async fn insert(pool: &PgPool, rows: &[Stamped]) -> Result<(), sqlx::Error> {
     let mut tx = pool.begin().await?;
     let mut qb = QueryBuilder::new(
-        "INSERT INTO usage_logs (event_id, created_at, key_id, user_id, plan_id, model, requested_model, provider, input_tokens, output_tokens, cache_read_tokens, cost_usd, status, latency_ms, error_code) ",
+        "INSERT INTO usage_logs (event_id, created_at, key_id, user_id, plan_id, model, requested_model, provider, input_tokens, output_tokens, cache_read_tokens, cost_usd, status, latency_ms, error_code, log_type, details) ",
     );
     qb.push_values(rows.iter(), |mut b, item| {
         let row = &item.row;
@@ -142,7 +162,9 @@ async fn insert(pool: &PgPool, rows: &[Stamped]) -> Result<(), sqlx::Error> {
             .push_bind(row.cost_usd)
             .push_bind(row.status)
             .push_bind(row.latency_ms)
-            .push_bind(row.error_code.clone());
+            .push_bind(row.error_code.clone())
+            .push_bind(row.log_type.as_str())
+            .push_bind(row.details.to_string());
     });
     qb.push(" ON CONFLICT (event_id) DO NOTHING");
     qb.build().execute(tx.as_mut()).await?;
@@ -179,9 +201,10 @@ async fn settle_generation(
     let usage_inserted = sqlx::query(
         "INSERT INTO usage_logs
            (event_id, created_at, key_id, user_id, plan_id, model, requested_model, provider,
-            input_tokens, output_tokens, cache_read_tokens, cost_usd, status, latency_ms, error_code)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-         ON CONFLICT (event_id) DO NOTHING",
+             input_tokens, output_tokens, cache_read_tokens, cost_usd, status, latency_ms, error_code,
+             log_type, details)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+          ON CONFLICT (event_id) DO NOTHING",
     )
     .bind(reservation_id)
     .bind(Utc::now())
@@ -198,6 +221,8 @@ async fn settle_generation(
     .bind(row.status)
     .bind(row.latency_ms)
     .bind(row.error_code)
+    .bind(row.log_type.as_str())
+    .bind(row.details.to_string())
     .execute(tx.as_mut())
     .await?
     .rows_affected();

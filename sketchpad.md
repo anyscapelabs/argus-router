@@ -101,8 +101,8 @@ Access by plan:
 
 ## Weekly and monthly limits
 
-- Weekly limit: 40% of the monthly allowance. Resets Monday 00:00 UTC.
-- Monthly limit: 100% of the allowance. For subscribers it follows the billing cycle, not the calendar month. Free users use the UTC calendar month.
+- Weekly limit: 40% of the monthly allowance. Resets every 7 days from the start of the current monthly period.
+- Monthly limit: 100% of the allowance. Subscribers follow the billing cycle, not the calendar month. Free users follow their account-creation anniversary. Neither uses the UTC calendar month.
 - No daily limit and no daily request cap.
 - Search and voice: monthly counts only, no weekly or daily limits.
 - When a limit is hit, the API returns 429 with the reset time. Users see only percentages.

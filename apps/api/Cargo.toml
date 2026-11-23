@@ -12,6 +12,7 @@ async-trait = "0.1.89"
 base64 = "0.22"
 better-auth = { version = "1.0.0-alpha.5", features = ["axum", "seaorm2"] }
 better-auth-api = "1.0.0-alpha.5"
+better-auth-core = "1.0.0-alpha.5"
 better-auth-seaorm = "1.0.0-alpha.5"
 chrono = { version = "0.4.45", features = ["serde"] }
 dotenvy = "0.15.7"

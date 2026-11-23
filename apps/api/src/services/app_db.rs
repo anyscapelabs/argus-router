@@ -8,11 +8,13 @@ mod metrics;
 mod migrate;
 mod models;
 mod onboarding;
+mod period;
 mod plans;
 mod quota;
 mod settings;
 
 pub use billing::{SubscriptionRow, SubscriptionView};
+pub use period::UsagePeriod;
 
 #[derive(Clone)]
 pub struct AppDb {
@@ -63,6 +65,10 @@ pub struct PlanView {
     pub tagline: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limits: Option<crate::services::plans::PlanLimits>,
+    #[serde(default)]
+    pub weekly_tokens: i64,
+    #[serde(default)]
+    pub monthly_tokens: i64,
     #[serde(default)]
     pub searches_per_month: i64,
     #[serde(default)]

@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "Security | Anyscape Gateway",
-  description: "Security settings.",
+  title: "My Account | Anyscape Gateway",
+  description: "Personal account settings.",
 };
 
 export default function Layout({ children }: { children: React.ReactNode }) {

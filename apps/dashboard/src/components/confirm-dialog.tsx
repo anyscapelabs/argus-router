@@ -9,7 +9,10 @@ type ConfirmDialogProps = {
   description: ReactNode;
   confirmLabel: string;
   cancelLabel?: string;
-  tone?: "danger" | "warning";
+  tone?: "default" | "danger" | "warning";
+  cardClassName?: string;
+  titleClassName?: string;
+  descriptionClassName?: string;
   isPending?: boolean;
   error?: string | null;
   onConfirm: () => void;
@@ -23,6 +26,9 @@ export function ConfirmDialog({
   confirmLabel,
   cancelLabel = "Cancel",
   tone = "danger",
+  cardClassName = "bg-tertiary",
+  titleClassName = "",
+  descriptionClassName = "",
   isPending = false,
   error,
   onConfirm,
@@ -41,12 +47,14 @@ export function ConfirmDialog({
 
   const confirmClass =
     tone === "danger"
-      ? "bg-red-500/90 text-white hover:bg-red-500"
-      : "bg-yellow-500/90 text-black hover:bg-yellow-400";
+      ? "bg-danger/90 text-primary hover:bg-danger"
+      : tone === "warning"
+        ? "bg-warning/90 text-background hover:bg-warning"
+        : "bg-accent text-background hover:bg-accent/90";
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4"
       onClick={() => {
         if (!isPending) onCancel();
       }}
@@ -56,18 +64,18 @@ export function ConfirmDialog({
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className="w-full max-w-md rounded-md border border-border-secondary bg-[#262626] p-4 shadow-lg"
+        className={`w-full max-w-md rounded-xl border border-border-secondary p-4 shadow-lg ${cardClassName}`}
         onClick={(e) => e.stopPropagation()}
       >
-        <h2 className="text-sm font-medium text-primary">{title}</h2>
-        <div className="mt-1 text-sm text-white/60">{description}</div>
-        {error && <p className="mt-3 text-xs text-red-400">{error}</p>}
+        <h2 className={`text-sm font-medium text-primary ${titleClassName}`}>{title}</h2>
+        <div className={`mt-1 text-sm text-primary/60 ${descriptionClassName}`}>{description}</div>
+        {error && <p className="mt-3 text-xs text-danger">{error}</p>}
         <div className="mt-4 flex justify-end gap-2">
           <button
             type="button"
             onClick={onCancel}
             disabled={isPending}
-            className="cursor-pointer rounded-sm px-2 py-1 text-xs text-white/60 transition-colors hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
+            className="cursor-pointer rounded-full px-3 py-1.5 text-sm text-primary/60 transition-colors hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
           >
             {cancelLabel}
           </button>
@@ -75,7 +83,7 @@ export function ConfirmDialog({
             type="button"
             onClick={onConfirm}
             disabled={isPending}
-            className={`inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-sm px-2 py-1 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${confirmClass}`}
+            className={`inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${confirmClass}`}
           >
             {isPending && <FaSpinner className="size-3 animate-spin" />}
             {confirmLabel}

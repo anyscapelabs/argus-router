@@ -82,6 +82,7 @@ pub(super) async fn handle_socket(
                 latency_ms: start.elapsed().as_millis() as i64,
                 error_code: Some("provider_unconfigured"),
                 cost_usd: 0.0,
+                turns: 0,
             },
         );
         return;
@@ -117,6 +118,7 @@ pub(super) async fn handle_socket(
                     latency_ms: start.elapsed().as_millis() as i64,
                     error_code: Some("upstream_error"),
                     cost_usd: 0.0,
+                    turns: 0,
                 },
             );
             return;
@@ -134,6 +136,7 @@ pub(super) async fn handle_socket(
     let mut has_sent_audio = false;
     let mut logged_first_upstream_frame = false;
     let mut rate_limit_retries: u32 = 0;
+    let mut turns: i64 = 0;
 
     loop {
         tokio::select! {
@@ -208,6 +211,9 @@ pub(super) async fn handle_socket(
                 match from_upstream {
                     Some(Ok(TungsteniteMessage::Text(ref txt))) => {
                         let raw = txt.to_string();
+                        if raw.contains("\"turnComplete\":true") || raw.contains("\"turnComplete\": true") {
+                            turns += 1;
+                        }
 
                         if !logged_first_upstream_frame {
                             logged_first_upstream_frame = true;
@@ -407,6 +413,7 @@ pub(super) async fn handle_socket(
         &model,
         start,
         quota_exhausted,
+        turns,
     )
     .await;
 }
@@ -419,6 +426,7 @@ async fn record_final_usage(
     model: &str,
     start: Instant,
     quota_exhausted: bool,
+    turns: i64,
 ) {
     let elapsed_ms = start.elapsed().as_millis() as i64;
     let cost_per_min = find_live_model(model)
@@ -442,6 +450,7 @@ async fn record_final_usage(
             latency_ms: elapsed_ms,
             error_code,
             cost_usd: elapsed_minutes * cost_per_min,
+            turns,
         },
     );
 }

@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "Service Account | Anyscape Gateway",
-  description: "Service account details and logs.",
+  title: "API Keys | Anyscape Gateway",
+  description: "Manage API keys.",
 };
 
 export default function Layout({ children }: { children: React.ReactNode }) {

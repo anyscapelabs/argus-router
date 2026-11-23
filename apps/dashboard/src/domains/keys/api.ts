@@ -48,6 +48,28 @@ export async function listKeys(): Promise<ListKeysResult> {
 }
 
 export async function revokeKey(keyId: string): Promise<void> {
+  const response = await fetch(`${AUTH}/api-key/update`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ keyId, enabled: false }),
+  });
+  if (response.ok) return;
+  await unwrap(response);
+}
+
+export async function renameKey(keyId: string, name: string): Promise<void> {
+  const response = await fetch(`${AUTH}/api-key/update`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ keyId, name }),
+  });
+  if (response.ok) return;
+  await unwrap(response);
+}
+
+export async function deleteKey(keyId: string): Promise<void> {
   const response = await fetch(`${AUTH}/api-key/delete`, {
     method: "POST",
     credentials: "include",

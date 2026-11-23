@@ -3,13 +3,16 @@ pub mod openai;
 
 use axum::http::HeaderMap;
 use better_auth::plugins::api_key::VerifyApiKey;
+use chrono::{TimeZone, Utc};
 
 use std::time::{Duration, Instant};
 
 use crate::error::{ErrCode, Errx};
-use crate::services::app_db::{GenerationReservation, GenerationReservationOutcome, QuotaCheck};
+use crate::services::app_db::{
+    GenerationReservation, GenerationReservationOutcome, QuotaCheck, UsagePeriod,
+};
 use crate::services::catalog::{AUTO_MODEL_ID, ModelCatalogEntry, Tier};
-use crate::services::usage::UsageRow;
+use crate::services::usage::{LogType, UsageRow};
 use crate::state::AppState;
 
 pub struct Principal {
@@ -126,7 +129,12 @@ pub(crate) async fn enforce_plan_quotas(
         .await
         .map_err(|_| db_error("the daily request reservation"))?
     {
-        return Err(limit_error(state, LimitWindow::Daily, quota, used).await);
+        let period = state
+            .app_db
+            .usage_period(user_id)
+            .await
+            .map_err(|_| db_error("the usage period lookup"))?;
+        return Err(limit_error(LimitWindow::Daily, quota, used, &period));
     }
     let (monthly, weekly) = state
         .app_db
@@ -134,10 +142,30 @@ pub(crate) async fn enforce_plan_quotas(
         .await
         .map_err(|_| db_error("the token usage lookup"))?;
     if quota.monthly_tokens > 0 && monthly >= quota.monthly_tokens {
-        return Err(limit_error(state, LimitWindow::Monthly, quota.monthly_tokens, monthly).await);
+        let period = state
+            .app_db
+            .usage_period(user_id)
+            .await
+            .map_err(|_| db_error("the usage period lookup"))?;
+        return Err(limit_error(
+            LimitWindow::Monthly,
+            quota.monthly_tokens,
+            monthly,
+            &period,
+        ));
     }
     if quota.weekly_tokens > 0 && weekly >= quota.weekly_tokens {
-        return Err(limit_error(state, LimitWindow::Weekly, quota.weekly_tokens, weekly).await);
+        let period = state
+            .app_db
+            .usage_period(user_id)
+            .await
+            .map_err(|_| db_error("the usage period lookup"))?;
+        return Err(limit_error(
+            LimitWindow::Weekly,
+            quota.weekly_tokens,
+            weekly,
+            &period,
+        ));
     }
     Ok(())
 }
@@ -159,34 +187,11 @@ impl LimitWindow {
     }
 }
 
-async fn limit_error(state: &AppState, window: LimitWindow, quota: i64, used: i64) -> Errx {
-    let sql: &str = match window {
-        LimitWindow::Daily => {
-            "SELECT EXTRACT(EPOCH FROM (date_trunc('day', CURRENT_TIMESTAMP) + INTERVAL '1 day'))::bigint"
-        }
-        LimitWindow::Weekly => {
-            "SELECT EXTRACT(EPOCH FROM (date_trunc('week', CURRENT_TIMESTAMP) + INTERVAL '1 week'))::bigint"
-        }
-        LimitWindow::Monthly => {
-            "SELECT EXTRACT(EPOCH FROM (date_trunc('month', CURRENT_TIMESTAMP) + INTERVAL '1 month'))::bigint"
-        }
-    };
-    let reset_epoch: Result<i64, _> = sqlx::query_scalar(sql)
-        .fetch_one(&state.app_db.pool())
-        .await;
-    let reset = match reset_epoch {
-        Ok(epoch) => chrono::DateTime::from_timestamp(epoch, 0)
-            .unwrap_or_else(|| chrono::Utc::now() + chrono::Duration::hours(24)),
-        Err(_) => {
-            return Errx::new(
-                window.code(),
-                429,
-                format!(
-                    "{} Limit has reached. Try again later.",
-                    window_label(window),
-                ),
-            );
-        }
+fn limit_error(window: LimitWindow, quota: i64, used: i64, period: &UsagePeriod) -> Errx {
+    let reset = match window {
+        LimitWindow::Daily => next_day_start(),
+        LimitWindow::Weekly => period.weekly_reset,
+        LimitWindow::Monthly => period.monthly_reset,
     };
     Errx::new(
         window.code(),
@@ -194,6 +199,12 @@ async fn limit_error(state: &AppState, window: LimitWindow, quota: i64, used: i6
         limit_message(window, quota, used, reset),
     )
     .with_retry_after(reset_seconds_left(reset))
+}
+
+fn next_day_start() -> chrono::DateTime<Utc> {
+    let today = Utc::now().date_naive();
+    let tomorrow = today.succ_opt().unwrap_or(today);
+    Utc.from_utc_datetime(&tomorrow.and_hms_opt(0, 0, 0).unwrap_or_default())
 }
 
 fn window_label(window: LimitWindow) -> &'static str {
@@ -277,10 +288,20 @@ async fn reserve_gateway_generation(
     match outcome {
         GenerationReservationOutcome::Reserved(reservation) => Ok(reservation),
         GenerationReservationOutcome::MonthlyExhausted => {
-            Err(limit_error(state, LimitWindow::Monthly, 0, 0).await)
+            let period = state
+                .app_db
+                .usage_period(user_id)
+                .await
+                .map_err(|_| Errx::new(ErrCode::Upstream, 500, "usage period lookup failed"))?;
+            Err(limit_error(LimitWindow::Monthly, 0, 0, &period))
         }
         GenerationReservationOutcome::WeeklyExhausted => {
-            Err(limit_error(state, LimitWindow::Weekly, 0, 0).await)
+            let period = state
+                .app_db
+                .usage_period(user_id)
+                .await
+                .map_err(|_| Errx::new(ErrCode::Upstream, 500, "usage period lookup failed"))?;
+            Err(limit_error(LimitWindow::Weekly, 0, 0, &period))
         }
     }
 }
@@ -453,6 +474,7 @@ async fn forward_to_llm_gateway(
                 status: 502,
                 latency_ms: Some(start.elapsed().as_millis() as i64),
                 error_code: Some("gateway_unreachable".to_owned()),
+                ..Default::default()
             };
             let _ = settle_generation_usage(&state.usage, &reservation.id, row).await;
             return openai::error_response(item);
@@ -515,6 +537,7 @@ async fn forward_to_llm_gateway(
             status: status_u16 as i32,
             latency_ms: Some(start.elapsed().as_millis() as i64),
             error_code: Some(err_code.to_owned()),
+            ..Default::default()
         };
         let _ = settle_generation_usage(&state.usage, &reservation.id, row).await;
         // Forward the gateway error body as-is so the client gets a proper OpenAI error shape.
@@ -570,6 +593,7 @@ async fn forward_to_llm_gateway(
                 status: 200,
                 latency_ms: Some(start.elapsed().as_millis() as i64),
                 error_code: None,
+                ..Default::default()
             };
             if let Err(err) = settle_generation_usage(&usage_rec, &reservation_id, row).await {
                 tracing::error!(%err, reservation_id, "generation settlement failed (streaming gateway)");
@@ -634,6 +658,7 @@ async fn forward_to_llm_gateway(
                     status: 502,
                     latency_ms: Some(start.elapsed().as_millis() as i64),
                     error_code: Some("gateway_body_read_failed".to_owned()),
+                    ..Default::default()
                 };
                 let _ = settle_generation_usage(&usage_rec, &reservation_id, row).await;
                 return openai::error_response(Errx::new(
@@ -676,6 +701,7 @@ async fn forward_to_llm_gateway(
             status: 200,
             latency_ms: Some(start.elapsed().as_millis() as i64),
             error_code: None,
+            ..Default::default()
         };
         if let Err(err) = settle_generation_usage(&usage_rec, &reservation_id, row).await {
             tracing::error!(%err, reservation_id, "generation settlement failed (non-streaming gateway)");
@@ -715,6 +741,7 @@ pub async fn openai_chat_completions(
                 status: item.status as i32,
                 latency_ms: Some(start.elapsed().as_millis() as i64),
                 error_code: Some(item.code.as_str().to_owned()),
+                ..Default::default()
             });
             return openai::error_response(item);
         }
@@ -749,6 +776,7 @@ pub async fn openai_chat_completions(
                 status: item.status as i32,
                 latency_ms: Some(start.elapsed().as_millis() as i64),
                 error_code: Some(item.code.as_str().to_owned()),
+                ..Default::default()
             });
         return openai::error_response(item);
     }
@@ -776,6 +804,7 @@ pub async fn openai_chat_completions(
                 status: item.status as i32,
                 latency_ms: Some(start.elapsed().as_millis() as i64),
                 error_code: Some(item.code.as_str().to_owned()),
+                ..Default::default()
             });
             return openai::error_response(item);
         }
@@ -801,6 +830,7 @@ pub async fn openai_chat_completions(
             status: item.status as i32,
             latency_ms: Some(start.elapsed().as_millis() as i64),
             error_code: Some(item.code.as_str().to_owned()),
+            ..Default::default()
         });
         return openai::error_response(item);
     }
@@ -831,6 +861,7 @@ pub async fn openai_chat_completions(
                 status: item.status as i32,
                 latency_ms: Some(start.elapsed().as_millis() as i64),
                 error_code: Some(item.code.as_str().to_owned()),
+                ..Default::default()
             });
             return openai::error_response(item);
         }
@@ -863,6 +894,7 @@ pub async fn openai_chat_completions(
                 status: item.status as i32,
                 latency_ms: Some(start.elapsed().as_millis() as i64),
                 error_code: Some(item.code.as_str().to_owned()),
+                ..Default::default()
             });
             return openai::error_response(item);
         }
@@ -888,6 +920,7 @@ pub async fn openai_chat_completions(
             status: 500,
             latency_ms: Some(start.elapsed().as_millis() as i64),
             error_code: Some("generation_dispatch_failed".to_owned()),
+            ..Default::default()
         };
         let _ = settle_generation_usage(&state.usage, &reservation.id, row).await;
         return openai::error_response(Errx::new(
@@ -974,6 +1007,8 @@ pub async fn search_endpoint(
                 status: item.status as i32,
                 latency_ms: Some(start.elapsed().as_millis() as i64),
                 error_code: Some(item.code.as_str().to_owned()),
+                log_type: LogType::WebSearch,
+                ..Default::default()
             });
             return openai::error_response(item);
         }
@@ -1014,6 +1049,8 @@ pub async fn search_endpoint(
             status: item.status as i32,
             latency_ms: Some(start.elapsed().as_millis() as i64),
             error_code: Some(item.code.as_str().to_owned()),
+            log_type: LogType::WebSearch,
+            ..Default::default()
         });
         return openai::error_response(item);
     }
@@ -1046,6 +1083,8 @@ pub async fn search_endpoint(
                 status: item.status as i32,
                 latency_ms: Some(start.elapsed().as_millis() as i64),
                 error_code: Some(item.code.as_str().to_owned()),
+                log_type: LogType::WebSearch,
+                ..Default::default()
             });
             return openai::error_response(item);
         }
@@ -1072,6 +1111,8 @@ pub async fn search_endpoint(
                 status: item.status as i32,
                 latency_ms: Some(start.elapsed().as_millis() as i64),
                 error_code: Some(item.code.as_str().to_owned()),
+                log_type: LogType::WebSearch,
+                ..Default::default()
             });
             return openai::error_response(item);
         }
@@ -1093,6 +1134,8 @@ pub async fn search_endpoint(
                 status: item.status as i32,
                 latency_ms: Some(start.elapsed().as_millis() as i64),
                 error_code: Some(item.code.as_str().to_owned()),
+                log_type: LogType::WebSearch,
+                ..Default::default()
             });
             return openai::error_response(item);
         }
@@ -1107,11 +1150,13 @@ pub async fn search_endpoint(
     {
         Ok((search_res, cost)) => {
             let latency = start.elapsed().as_millis() as i64;
+            let result_count = search_res.results.len();
             let row = UsageRow {
                 key_id: Some(principal.key_id.clone()),
                 user_id: Some(principal.user_id.clone()),
                 plan_id: Some(principal.plan.clone()),
                 model: "web-search".to_owned(),
+                details: serde_json::json!({ "query": payload.query, "resultCount": result_count }),
                 requested_model: None,
                 provider: Some(search_res.provider.clone()),
                 input_tokens: 0,
@@ -1121,6 +1166,8 @@ pub async fn search_endpoint(
                 status: 200,
                 latency_ms: Some(latency),
                 error_code: None,
+                log_type: LogType::WebSearch,
+                ..Default::default()
             };
             state.usage.record(row);
             (StatusCode::OK, Json(search_res)).into_response()
@@ -1149,6 +1196,8 @@ pub async fn search_endpoint(
                 status: err.status as i32,
                 latency_ms: Some(latency),
                 error_code: Some(err.code.as_str().to_owned()),
+                log_type: LogType::WebSearch,
+                ..Default::default()
             };
             state.usage.record(row);
             openai::error_response(err)

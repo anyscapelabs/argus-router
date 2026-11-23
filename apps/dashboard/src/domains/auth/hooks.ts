@@ -39,16 +39,22 @@ export function useSession() {
 export function useEmailSignUp() {
   const router = useRouter();
   return useMutation({
-    mutationFn: async (input: { email: string; password: string; name: string }) => {
-      const response = await authClient.signUp.email(input);
+    mutationFn: async (input: { email: string; name?: string }) => {
+      const response = await authClient.signIn.magicLink({
+        email: input.email,
+        name: input.name,
+        callbackURL: dashboardPath("/onboarding"),
+        newUserCallbackURL: dashboardPath("/onboarding"),
+        errorCallbackURL: dashboardPath("/auth/signup"),
+      });
       if (response.error) {
         throw toAuthError(response.error, "Sign up failed");
       }
       return response.data;
     },
-    onSuccess: () => {
-      toast.success("Account created — check your inbox to verify your email");
-      router.push("/auth/verify-email");
+    onSuccess: (_data, variables) => {
+      toast.success("Check your inbox for a sign-in link");
+      router.push(`/auth/verify-email?email=${encodeURIComponent(variables.email)}`);
     },
     onError: (error) => {
       toast.error(error.message);
@@ -58,19 +64,22 @@ export function useEmailSignUp() {
 
 export function useEmailSignIn() {
   const router = useRouter();
-  const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (input: { email: string; password: string }) => {
-      const response = await authClient.signIn.email(input);
+    mutationFn: async (input: { email: string }) => {
+      const response = await authClient.signIn.magicLink({
+        email: input.email,
+        callbackURL: dashboardPath("/console/overview"),
+        newUserCallbackURL: dashboardPath("/onboarding"),
+        errorCallbackURL: dashboardPath("/auth/login"),
+      });
       if (response.error) {
         throw toAuthError(response.error, "Sign in failed");
       }
       return response.data;
     },
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: SESSION_KEY });
-      toast.success("Signed in");
-      router.push("/console/overview");
+    onSuccess: (_data, variables) => {
+      toast.success("Check your inbox for a sign-in link");
+      router.push(`/auth/verify-email?email=${encodeURIComponent(variables.email)}`);
     },
     onError: (error) => {
       toast.error(error.message);
@@ -84,6 +93,7 @@ export function useSocialSignIn(provider: "google" | "github", callbackPath = "/
       const response = await authClient.signIn.social({
         provider,
         callbackURL: dashboardPath(callbackPath),
+        newUserCallbackURL: dashboardPath("/onboarding"),
       });
       if (response.error) {
         throw toAuthError(response.error, "Social sign-in failed");
@@ -119,17 +129,19 @@ export function useVerifyEmail() {
 export function useResendVerification() {
   return useMutation({
     mutationFn: async (email: string) => {
-      const response = await authClient.sendVerificationEmail({
+      const response = await authClient.signIn.magicLink({
         email,
-        callbackURL: dashboardPath("/auth/verify-email"),
+        callbackURL: dashboardPath("/console/overview"),
+        newUserCallbackURL: dashboardPath("/onboarding"),
+        errorCallbackURL: dashboardPath("/auth/verify-email"),
       });
       if (response.error) {
-        throw toAuthError(response.error, "Could not resend the verification email");
+        throw toAuthError(response.error, "Could not resend the sign-in link");
       }
       return response.data;
     },
     onSuccess: () => {
-      toast.success("Verification email sent — check your inbox");
+      toast.success("Sign-in link sent — check your inbox");
     },
     onError: (error) => {
       toast.error(error.message);

@@ -223,9 +223,10 @@ async fn checkout(
         CheckoutClaim::Claimed => {}
     }
     let outcome = async {
-        let return_url = state.settings.dodo_return_url.clone().unwrap_or_else(|| {
-            format!("{}/console/settings/billing", state.settings.dashboard_url)
-        });
+        let return_url = format!(
+            "{}/console/overview",
+            state.settings.dashboard_url.trim_end_matches('/')
+        );
         let idempotency_key = format!("argus-checkout-{}", target.checkout_key);
         let customer_id = ensure_customer(&state, dodo, &session, &user_id).await?;
         let checkout = dodo
@@ -296,7 +297,7 @@ async fn portal(
     let customer_id = ensure_customer(&state, &dodo, &session, &user_id).await?;
     let return_url =
         state.settings.dodo_return_url.clone().unwrap_or_else(|| {
-            format!("{}/console/settings/billing", state.settings.dashboard_url)
+            format!("{}/console/billing", state.settings.dashboard_url)
         });
     let portal = dodo.create_portal(&customer_id, &return_url).await;
     let portal_url = match portal {

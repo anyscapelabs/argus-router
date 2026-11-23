@@ -12,23 +12,38 @@ import {
 
 export type UseUsageOptions = {
   keyId?: string;
+  logType?: "chat" | "voice" | "web_search";
   range?: UsageRange;
+  since?: string;
+  until?: string;
   limit?: number;
+  enabled?: boolean;
 };
 
 export function useUsage(options: UseUsageOptions | string = {}) {
   const normalized: UseUsageOptions =
     typeof options === "string" ? { keyId: options } : options;
-  const { keyId, range, limit } = normalized;
+  const { keyId, logType, range, since, until, limit, enabled = true } = normalized;
 
   return useQuery<UsageResult, Error>({
-    queryKey: ["usage", keyId ?? "all", range ?? "all", limit ?? "default"] as const,
+    queryKey: [
+      "usage",
+      keyId ?? "all",
+      logType ?? "all",
+      range ?? "all",
+      since ?? "all",
+      until ?? "all",
+      limit ?? "default",
+    ] as const,
     queryFn: () =>
       getUsage({
         keyId,
-        since: range ? sinceForRange(range) : undefined,
+        logType,
+        since: range ? sinceForRange(range) : since,
+        until,
         limit,
       }),
+    enabled,
   });
 }
 

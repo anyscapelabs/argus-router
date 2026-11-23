@@ -17,6 +17,7 @@ pub mod user {
         pub created_at: DateTimeUtc,
         pub updated_at: DateTimeUtc,
         pub locale: Option<String>,
+        pub age: Option<i32>,
     }
 
     #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

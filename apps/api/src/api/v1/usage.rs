@@ -9,13 +9,16 @@ use serde::Deserialize;
 use crate::auth::AppAuthSchema;
 use crate::state::AppState;
 
-use sqlx::Row;
+use sqlx::{QueryBuilder, Row};
 
 #[derive(Deserialize, Default)]
 struct UsageQuery {
     #[serde(alias = "keyId")]
     key_id: Option<String>,
+    #[serde(rename = "type")]
+    log_type: Option<String>,
     since: Option<String>,
+    until: Option<String>,
     limit: Option<i64>,
 }
 
@@ -68,51 +71,39 @@ async fn list_usage(
         ),
         None => None,
     };
+    let until: Option<DateTime<Utc>> = match q.until.as_deref() {
+        Some(raw) => Some(
+            DateTime::parse_from_rfc3339(raw)
+                .map(|dt| dt.with_timezone(&Utc))
+                .map_err(|_e| {
+                    (
+                        StatusCode::BAD_REQUEST,
+                        AxumJson(serde_json::json!({"error": {"code": "USAGE_UNTIL", "message": "An error has occurred. Try again later.".to_owned()}})),
+                    )
+                })?,
+        ),
+        None => None,
+    };
 
     let pool = state.app_db.pool();
-    let rows = match (q.key_id.as_deref(), since) {
-        (Some(key_id), Some(since)) => {
-            sqlx::query(
-                "SELECT id, created_at, key_id, user_id, plan_id, model, requested_model, provider, input_tokens, output_tokens, cache_read_tokens, status, latency_ms, error_code FROM usage_logs WHERE user_id = $1 AND key_id = $2 AND created_at >= $3 ORDER BY created_at DESC LIMIT $4",
-            )
-            .bind(&user)
-            .bind(key_id)
-            .bind(since)
-            .bind(limit)
-            .fetch_all(&pool)
-            .await
-        }
-        (Some(key_id), None) => {
-            sqlx::query(
-                "SELECT id, created_at, key_id, user_id, plan_id, model, requested_model, provider, input_tokens, output_tokens, cache_read_tokens, status, latency_ms, error_code FROM usage_logs WHERE user_id = $1 AND key_id = $2 ORDER BY created_at DESC LIMIT $3",
-            )
-            .bind(&user)
-            .bind(key_id)
-            .bind(limit)
-            .fetch_all(&pool)
-            .await
-        }
-        (None, Some(since)) => {
-            sqlx::query(
-                "SELECT id, created_at, key_id, user_id, plan_id, model, requested_model, provider, input_tokens, output_tokens, cache_read_tokens, status, latency_ms, error_code FROM usage_logs WHERE user_id = $1 AND created_at >= $2 ORDER BY created_at DESC LIMIT $3",
-            )
-            .bind(&user)
-            .bind(since)
-            .bind(limit)
-            .fetch_all(&pool)
-            .await
-        }
-        (None, None) => {
-            sqlx::query(
-                "SELECT id, created_at, key_id, user_id, plan_id, model, requested_model, provider, input_tokens, output_tokens, cache_read_tokens, status, latency_ms, error_code FROM usage_logs WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2",
-            )
-            .bind(&user)
-            .bind(limit)
-            .fetch_all(&pool)
-            .await
-        }
+    let mut qb = QueryBuilder::new(
+        "SELECT id, created_at, key_id, user_id, plan_id, model, requested_model, provider, input_tokens, output_tokens, cache_read_tokens, status, latency_ms, error_code, log_type, details FROM usage_logs WHERE user_id = ",
+    );
+    qb.push_bind(&user);
+    if let Some(key_id) = q.key_id.as_deref() {
+        qb.push(" AND key_id = ").push_bind(key_id);
     }
-    .map_err(|_e| {
+    if let Some(log_type) = q.log_type.as_deref() {
+        qb.push(" AND log_type = ").push_bind(log_type);
+    }
+    if let Some(since) = since {
+        qb.push(" AND created_at >= ").push_bind(since);
+    }
+    if let Some(until) = until {
+        qb.push(" AND created_at <= ").push_bind(until);
+    }
+    qb.push(" ORDER BY created_at DESC LIMIT ").push_bind(limit);
+    let rows = qb.build().fetch_all(&pool).await.map_err(|_e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             AxumJson(serde_json::json!({"error": {"code": "USAGE_LIST", "message": "An error has occurred. Try again later."}})),
@@ -138,6 +129,11 @@ async fn list_usage(
             "status": row.try_get::<i32, _>("status").ok(),
             "latencyMs": row.try_get::<Option<i64>, _>("latency_ms").ok().flatten(),
             "errorCode": row.try_get::<Option<String>, _>("error_code").ok().flatten(),
+            "logType": row.try_get::<String, _>("log_type").unwrap_or_else(|_| "chat".to_owned()),
+            "details": row.try_get::<String, _>("details")
+                .ok()
+                .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+                .unwrap_or_else(|| serde_json::json!({})),
         }));
     }
     Ok(AxumJson(serde_json::json!({"rows": out})))
@@ -357,7 +353,51 @@ async fn usage_summary(
         })
         .collect();
 
+    let period = state.app_db.usage_period(&user).await.map_err(db_err)?;
+    let period_row = sqlx::query(
+        "SELECT
+           COALESCE(SUM(input_tokens + output_tokens) FILTER (WHERE created_at >= $3), 0)::bigint AS weekly,
+           COALESCE(SUM(input_tokens + output_tokens) FILTER (WHERE created_at >= $4), 0)::bigint AS monthly
+         FROM usage_logs
+         WHERE user_id = $1 AND ($2::text IS NULL OR key_id = $2)",
+    )
+    .bind(&user)
+    .bind(key_id)
+    .bind(period.weekly_start)
+    .bind(period.monthly_start)
+    .fetch_one(&pool)
+    .await
+    .map_err(db_err)?;
+    let weekly_tokens = period_row.try_get::<i64, _>("weekly").unwrap_or(0);
+    let monthly_tokens = period_row.try_get::<i64, _>("monthly").unwrap_or(0);
+
+    let plan_id = state.app_db.plan_of(&user).await.map_err(db_err)?;
+    let (voice_used, voice_quota) = state
+        .app_db
+        .voice_usage(&user, &plan_id)
+        .await
+        .map_err(db_err)?;
+    let (search_used, search_quota) = state
+        .app_db
+        .search_usage(&user, &plan_id)
+        .await
+        .map_err(db_err)?;
+
     Ok(AxumJson(serde_json::json!({
+        "weeklyResetAt": period.weekly_reset.to_rfc3339(),
+        "monthlyResetAt": period.monthly_reset.to_rfc3339(),
+        "periods": {
+            "weekly": {
+                "startAt": period.weekly_start.to_rfc3339(),
+                "resetAt": period.weekly_reset.to_rfc3339(),
+                "tokens": weekly_tokens,
+            },
+            "monthly": {
+                "startAt": period.monthly_start.to_rfc3339(),
+                "resetAt": period.monthly_reset.to_rfc3339(),
+                "tokens": monthly_tokens,
+            },
+        },
         "totals": agg_json(&totals_row),
         "byModel": by_model,
         "byKey": by_key,
@@ -365,5 +405,9 @@ async fn usage_summary(
         "byModelSeries": by_model_series,
         "bucket": unit,
         "tz": tz,
+        "voiceMinutesUsed": voice_used,
+        "voiceMinutesQuota": voice_quota,
+        "webSearchUsed": search_used,
+        "webSearchQuota": search_quota,
     })))
 }

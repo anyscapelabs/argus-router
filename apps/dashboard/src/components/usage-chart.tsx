@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { barY, defineChart } from "@tanstack/charts";
 import { Chart as RendererChart } from "@tanstack/charts/react/core";
 import { motion } from "@tanstack/charts/motion";
@@ -14,6 +14,8 @@ type Bucket = {
   value: number;
   requests: number;
 };
+
+const HEIGHT = 240;
 
 function formatAxisValue(value: number): string {
   const abs = Math.abs(value);
@@ -52,18 +54,18 @@ function localKey(d: Date, unit: "hour" | "day"): string {
 
 function bucketSeries(series: UsageSeriesPoint[], range: UsageRange): Bucket[] {
   const now = new Date();
-  const byKey = new Map(series.map((p) => [p.bucket, p]));
+  const byKey = new Map(series.map((point) => [point.bucket, point]));
   const unit = range === "24h" ? "hour" : "day";
-  const count = range === "24h" ? 24 : range === "7d" ? 7 : 30;
+  const count = range === "24h" ? 24 : range === "7d" ? 7 : range === "month" ? now.getDate() : 30;
 
   const first = unit === "hour" ? startOfHour(now) : startOfDay(now);
-  return Array.from({ length: count }, (_, i) => {
-    const d = new Date(first);
-    if (unit === "hour") d.setHours(d.getHours() - (count - 1 - i));
-    else d.setDate(d.getDate() - (count - 1 - i));
-    const point = byKey.get(localKey(d, unit));
+  return Array.from({ length: count }, (_, index) => {
+    const date = new Date(first);
+    if (unit === "hour") date.setHours(date.getHours() - (count - 1 - index));
+    else date.setDate(date.getDate() - (count - 1 - index));
+    const point = byKey.get(localKey(date, unit));
     return {
-      label: unit === "hour" ? `${d.getHours()}` : `${d.getMonth() + 1}/${d.getDate()}`,
+      label: unit === "hour" ? `${date.getHours()}` : `${date.getMonth() + 1}/${date.getDate()}`,
       value: point?.tokens ?? 0,
       requests: point?.requests ?? 0,
     };
@@ -73,19 +75,34 @@ function bucketSeries(series: UsageSeriesPoint[], range: UsageRange): Bucket[] {
 export function UsageChart({
   series,
   range = "24h",
+  isLoading = false,
 }: {
   series: UsageSeriesPoint[];
   range?: UsageRange;
+  isLoading?: boolean;
 }) {
+  const container = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState(750);
   const buckets = useMemo(() => bucketSeries(series, range), [series, range]);
   const hasData = series.length > 0;
 
+  useEffect(() => {
+    const node = container.current;
+    if (!node) return;
+    const observer = new ResizeObserver((entries) => {
+      const next = Math.floor(entries[0]?.contentRect.width ?? 0);
+      if (next > 0) setWidth(next);
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
   const definition = useMemo(() => {
     if (!hasData) return null;
-    const chartRows = buckets.map((b) => ({
-      hour: b.label,
-      value: b.value,
-      requests: b.requests,
+    const chartRows = buckets.map((bucket) => ({
+      hour: bucket.label,
+      value: bucket.value,
+      requests: bucket.requests,
     }));
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return (defineChart as any)(
@@ -95,7 +112,7 @@ export function UsageChart({
             id: "usage-bars",
             x: "hour",
             y: "value",
-            fill: "#e5e5e5",
+            fill: "var(--accent)",
             radius: 2,
           }),
         ],
@@ -125,7 +142,7 @@ export function UsageChart({
           placement: "auto",
           content: (points: ReadonlyArray<{ xValue?: unknown; yValue?: unknown; color?: string }>) => {
             const label = String(points[0]?.xValue ?? "");
-            const bucket = chartRows.find((b) => b.hour === label);
+            const bucket = chartRows.find((row) => row.hour === label);
             return {
               title: range === "24h" ? `${label}:00` : label,
               rows: [
@@ -148,24 +165,26 @@ export function UsageChart({
   }, [buckets, hasData, range]);
 
   const renderer = motion({ initial: "always" });
-  const width = 750;
-  const height = 240;
+
+  if (isLoading) {
+    return <div ref={container} style={{ height: HEIGHT }} className="w-full" />;
+  }
 
   if (!hasData || !definition) {
     return (
-      <div style={{ width, height }} className="flex items-center justify-center">
+      <div ref={container} style={{ height: HEIGHT }} className="flex w-full items-center justify-center">
         <UsageEmptyState />
       </div>
     );
   }
 
   return (
-    <div style={{ width, height }}>
+    <div ref={container} style={{ height: HEIGHT }} className="w-full">
       <RendererChart
         definition={definition}
         renderer={renderer}
-        initialWidth={width}
-        height={height}
+        width={width}
+        height={HEIGHT}
         ariaLabel="Usage chart"
       />
     </div>

@@ -1,152 +1,237 @@
 "use client";
 
-import { useState } from "react";
-import { RangeControls } from "@/components/usage-range-controls";
-import { EmptyState } from "@/components/empty-state";
-import { SkeletonRows } from "@/components/skeleton-rows";
+import { useSearchParams } from "next/navigation";
+import { Suspense, useState, type ReactNode } from "react";
+import { HiMiniArrowPath } from "react-icons/hi2";
+import {
+  LogsDatePicker,
+  getPresetRange,
+  type LogsDateRange,
+} from "@/components/logs-date-picker";
+import { PageLoading } from "@/components/page-loading";
+import { Skeleton } from "@/components/skeleton";
 import { useUsage } from "@/domains/usage/hooks";
-import type { UsageRange } from "@/domains/usage/api";
+import type { UsageRow } from "@/domains/usage/api";
 
-const LOGS_PAGE_SIZE = 50;
+const TABS = ["Chat", "Voice", "Web Search"] as const;
+type Tab = (typeof TABS)[number];
 
-export default function LogsPage() {
-  const [logRange, setLogRange] = useState<UsageRange>("7d");
-  const [logsPage, setLogsPage] = useState(1);
+type LogColumn = {
+  label: string;
+  className?: string;
+  render: (row: UsageRow) => ReactNode;
+};
 
-  const usage = useUsage({ range: logRange });
-  const usageRows = usage.data?.rows ?? [];
+const CHAT_COLUMNS: LogColumn[] = [
+  { label: "Time", render: (row) => <span suppressHydrationWarning>{formatTime(row.createdAt)}</span> },
+  { label: "Status", render: (row) => <StatusPill row={row} /> },
+  { label: "Model", render: (row) => row.model ?? "-" },
+  { label: "API Key", render: (row) => <span className="font-mono">{row.keyId ?? "-"}</span> },
+  { label: "Duration", render: (row) => formatLatency(row.latencyMs) },
+  { label: "Input tokens", className: "text-right", render: (row) => formatNumber(row.inputTokens) },
+  { label: "Output tokens", className: "text-right", render: (row) => formatNumber(row.outputTokens) },
+];
 
-  const logsPageCount = Math.max(1, Math.ceil(usageRows.length / LOGS_PAGE_SIZE));
-  const currentPage = Math.min(logsPage, logsPageCount);
-  const logsPageRows = usageRows.slice(
-    (currentPage - 1) * LOGS_PAGE_SIZE,
-    currentPage * LOGS_PAGE_SIZE,
+const VOICE_COLUMNS: LogColumn[] = [
+  { label: "Time", render: (row) => <span suppressHydrationWarning>{formatTime(row.createdAt)}</span> },
+  { label: "Status", render: (row) => <StatusPill row={row} /> },
+  { label: "Model", render: (row) => row.model ?? "-" },
+  { label: "API Key", render: (row) => <span className="font-mono">{row.keyId ?? "-"}</span> },
+  { label: "Duration", render: (row) => formatLatency(row.latencyMs) },
+  { label: "Turns", render: (row) => row.details?.turns ?? "—" },
+];
+
+const SEARCH_COLUMNS: LogColumn[] = [
+  { label: "Time", render: (row) => <span suppressHydrationWarning>{formatTime(row.createdAt)}</span> },
+  { label: "Status", render: (row) => <StatusPill row={row} /> },
+  {
+    label: "Query",
+    render: (row) =>
+      row.details?.query ? (
+        <span title={row.details.query}>{row.details.query}</span>
+      ) : (
+        "—"
+      ),
+  },
+  { label: "Results", render: (row) => row.details?.resultCount ?? "—" },
+  { label: "Duration", render: (row) => formatLatency(row.latencyMs) },
+];
+
+const TABLES: Record<Tab, { grid: string; columns: LogColumn[] }> = {
+  Chat: {
+    grid: "grid-cols-[1.2fr_0.6fr_1.2fr_1.4fr_0.8fr_1fr_1fr]",
+    columns: CHAT_COLUMNS,
+  },
+  Voice: {
+    grid: "grid-cols-[1.2fr_1fr_1.2fr_1.2fr_0.8fr_0.6fr]",
+    columns: VOICE_COLUMNS,
+  },
+  "Web Search": {
+    grid: "grid-cols-[1.2fr_1fr_2fr_0.7fr_0.8fr]",
+    columns: SEARCH_COLUMNS,
+  },
+};
+
+function formatTime(value: string | null) {
+  if (!value) return "—";
+  return new Date(value).toLocaleString("en-US", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+}
+
+function formatLatency(value: number | null) {
+  return value != null ? `${(value / 1000).toFixed(1)}s` : "—";
+}
+
+function formatNumber(value: number | null) {
+  return (value ?? 0).toLocaleString();
+}
+
+function StatusPill({ row }: { row: UsageRow }) {
+  const failed = row.status !== 200;
+  return (
+    <span
+      title={failed ? row.errorCode ?? undefined : undefined}
+      className={`inline-flex rounded-full bg-primary/10 px-2 py-0.5 text-xs ${
+        failed ? "text-warning" : "text-primary/70"
+      }`}
+    >
+      {failed ? row.errorCode ?? row.status ?? "-" : row.status}
+    </span>
   );
+}
 
-  const onRangeChange = (range: UsageRange) => {
-    setLogRange(range);
-    setLogsPage(1);
-  };
+function LogsTable({
+  tab,
+  rows,
+  isLoading,
+  errorMessage,
+}: {
+  tab: Tab;
+  rows: UsageRow[];
+  isLoading: boolean;
+  errorMessage: string | null;
+}) {
+  const { grid, columns } = TABLES[tab];
 
   return (
-    <div className="mx-auto flex w-full max-w-6xl flex-col gap-4">
-      <div className="flex items-center justify-between gap-4">
-        <div>
-          <h2 className="mt-4 text-sm font-medium text-primary">Logs</h2>
-          <p className="mt-1 text-xs text-white/60">
-            Recent requests through the gateway.
-          </p>
-        </div>
-        <RangeControls
-          range={logRange}
-          onRangeChange={onRangeChange}
-          onRefresh={() => usage.refetch()}
-          isFetching={usage.isFetching}
-        />
+    <div>
+      <div className={`grid ${grid} gap-4 border-b border-border p-1 text-xs text-primary/60`}>
+        {columns.map((column) => (
+          <span key={column.label} className={column.className}>
+            {column.label}
+          </span>
+        ))}
       </div>
-      {usage.isError && (
+      {isLoading &&
+        Array.from({ length: 5 }, (_, row) => (
+          <div key={row} className={`grid ${grid} gap-4 border-b border-border/50 p-1 py-3`}>
+            {columns.map((column) => (
+              <Skeleton key={column.label} className="rounded-full px-2 py-1" />
+            ))}
+          </div>
+        ))}
+      {errorMessage && <p className="mt-4 text-sm text-danger">{errorMessage}</p>}
+      {!isLoading && !errorMessage && rows.length === 0 && (
+        <p className="mt-6 text-center text-sm text-primary/60">No logs yet.</p>
+      )}
+      {rows.map((row) => (
         <div
-          role="alert"
-          className="rounded-md border border-red-400/30 bg-red-400/10 px-3 py-2 text-xs text-red-300"
+          key={row.id}
+          className={`grid ${grid} gap-4 border-b border-border/50 p-1 py-3 text-sm transition-colors duration-200 hover:bg-tertiary`}
         >
-          Couldn&apos;t load logs: {usage.error?.message ?? "Unknown error"}.{" "}
+          {columns.map((column) => (
+            <span key={column.label} className={`min-w-0 truncate ${column.className ?? ""}`}>
+              {column.render(row)}
+            </span>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function LogsPageContent() {
+  const keyId = useSearchParams().get("keyId") ?? undefined;
+  const [tab, setTab] = useState<Tab>("Chat");
+  const [refreshing, setRefreshing] = useState(false);
+  const [dateRange, setDateRange] = useState<LogsDateRange>(() => getPresetRange("Last 7 days"));
+  const since = dateRange.start.toISOString();
+  const until = dateRange.end
+    ? new Date(
+        dateRange.end.getFullYear(),
+        dateRange.end.getMonth(),
+        dateRange.end.getDate(),
+        23,
+        59,
+        59,
+        999,
+      ).toISOString()
+    : undefined;
+  const common = { keyId, since, until, limit: 50 };
+  const chat = useUsage({ ...common, logType: "chat", enabled: tab === "Chat" });
+  const voice = useUsage({ ...common, logType: "voice", enabled: tab === "Voice" });
+  const search = useUsage({ ...common, logType: "web_search", enabled: tab === "Web Search" });
+  const active = tab === "Chat" ? chat : tab === "Voice" ? voice : search;
+
+  return (
+    <div className="mx-auto flex w-full max-w-5xl flex-col gap-4">
+      <div>
+        <h1 className="text-2xl font-medium text-primary">Logs</h1>
+        <p className="mt-0.5 text-sm text-primary/60">Recent requests through the gateway.</p>
+      </div>
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex gap-2">
+          {TABS.map((t) => (
+            <button
+              key={t}
+              type="button"
+              onClick={() => setTab(t)}
+              className={`cursor-pointer rounded-full px-4 py-1.5 text-sm transition-colors ${
+                tab === t
+                  ? "bg-accent text-background"
+                  : "bg-tertiary text-primary/60 hover:text-primary"
+              }`}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+        <div className="flex items-center gap-2">
+          <LogsDatePicker range={dateRange} onRangeChange={setDateRange} />
           <button
             type="button"
-            onClick={() => void usage.refetch()}
-            className="cursor-pointer underline underline-offset-2 hover:text-red-200"
+            aria-label="Refresh logs"
+            disabled={refreshing}
+            onClick={async () => {
+              setRefreshing(true);
+              try {
+                await active.refetch();
+              } finally {
+                setRefreshing(false);
+              }
+            }}
+            className="inline-flex cursor-pointer items-center justify-center rounded-full bg-tertiary p-1.5 text-primary transition-colors hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            Retry
+            <HiMiniArrowPath className={`size-4 ${refreshing ? "animate-spin" : ""}`} aria-hidden="true" />
           </button>
         </div>
-      )}
-      <div className="max-w-full overflow-x-auto rounded-md border border-border-secondary">
-        <table className="w-full text-left text-xs">
-          <thead>
-            <tr className="border-b border-border-secondary bg-tertiary text-white/40">
-              <th className="px-2 py-2 font-medium rounded-tl-md">Time</th>
-              <th className="px-2 py-2 font-medium">Status</th>
-              <th className="px-2 py-2 font-medium">Model</th>
-              <th className="px-2 py-2 font-medium">Service account key</th>
-              <th className="px-2 py-2 text-right font-medium">Duration</th>
-              <th className="px-2 py-2 text-right font-medium">Input tokens</th>
-              <th className="px-2 py-2 text-right font-medium rounded-tr-md">Output tokens</th>
-            </tr>
-          </thead>
-          <tbody>
-            {usage.isLoading ? (
-              <SkeletonRows columns={8} />
-            ) : usageRows.length === 0 ? (
-              <tr>
-                <td colSpan={8} className="px-2 py-10">
-                  <EmptyState message="No usage in this range" />
-                </td>
-              </tr>
-            ) : (
-              logsPageRows.map((r) => (
-                <tr key={r.id} className="border-b border-border-secondary/50 transition-colors hover:bg-[#202020]">
-                  <td className="px-2 py-2 whitespace-nowrap tabular-nums text-white/70" suppressHydrationWarning>
-                    {r.createdAt
-                      ? new Date(r.createdAt).toLocaleString("en-US", {
-                          dateStyle: "medium",
-                          timeStyle: "short",
-                        })
-                      : "-"}
-                  </td>
-                  <td className="px-2 py-2">
-                    <span
-                      className={`rounded-sm px-1.5 py-0.5 font-medium ${
-                        r.status === 200 ? "bg-white/10 text-primary" : "bg-white/10 text-yellow-400"
-                      }`}
-                    >
-                      {r.status ?? "-"}
-                    </span>
-                  </td>
-                  <td className="px-2 py-2 font-medium text-primary">{r.model ?? "-"}</td>
-                  <td className="px-2 py-2 text-white/70">{r.keyId ?? "-"}</td>
-                  <td className="px-2 py-2 text-right tabular-nums text-white/70">
-                    {r.latencyMs != null ? `${(r.latencyMs / 1000).toFixed(1)}s` : "-"}
-                  </td>
-                  <td className="px-2 py-2 text-right tabular-nums text-white/70">
-                    {(r.inputTokens ?? 0).toLocaleString()}
-                  </td>
-                  <td className="px-2 py-2 text-right tabular-nums text-white/70">
-                    {(r.outputTokens ?? 0).toLocaleString()}
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
       </div>
-      {usageRows.length > 0 && (
-        <div className="flex items-center justify-between text-xs text-white/60">
-          <span>
-            Showing {(currentPage - 1) * LOGS_PAGE_SIZE + 1}–
-            {Math.min(currentPage * LOGS_PAGE_SIZE, usageRows.length)} of {usageRows.length}
-          </span>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setLogsPage((p) => Math.max(1, p - 1))}
-              disabled={currentPage <= 1}
-              className="cursor-pointer rounded-sm border border-border-secondary bg-tertiary px-2 py-1 text-xs text-primary transition-colors hover:bg-white/10 disabled:cursor-default disabled:opacity-40 disabled:hover:bg-tertiary"
-            >
-              Previous
-            </button>
-            <span className="tabular-nums">
-              Page {currentPage} of {logsPageCount}
-            </span>
-            <button
-              type="button"
-              onClick={() => setLogsPage((p) => Math.min(logsPageCount, p + 1))}
-              disabled={currentPage >= logsPageCount}
-              className="cursor-pointer rounded-sm border border-border-secondary bg-tertiary px-2 py-1 text-xs text-primary transition-colors hover:bg-white/10 disabled:cursor-default disabled:opacity-40 disabled:hover:bg-tertiary"
-            >
-              Next
-            </button>
-          </div>
-        </div>
-      )}
+      <LogsTable
+        tab={tab}
+        rows={active.data?.rows ?? []}
+        isLoading={active.isPending}
+        errorMessage={active.isError ? active.error.message : null}
+      />
     </div>
+  );
+}
+
+export default function LogsPage() {
+  return (
+    <Suspense fallback={<PageLoading />}>
+      <LogsPageContent />
+    </Suspense>
   );
 }

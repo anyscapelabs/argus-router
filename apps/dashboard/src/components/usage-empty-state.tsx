@@ -15,7 +15,7 @@ export function chartAxisLabels(range: UsageRange): string[] {
       return i % 5 === 0 ? `${hour}:00` : "";
     });
   }
-  const days = range === "7d" ? 7 : 30;
+  const days = range === "7d" ? 7 : range === "month" ? now.getDate() : 30;
   const step = range === "7d" ? 1 : 5;
   const dayStart = new Date(now);
   dayStart.setHours(0, 0, 0, 0);
