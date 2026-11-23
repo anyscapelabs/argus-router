@@ -15,6 +15,18 @@ function formatResetDate(value?: string) {
   }).format(date);
 }
 
+function weeklyResetFromMonthly(value?: string) {
+  if (!value) return undefined;
+  const reset = new Date(value);
+  if (Number.isNaN(reset.getTime())) return undefined;
+  const periodStart = new Date(reset);
+  periodStart.setMonth(periodStart.getMonth() - 1);
+  const elapsed = Date.now() - periodStart.getTime();
+  if (elapsed <= 0) return periodStart.toISOString();
+  const weeks = Math.floor(elapsed / (7 * 24 * 60 * 60 * 1000)) + 1;
+  return new Date(periodStart.getTime() + weeks * 7 * 24 * 60 * 60 * 1000).toISOString();
+}
+
 function usagePercent(used: number, limit: number | string | undefined) {
   const amount = Number(limit ?? 0);
   return amount > 0 ? Math.min(Math.round((used / amount) * 100), 100) : 0;
@@ -67,10 +79,17 @@ export function UsageCards() {
   const usage = useUsageSummary();
   const currentPlan = plans.data?.plans.find((plan) => plan.id === billing.data?.planId);
 
+  const subscriptionResetAt = billing.data?.subscription?.nextBillingDate ?? undefined;
   const weeklyUsed = usage.data?.periods?.weekly.tokens ?? 0;
   const monthlyUsed = usage.data?.periods?.monthly.tokens ?? 0;
-  const weeklyResetAt = usage.data?.periods?.weekly.resetAt ?? usage.data?.weeklyResetAt;
-  const monthlyResetAt = usage.data?.periods?.monthly.resetAt ?? usage.data?.monthlyResetAt;
+  const weeklyResetAt =
+    usage.data?.periods?.weekly.resetAt ??
+    usage.data?.weeklyResetAt ??
+    weeklyResetFromMonthly(subscriptionResetAt);
+  const monthlyResetAt =
+    usage.data?.periods?.monthly.resetAt ??
+    usage.data?.monthlyResetAt ??
+    subscriptionResetAt;
 
   return (
     <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -93,7 +112,11 @@ export function UsageCards() {
 
 export function UsageExtraCards() {
   const usage = useUsageSummary();
-  const monthlyResetAt = usage.data?.periods?.monthly.resetAt ?? usage.data?.monthlyResetAt;
+  const usageBilling = useBilling();
+  const monthlyResetAt =
+    usage.data?.periods?.monthly.resetAt ??
+    usage.data?.monthlyResetAt ??
+    usageBilling.data?.subscription?.nextBillingDate;
 
   return (
     <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
