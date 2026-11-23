@@ -48,3 +48,6 @@ target/
 
 # Generated catalog copy for the router deployment
 llm-gateway/catalog/
+
+# Local billing product IDs (never deploy)
+apps/api/billing/products.local.json
