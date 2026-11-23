@@ -14,7 +14,7 @@ use super::usage::{LiveUsage, record};
 
 const GOOGLE_LIVE_WS_BASE: &str = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent";
 
-const MAX_RATE_LIMIT_RETRIES: u32 = 3;
+const CLIENT_PING_INTERVAL: Duration = Duration::from_secs(15);
 
 fn wire_model(id: &str) -> String {
     if id.starts_with("models/") {
@@ -128,147 +128,146 @@ pub(super) async fn handle_socket(
     let (mut client_sender, mut client_receiver) = client_ws.split();
     let (mut upstream_sender, mut upstream_receiver) = upstream.split();
 
-    let deadline = tokio::time::sleep(max_duration);
-    tokio::pin!(deadline);
-
     let mut quota_exhausted = false;
     let mut last_model_text = String::new();
     let mut has_sent_audio = false;
-    let mut logged_first_upstream_frame = false;
-    let mut rate_limit_retries: u32 = 0;
     let mut turns: i64 = 0;
 
-    loop {
-        tokio::select! {
-            _ = &mut deadline => {
-                tracing::info!(%user_id, "live call exceeded remaining plan minutes");
-                quota_exhausted = true;
-                let _ = client_sender
-                    .send(Message::Text(
-                        serde_json::json!({
-                            "error": {
-                                "code": "voice_minutes_exhausted",
-                                "status": 429,
-                                "message": "An error has occurred. Try again later."
-                            }
-                        })
-                        .to_string()
-                        .into(),
-                    ))
-                    .await;
-                let _ = client_sender.close().await;
-                let _ = upstream_sender.close().await;
+    let audio_flag = &mut has_sent_audio;
+    let wire = wire_model(&model);
+    let uid = user_id.as_str();
+
+    // Each direction runs in its own future so a slow write on one side can never
+    // stall reads on the other; audio in both directions has to keep flowing.
+    let to_upstream = async move {
+        loop {
+            let msg = match client_receiver.next().await {
+                Some(Ok(msg)) => msg,
+                Some(Err(err)) => {
+                    tracing::debug!(%err, "client WebSocket read error");
+                    break;
+                }
+                None => break,
+            };
+            let tung_msg = match msg {
+                Message::Text(txt) => {
+                    let text = if txt.contains("\"setup\"") {
+                        tracing::info!(
+                            user_id = %uid,
+                            setup_model = %wire,
+                            "client setup forwarded upstream"
+                        );
+                        inject_default_model(txt.as_str(), &wire)
+                    } else {
+                        if !*audio_flag && txt.contains("realtimeInput") {
+                            *audio_flag = true;
+                            tracing::info!(user_id = %uid, "client audio is flowing upstream");
+                        }
+                        txt.to_string()
+                    };
+                    TungsteniteMessage::Text(text.into())
+                }
+                Message::Binary(bin) => TungsteniteMessage::Binary(bin),
+                Message::Ping(_) | Message::Pong(_) => continue,
+                Message::Close(c) => {
+                    let tung_close = c.map(|frame| {
+                        tokio_tungstenite::tungstenite::protocol::frame::CloseFrame {
+                            code: tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode::from(frame.code),
+                            reason: frame.reason.as_str().into(),
+                        }
+                    });
+                    TungsteniteMessage::Close(tung_close)
+                }
+            };
+            if let Err(e) = upstream_sender.send(tung_msg).await {
+                tracing::warn!(%e, "error forwarding client message to upstream");
                 break;
             }
+        }
+    };
 
-            from_client = client_receiver.next() => {
-                match from_client {
-                    Some(Ok(msg)) => {
-                        if let Message::Text(txt) = &msg {
-                            if txt.contains("\"setup\"") {
-                                tracing::info!(
-                                    %user_id,
-                                    setup_model = %wire_model(&model),
-                                    "client setup forwarded upstream"
-                                );
-                            } else if txt.contains("realtimeInput") && !has_sent_audio {
-                                has_sent_audio = true;
-                                tracing::info!(%user_id, "client audio is flowing upstream");
-                            }
-                        }
-                        let tung_msg = match msg {
-                            Message::Text(txt) => {
-                                let text = inject_default_model(txt.as_str(), &wire_model(&model));
-                                TungsteniteMessage::Text(text.into())
-                            }
-                            Message::Binary(bin) => TungsteniteMessage::Binary(bin),
-                            Message::Ping(p) => TungsteniteMessage::Ping(p),
-                            Message::Pong(p) => TungsteniteMessage::Pong(p),
-                            Message::Close(c) => {
-                                let tung_close = c.map(|frame| {
-                                    tokio_tungstenite::tungstenite::protocol::frame::CloseFrame {
-                                        code: tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode::from(frame.code),
-                                        reason: frame.reason.as_str().into(),
-                                    }
-                                });
-                                TungsteniteMessage::Close(tung_close)
-                            }
-                        };
-                        if let Err(e) = upstream_sender.send(tung_msg).await {
-                            tracing::warn!(%e, "error forwarding client message to upstream");
-                            break;
-                        }
-                    }
-                    Some(Err(err)) => {
-                        tracing::debug!(%err, "client WebSocket read error");
+    let quota_flag = &mut quota_exhausted;
+    let last_text = &mut last_model_text;
+    let turn_count = &mut turns;
+
+    let to_client = async move {
+        let deadline = tokio::time::sleep(max_duration);
+        tokio::pin!(deadline);
+        let mut ping = tokio::time::interval_at(
+            tokio::time::Instant::now() + CLIENT_PING_INTERVAL,
+            CLIENT_PING_INTERVAL,
+        );
+        let mut logged_first_upstream_frame = false;
+
+        loop {
+            tokio::select! {
+                _ = &mut deadline => {
+                    tracing::info!(user_id = %uid, "live call exceeded remaining plan minutes");
+                    *quota_flag = true;
+                    let _ = client_sender
+                        .send(Message::Text(
+                            serde_json::json!({
+                                "error": {
+                                    "code": "voice_minutes_exhausted",
+                                    "status": 429,
+                                    "message": "An error has occurred. Try again later."
+                                }
+                            })
+                            .to_string()
+                            .into(),
+                        ))
+                        .await;
+                    let _ = client_sender.close().await;
+                    break;
+                }
+
+                _ = ping.tick() => {
+                    if client_sender.send(Message::Ping(Default::default())).await.is_err() {
                         break;
                     }
-                    None => break,
                 }
-            }
 
-            from_upstream = upstream_receiver.next() => {
-                match from_upstream {
-                    Some(Ok(TungsteniteMessage::Text(ref txt))) => {
-                        let raw = txt.to_string();
-                        if raw.contains("\"turnComplete\":true") || raw.contains("\"turnComplete\": true") {
-                            turns += 1;
-                        }
-
-                        if !logged_first_upstream_frame {
-                            logged_first_upstream_frame = true;
-                            let snippet: String = raw.chars().take(200).collect();
-                            tracing::info!(
-                                %user_id,
-                                bytes = raw.len(),
-                                snippet = %snippet,
-                                "first frame received from Google Live"
-                            );
-                        }
-
-                        if let Some(retry_secs) = extract_rate_limit_secs(&raw) {
-                            rate_limit_retries += 1;
-                            tracing::warn!(
-                                %user_id,
-                                retries = rate_limit_retries,
-                                retry_secs,
-                                "Google Live 429 rate-limit received"
-                            );
-                            if rate_limit_retries >= MAX_RATE_LIMIT_RETRIES {
-                                let _ = client_sender
-                                    .send(Message::Text(
-                                        serde_json::json!({
-                                            "type": "rate_limit_exceeded",
-                                            "message": "An error has occurred. Try again later."
-                                        })
-                                        .to_string()
-                                        .into(),
-                                    ))
-                                    .await;
-                                let _ = client_sender.close().await;
-                                let _ = upstream_sender.close().await;
-                                break;
+                from_upstream = upstream_receiver.next() => {
+                    match from_upstream {
+                        Some(Ok(TungsteniteMessage::Text(txt))) => {
+                            let raw = txt.to_string();
+                            if raw.contains("\"turnComplete\":true") || raw.contains("\"turnComplete\": true") {
+                                *turn_count += 1;
                             }
-                            let _ = client_sender
-                                .send(Message::Text(
-                                    serde_json::json!({
-                                        "type": "rate_limited",
-                                        "retry_after": retry_secs,
-                                        "message": "An error has occurred. Try again later.".to_string()
-                                    })
-                                    .to_string()
-                                    .into(),
-                                ))
-                                .await;
-                            // Fix C: close and re-open the upstream connection instead of
-                            // sleeping with the upstream socket dangling (zombie connection).
-                            let _ = upstream_sender.close().await;
-                            tokio::time::sleep(Duration::from_secs(retry_secs.min(60))).await;
-                            // Reconnect upstream after the sleep.
-                            let new_upstream = match connect_async(&google_url).await {
-                                Ok((stream, _)) => stream,
-                                Err(err) => {
-                                    tracing::error!(%err, "failed to reconnect to Google Live after rate limit");
+
+                            if !logged_first_upstream_frame {
+                                logged_first_upstream_frame = true;
+                                let snippet: String = raw.chars().take(200).collect();
+                                tracing::info!(
+                                    user_id = %uid,
+                                    bytes = raw.len(),
+                                    snippet = %snippet,
+                                    "first frame received from Google Live"
+                                );
+                            }
+
+                            if !raw.contains("\"inlineData\"") {
+                                if let Some(retry_secs) = extract_rate_limit_secs(&raw) {
+                                    tracing::warn!(user_id = %uid, retry_secs, "Google Live 429 rate-limit received");
+                                    let _ = client_sender
+                                        .send(Message::Text(
+                                            serde_json::json!({
+                                                "error": {
+                                                    "code": "RATE_LIMITED",
+                                                    "retry_after": retry_secs,
+                                                    "message": "An error has occurred. Try again later."
+                                                }
+                                            })
+                                            .to_string()
+                                            .into(),
+                                        ))
+                                        .await;
+                                    let _ = client_sender.close().await;
+                                    break;
+                                }
+
+                                if let Some(code) = extract_error_code(&raw) {
+                                    tracing::warn!(user_id = %uid, code, "Google Live returned an upstream error");
                                     let _ = client_sender
                                         .send(Message::Text(
                                             serde_json::json!({
@@ -284,118 +283,82 @@ pub(super) async fn handle_socket(
                                     let _ = client_sender
                                         .send(Message::Close(Some(axum::extract::ws::CloseFrame {
                                             code: 1011,
-                                            reason: "upstream reconnect failed".into(),
+                                            reason: "upstream error".into(),
                                         })))
                                         .await;
                                     break;
                                 }
-                            };
-                            let (new_sender, new_receiver) = new_upstream.split();
-                            upstream_sender = new_sender;
-                            upstream_receiver = new_receiver;
-                            continue;
-                        }
 
-                        if let Some(code) = extract_error_code(&raw) {
-                            tracing::warn!(%user_id, code, "Google Live returned an upstream error");
+                                if let Some(text) = extract_model_text(&raw) {
+                                    *last_text = text;
+                                }
+                            }
+
+                            if let Err(e) = client_sender.send(Message::Text(raw.into())).await {
+                                tracing::warn!(%e, "error forwarding upstream message to client");
+                                break;
+                            }
+                        }
+                        Some(Ok(TungsteniteMessage::Binary(bin))) => {
+                            if !logged_first_upstream_frame {
+                                logged_first_upstream_frame = true;
+                                tracing::info!(user_id = %uid, "first frame received from Google Live is BINARY");
+                            }
+                            if let Err(e) = client_sender.send(Message::Binary(bin)).await {
+                                tracing::warn!(%e, "error forwarding upstream message to client");
+                                break;
+                            }
+                        }
+                        Some(Ok(TungsteniteMessage::Close(c))) => {
+                            tracing::info!(
+                                user_id = %uid,
+                                code = c.as_ref().map(|f| u16::from(f.code)),
+                                reason = c.as_ref().map(|f| f.reason.to_string()),
+                                "Google Live closed the upstream connection"
+                            );
+                            let axum_close = c.map(|frame| axum::extract::ws::CloseFrame {
+                                code: frame.code.into(),
+                                reason: frame.reason.to_string().into(),
+                            });
+                            let _ = client_sender.send(Message::Close(axum_close)).await;
+                            break;
+                        }
+                        Some(Ok(_)) => {}
+                        Some(Err(err)) => {
+                            tracing::warn!(%err, "Google Live upstream read error");
+                            break;
+                        }
+                        None => {
+                            tracing::info!(user_id = %uid, "Google Live upstream closed without a close frame");
                             let _ = client_sender
                                 .send(Message::Text(
                                     serde_json::json!({
                                         "error": {
-                                            "code": "UPSTREAM_ERROR",
-                                            "message": "An error has occurred. Try again later."
+                                            "code": "UPSTREAM_DISCONNECTED",
+                                            "message": "The voice session was disconnected. Please try again."
                                         }
                                     })
                                     .to_string()
                                     .into(),
                                 ))
                                 .await;
-                            // Fix A: send a proper WebSocket close frame so the client
-                            // knows the session ended abnormally (code 1011 = internal error).
                             let _ = client_sender
                                 .send(Message::Close(Some(axum::extract::ws::CloseFrame {
-                                    code: 1011,
-                                    reason: "upstream error".into(),
+                                    code: 1001,
+                                    reason: "upstream disconnected".into(),
                                 })))
                                 .await;
-                            let _ = upstream_sender.close().await;
                             break;
                         }
-
-                        if let Some(text) = extract_model_text(&raw) {
-                            last_model_text = text;
-                            rate_limit_retries = 0;
-                        }
-
-                        if let Err(e) = client_sender
-                            .send(Message::Text(raw.into()))
-                            .await
-                        {
-                            tracing::warn!(%e, "error forwarding upstream message to client");
-                            break;
-                        }
-                    }
-                    Some(Ok(msg)) => {
-                        if matches!(msg, TungsteniteMessage::Binary(_)) && !logged_first_upstream_frame {
-                            logged_first_upstream_frame = true;
-                            tracing::info!(%user_id, "first frame received from Google Live is BINARY");
-                        }
-                        let axum_msg = match msg {
-                            TungsteniteMessage::Binary(bin) => Message::Binary(bin),
-                            TungsteniteMessage::Ping(p) => Message::Ping(p),
-                            TungsteniteMessage::Pong(p) => Message::Pong(p),
-                            TungsteniteMessage::Close(c) => {
-                                tracing::info!(
-                                    %user_id,
-                                    code = c.as_ref().map(|f| u16::from(f.code)),
-                                    reason = c.as_ref().map(|f| f.reason.to_string()),
-                                    "Google Live closed the upstream connection"
-                                );
-                                let axum_close = c.map(|frame| axum::extract::ws::CloseFrame {
-                                    code: frame.code.into(),
-                                    reason: frame.reason.to_string().into(),
-                                });
-                                Message::Close(axum_close)
-                            }
-                            TungsteniteMessage::Frame(_) => continue,
-                            TungsteniteMessage::Text(_) => unreachable!(),
-                        };
-                        if let Err(e) = client_sender.send(axum_msg).await {
-                            tracing::warn!(%e, "error forwarding upstream message to client");
-                            break;
-                        }
-                    }
-                    Some(Err(err)) => {
-                        tracing::warn!(%err, "Google Live upstream read error");
-                        break;
-                    }
-                    None => {
-                        tracing::info!(%user_id, "Google Live upstream closed without a close frame");
-                        // Fix B: notify the client that upstream dropped the connection so the
-                        // UI can show an error instead of hanging silently.
-                        let _ = client_sender
-                            .send(Message::Text(
-                                serde_json::json!({
-                                    "error": {
-                                        "code": "UPSTREAM_DISCONNECTED",
-                                        "message": "The voice session was disconnected. Please try again."
-                                    }
-                                })
-                                .to_string()
-                                .into(),
-                            ))
-                            .await;
-                        let _ = client_sender
-                            .send(Message::Close(Some(axum::extract::ws::CloseFrame {
-                                code: 1001,
-                                reason: "upstream disconnected".into(),
-                            })))
-                            .await;
-                        break;
                     }
                 }
             }
         }
+    };
+
+    tokio::select! {
+        _ = to_upstream => {}
+        _ = to_client => {}
     }
 
     if has_sent_audio && !last_model_text.is_empty() {
