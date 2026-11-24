@@ -1,8 +1,10 @@
+use chrono::Utc;
 use axum::http::{HeaderMap, StatusCode};
 use axum::routing::get;
 use axum::{Json as AxumJson, Router};
 use better_auth::plugins::api_key::VerifyApiKey;
 
+use crate::services::app_db::UsagePeriod;
 use crate::state::AppState;
 
 fn api_key_of(headers: &HeaderMap) -> Option<&str> {
@@ -131,6 +133,43 @@ async fn entitlements(
         })
         .collect();
 
+    let period = state.app_db.usage_period(&user_id).await.unwrap_or_else(|error| {
+        tracing::error!(%error, "account usage period lookup failed");
+        UsagePeriod {
+            monthly_start: Utc::now(),
+            monthly_reset: Utc::now(),
+            weekly_start: Utc::now(),
+            weekly_reset: Utc::now(),
+        }
+    });
+    let quota = state.app_db.quota_of(&plan).await.unwrap_or_else(|error| {
+        tracing::error!(%error, "account plan quota lookup failed");
+        Default::default()
+    });
+    let (monthly_tokens, weekly_tokens) =
+        state.app_db.tokens_used(&user_id).await.unwrap_or_else(|error| {
+            tracing::error!(%error, "account token usage lookup failed");
+            (0, 0)
+        });
+    let (voice_used, voice_quota) = state
+        .app_db
+        .voice_usage(&user_id, &plan)
+        .await
+        .unwrap_or_else(|error| {
+            tracing::error!(%error, "account voice usage lookup failed");
+            (0, 0)
+        });
+    let (search_used, search_quota) = state
+        .app_db
+        .search_usage(&user_id, &plan)
+        .await
+        .unwrap_or_else(|error| {
+            tracing::error!(%error, "account search usage lookup failed");
+            (0, 0)
+        });
+    let monthly_reset = period.monthly_reset.to_rfc3339();
+    let weekly_reset = period.weekly_reset.to_rfc3339();
+
     Ok(AxumJson(serde_json::json!({
         "user": {
             "id": user_id,
@@ -142,5 +181,27 @@ async fn entitlements(
             "id": plan,
         },
         "allowlist": allowlist,
+        "usage": {
+            "weekly": {
+                "used": weekly_tokens,
+                "limit": quota.weekly_tokens,
+                "reset_at": weekly_reset,
+            },
+            "monthly": {
+                "used": monthly_tokens,
+                "limit": quota.monthly_tokens,
+                "reset_at": monthly_reset,
+            },
+            "voice": {
+                "used": voice_used,
+                "limit": voice_quota,
+                "reset_at": monthly_reset,
+            },
+            "search": {
+                "used": search_used,
+                "limit": search_quota,
+                "reset_at": monthly_reset,
+            },
+        },
     })))
 }

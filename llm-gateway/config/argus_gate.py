@@ -72,7 +72,7 @@ def _deployed_models():
     return {
         entry["model_name"]
         for entry in config.get("model_list", [])
-        if not entry.get("model_name", "").startswith(AUTO_ALIAS)
+        if entry.get("model_name", "") != AUTO_ALIAS
     }
 
 

@@ -15,7 +15,7 @@ impl AppDb {
             .unwrap_or(0);
         let period = self.usage_period(user_id).await?;
         let used = sqlx::query_scalar::<_, i64>(
-            "SELECT COALESCE(SUM(used), 0) FROM search_monthly_usage WHERE user_id = $1 AND month_start = $2",
+            "SELECT COALESCE(SUM(used), 0)::bigint FROM search_monthly_usage WHERE user_id = $1 AND month_start = $2",
         )
         .bind(user_id)
         .bind(period.monthly_start.date_naive())
