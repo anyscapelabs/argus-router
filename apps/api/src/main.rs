@@ -183,6 +183,17 @@ fn cors(settings: &Settings) -> CorsLayer {
             origins.push(v);
         }
     }
+    for origin in [
+        "https://argus-agent.anyscapelabs.com",
+        "https://anyscapelabs.com",
+        "https://www.anyscapelabs.com",
+    ] {
+        if let Ok(v) = origin.parse() {
+            if !origins.iter().any(|existing| existing == &v) {
+                origins.push(v);
+            }
+        }
+    }
     CorsLayer::new()
         .allow_origin(AllowOrigin::list(origins))
         .allow_methods([

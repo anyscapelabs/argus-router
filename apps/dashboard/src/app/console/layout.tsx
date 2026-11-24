@@ -1,21 +1,25 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect } from "react";
 
+import { withNext } from "@/domains/auth/client";
 import { useSession } from "@/domains/auth/hooks";
 import { PageLoading } from "@/components/page-loading";
 import { Sidebar } from "@/components/sidebar";
 
 export default function ConsoleLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const session = useSession();
 
   useEffect(() => {
     if (session.isSuccess && !session.data) {
-      router.replace("/auth/login");
+      const nextPath = `${pathname}${searchParams.toString() ? `?${searchParams.toString()}` : ""}`;
+      router.replace(withNext("/auth/login", nextPath));
     }
-  }, [session.isSuccess, session.data, router]);
+  }, [session.isSuccess, session.data, router, pathname, searchParams]);
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden">

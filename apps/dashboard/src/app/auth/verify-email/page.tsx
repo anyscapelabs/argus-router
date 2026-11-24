@@ -4,6 +4,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useRef } from "react";
 import { FaCheckCircle, FaSpinner } from "react-icons/fa";
 
+import { sanitizeNextPath } from "@/domains/auth/client";
 import { useResendVerification, useVerifyEmail } from "@/domains/auth/hooks";
 
 function VerifyEmail() {
@@ -11,8 +12,9 @@ function VerifyEmail() {
   const params = useSearchParams();
   const token = params.get("token");
   const email = params.get("email");
+  const nextPath = sanitizeNextPath(params.get("next"), "/console/overview");
   const verify = useVerifyEmail();
-  const resend = useResendVerification();
+  const resend = useResendVerification(nextPath);
   const attempted = useRef(false);
 
   useEffect(() => {
@@ -24,9 +26,9 @@ function VerifyEmail() {
 
   useEffect(() => {
     if (verify.isSuccess) {
-      router.replace("/onboarding");
+      router.replace(nextPath);
     }
-  }, [verify.isSuccess, router]);
+  }, [verify.isSuccess, router, nextPath]);
 
   return (
     <main className="relative flex min-h-full flex-1 flex-col items-center justify-center gap-8">

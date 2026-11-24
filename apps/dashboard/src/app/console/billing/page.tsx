@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useState, type ReactNode } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useState, type ReactNode } from "react";
 import { GoCreditCard, GoGear, GoHistory, GoInfo } from "react-icons/go";
 import { UpgradePlansModal } from "@/components/upgrade-plans-modal";
 import { useBilling, useBillingPortal } from "@/domains/billing/hooks";
@@ -40,6 +41,9 @@ function MenuButton({
 }
 
 export default function BillingPage() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [tab, setTab] = useState<Tab>("Overview");
   const [upgradeOpen, setUpgradeOpen] = useState(false);
   const portal = useBillingPortal();
@@ -48,6 +52,16 @@ export default function BillingPage() {
   const planName = plans.data?.plans.find((plan) => plan.id === billing.data?.planId)?.name ?? "Free";
   const hasPaidPlan =
     billing.isSuccess && !!billing.data?.planId && billing.data.planId !== "free";
+
+  useEffect(() => {
+    if (searchParams.get("upgrade") === "1") {
+      setUpgradeOpen(true);
+      const params = new URLSearchParams(searchParams.toString());
+      params.delete("upgrade");
+      const qs = params.toString();
+      router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+    }
+  }, [searchParams, pathname, router]);
 
   return (
     <div className="mx-auto w-full max-w-5xl">

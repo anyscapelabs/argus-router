@@ -19,7 +19,6 @@ pub fn router() -> Router<AppState> {
 
 async fn list_plans(
     State(state): State<AppState>,
-    _session: CurrentSession<AppAuthSchema>,
 ) -> Result<AxumJson<serde_json::Value>, (StatusCode, AxumJson<serde_json::Value>)> {
     let plans = state.app_db.list_plans().await.map_err(|_error| {
         (

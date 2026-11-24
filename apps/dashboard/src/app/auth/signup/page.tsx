@@ -1,24 +1,27 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect } from "react";
 import { FaGithub, FaGoogle, FaSpinner } from "react-icons/fa";
 
+import { sanitizeNextPath, withNext } from "@/domains/auth/client";
 import { useEmailSignUp, useSession, useSocialSignIn } from "@/domains/auth/hooks";
 
 export default function SignupPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const nextPath = sanitizeNextPath(searchParams.get("next"), "/onboarding");
   const session = useSession();
-  const signUp = useEmailSignUp();
-  const google = useSocialSignIn("google", "/onboarding");
-  const github = useSocialSignIn("github", "/onboarding");
+  const signUp = useEmailSignUp(nextPath);
+  const google = useSocialSignIn("google", nextPath);
+  const github = useSocialSignIn("github", nextPath);
   const isMutating = signUp.isPending || google.isPending || github.isPending;
 
   useEffect(() => {
     if (session.isSuccess && session.data) {
-      router.replace("/onboarding");
+      router.replace(nextPath);
     }
-  }, [session.isSuccess, session.data, router]);
+  }, [session.isSuccess, session.data, router, nextPath]);
 
   return (
     <main className="relative flex min-h-full flex-1 flex-col items-center justify-center gap-8">
@@ -107,7 +110,7 @@ export default function SignupPage() {
           </form>
           <p className="w-96 text-center text-sm text-white/70">
             Already have an account?{" "}
-            <a href="/auth/login" className="font-medium text-white underline hover:text-white/80">
+            <a href={withNext("/auth/login", nextPath)} className="font-medium text-white underline hover:text-white/80">
               Sign in
             </a>
           </p>

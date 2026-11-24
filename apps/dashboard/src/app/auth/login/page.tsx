@@ -1,24 +1,27 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect } from "react";
 import { FaGithub, FaGoogle, FaSpinner } from "react-icons/fa";
 
+import { sanitizeNextPath, withNext } from "@/domains/auth/client";
 import { useEmailSignIn, useSession, useSocialSignIn } from "@/domains/auth/hooks";
 
 export default function LoginPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const nextPath = sanitizeNextPath(searchParams.get("next"), "/console/overview");
   const session = useSession();
-  const signIn = useEmailSignIn();
-  const google = useSocialSignIn("google");
-  const github = useSocialSignIn("github");
+  const signIn = useEmailSignIn(nextPath);
+  const google = useSocialSignIn("google", nextPath);
+  const github = useSocialSignIn("github", nextPath);
   const isMutating = signIn.isPending || google.isPending || github.isPending;
 
   useEffect(() => {
     if (session.isSuccess && session.data) {
-      router.replace("/console/overview");
+      router.replace(nextPath);
     }
-  }, [session.isSuccess, session.data, router]);
+  }, [session.isSuccess, session.data, router, nextPath]);
   return (
     <main className="relative flex min-h-full flex-1 flex-col items-center justify-center gap-8">
       <div className="absolute top-6 left-6 text-xl font-medium text-white/80">
@@ -107,7 +110,7 @@ export default function LoginPage() {
       </form>
       <p className="w-96 text-center text-sm text-white/70">
         Don&apos;t have an account?{" "}
-        <a href="/auth/signup" className="font-medium text-white underline hover:text-white/80">
+        <a href={withNext("/auth/signup", nextPath)} className="font-medium text-white underline hover:text-white/80">
           Sign up
         </a>
       </p>

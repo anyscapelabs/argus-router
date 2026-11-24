@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 
 import { toast } from "sonner";
 
-import { authClient, dashboardPath } from "./client";
+import { authClient, dashboardPath, sanitizeNextPath, withNext } from "./client";
 import { API_ROUTES } from "@/config/api";
 
 const SESSION_KEY = ["auth", "session"] as const;
@@ -36,16 +36,17 @@ export function useSession() {
   });
 }
 
-export function useEmailSignUp() {
+export function useEmailSignUp(nextPath = "/onboarding") {
   const router = useRouter();
   return useMutation({
     mutationFn: async (input: { email: string; name?: string }) => {
+      const safeNext = sanitizeNextPath(nextPath, "/onboarding");
       const response = await authClient.signIn.magicLink({
         email: input.email,
         name: input.name,
-        callbackURL: dashboardPath("/onboarding"),
-        newUserCallbackURL: dashboardPath("/onboarding"),
-        errorCallbackURL: dashboardPath("/auth/signup"),
+        callbackURL: dashboardPath(safeNext),
+        newUserCallbackURL: dashboardPath(safeNext),
+        errorCallbackURL: dashboardPath(withNext("/auth/signup", safeNext)),
       });
       if (response.error) {
         throw toAuthError(response.error, "Sign up failed");
@@ -54,7 +55,7 @@ export function useEmailSignUp() {
     },
     onSuccess: (_data, variables) => {
       toast.success("Check your inbox for a sign-in link");
-      router.push(`/auth/verify-email?email=${encodeURIComponent(variables.email)}`);
+      router.push(withNext(`/auth/verify-email?email=${encodeURIComponent(variables.email)}`, nextPath));
     },
     onError: (error) => {
       toast.error(error.message);
@@ -62,15 +63,16 @@ export function useEmailSignUp() {
   });
 }
 
-export function useEmailSignIn() {
+export function useEmailSignIn(nextPath = "/console/overview") {
   const router = useRouter();
   return useMutation({
     mutationFn: async (input: { email: string }) => {
+      const safeNext = sanitizeNextPath(nextPath, "/console/overview");
       const response = await authClient.signIn.magicLink({
         email: input.email,
-        callbackURL: dashboardPath("/console/overview"),
+        callbackURL: dashboardPath(safeNext),
         newUserCallbackURL: dashboardPath("/onboarding"),
-        errorCallbackURL: dashboardPath("/auth/login"),
+        errorCallbackURL: dashboardPath(withNext("/auth/login", safeNext)),
       });
       if (response.error) {
         throw toAuthError(response.error, "Sign in failed");
@@ -79,7 +81,7 @@ export function useEmailSignIn() {
     },
     onSuccess: (_data, variables) => {
       toast.success("Check your inbox for a sign-in link");
-      router.push(`/auth/verify-email?email=${encodeURIComponent(variables.email)}`);
+      router.push(withNext(`/auth/verify-email?email=${encodeURIComponent(variables.email)}`, nextPath));
     },
     onError: (error) => {
       toast.error(error.message);
@@ -90,10 +92,11 @@ export function useEmailSignIn() {
 export function useSocialSignIn(provider: "google" | "github", callbackPath = "/console/overview") {
   return useMutation({
     mutationFn: async () => {
+      const safeNext = sanitizeNextPath(callbackPath, "/console/overview");
       const response = await authClient.signIn.social({
         provider,
-        callbackURL: dashboardPath(callbackPath),
-        newUserCallbackURL: dashboardPath("/onboarding"),
+        callbackURL: dashboardPath(safeNext),
+        newUserCallbackURL: dashboardPath(safeNext === "/console/overview" ? "/onboarding" : safeNext),
       });
       if (response.error) {
         throw toAuthError(response.error, "Social sign-in failed");
@@ -126,14 +129,15 @@ export function useVerifyEmail() {
   });
 }
 
-export function useResendVerification() {
+export function useResendVerification(nextPath = "/console/overview") {
   return useMutation({
     mutationFn: async (email: string) => {
+      const safeNext = sanitizeNextPath(nextPath, "/console/overview");
       const response = await authClient.signIn.magicLink({
         email,
-        callbackURL: dashboardPath("/console/overview"),
+        callbackURL: dashboardPath(safeNext),
         newUserCallbackURL: dashboardPath("/onboarding"),
-        errorCallbackURL: dashboardPath("/auth/verify-email"),
+        errorCallbackURL: dashboardPath(withNext("/auth/verify-email", safeNext)),
       });
       if (response.error) {
         throw toAuthError(response.error, "Could not resend the sign-in link");
