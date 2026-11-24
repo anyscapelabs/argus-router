@@ -6,6 +6,22 @@ use sqlx::PgPool;
 use sqlx::QueryBuilder;
 use tokio::sync::mpsc;
 
+const FALLBACK_ERROR_CODE: &str = "upstream_error";
+
+pub fn normalize_error_code(raw: Option<&str>) -> Option<String> {
+    let code = raw?.trim();
+    if code.is_empty()
+        || code.len() > 64
+        || !code.as_bytes()[0].is_ascii_lowercase()
+        || !code
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+    {
+        return Some(FALLBACK_ERROR_CODE.to_owned());
+    }
+    Some(code.to_owned())
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum LogType {
     #[default]
@@ -162,7 +178,7 @@ async fn insert(pool: &PgPool, rows: &[Stamped]) -> Result<(), sqlx::Error> {
             .push_bind(row.cost_usd)
             .push_bind(row.status)
             .push_bind(row.latency_ms)
-            .push_bind(row.error_code.clone())
+            .push_bind(normalize_error_code(row.error_code.as_deref()))
             .push_bind(row.log_type.as_str())
             .push_bind(row.details.to_string());
     });
@@ -198,6 +214,7 @@ async fn settle_generation(
         };
     }
 
+    let error_code = normalize_error_code(row.error_code.as_deref());
     let usage_inserted = sqlx::query(
         "INSERT INTO usage_logs
            (event_id, created_at, key_id, user_id, plan_id, model, requested_model, provider,
@@ -220,7 +237,7 @@ async fn settle_generation(
     .bind(row.cost_usd)
     .bind(row.status)
     .bind(row.latency_ms)
-    .bind(row.error_code)
+    .bind(error_code)
     .bind(row.log_type.as_str())
     .bind(row.details.to_string())
     .execute(tx.as_mut())
@@ -237,4 +254,23 @@ async fn settle_generation(
         .await?;
     tx.commit().await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_error_code;
+
+    #[test]
+    fn normalizes_error_codes() {
+        assert_eq!(normalize_error_code(None), None);
+        assert_eq!(
+            normalize_error_code(Some("  upstream_error ")),
+            Some("upstream_error".to_owned())
+        );
+        assert_eq!(
+            normalize_error_code(Some("Brave search error (429): {\"message\":\"slow down\"}")),
+            Some("upstream_error".to_owned())
+        );
+        assert_eq!(normalize_error_code(Some("")), Some("upstream_error".to_owned()));
+    }
 }

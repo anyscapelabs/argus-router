@@ -11,7 +11,7 @@ use crate::services::app_db::{
     GenerationReservation, GenerationReservationOutcome, UsagePeriod,
 };
 use crate::services::catalog::{AUTO_MODEL_ID, ModelCatalogEntry, Tier};
-use crate::services::usage::{LogType, UsageRow};
+use crate::services::usage::{LogType, UsageRow, normalize_error_code};
 use crate::state::AppState;
 
 pub struct Principal {
@@ -494,11 +494,24 @@ async fn forward_to_llm_gateway(
         // Gateway returned an error — relay it, settle billing as 0 cost.
         let body_bytes = upstream.bytes().await.unwrap_or_default();
         let status_u16 = gw_status.as_u16();
-        let err_code = if status_u16 == 429 {
-            "rate_limited"
-        } else {
-            "upstream_error"
-        };
+        let upstream_code = serde_json::from_slice::<serde_json::Value>(&body_bytes)
+            .ok()
+            .and_then(|body| {
+                let error = body.get("error")?;
+                error
+                    .get("code")
+                    .or_else(|| error.get("type"))
+                    .and_then(|value| value.as_str())
+                    .map(str::to_owned)
+            })
+            .and_then(|code| normalize_error_code(Some(&code)));
+        let err_code = upstream_code.unwrap_or_else(|| {
+            if status_u16 == 429 {
+                "rate_limited".to_owned()
+            } else {
+                "upstream_error".to_owned()
+            }
+        });
         let row = UsageRow {
             key_id: Some(principal.key_id.clone()),
             user_id: Some(principal.user_id.clone()),
@@ -512,7 +525,7 @@ async fn forward_to_llm_gateway(
             cost_usd: 0.0,
             status: status_u16 as i32,
             latency_ms: Some(start.elapsed().as_millis() as i64),
-            error_code: Some(err_code.to_owned()),
+            error_code: Some(err_code),
             ..Default::default()
         };
         let _ = settle_generation_usage(&state.usage, &reservation.id, row).await;

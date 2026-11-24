@@ -1,7 +1,14 @@
 "use client";
 
 import { useSearchParams } from "next/navigation";
-import { Suspense, useState, type ReactNode } from "react";
+import {
+  Suspense,
+  createContext,
+  useContext,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import { HiMiniArrowPath } from "react-icons/hi2";
 import {
   LogsDatePicker,
@@ -10,11 +17,20 @@ import {
 } from "@/components/logs-date-picker";
 import { PageLoading } from "@/components/page-loading";
 import { Skeleton } from "@/components/skeleton";
+import { useApiKeys } from "@/domains/keys/hooks";
 import { useUsage } from "@/domains/usage/hooks";
 import type { UsageRow } from "@/domains/usage/api";
 
 const TABS = ["Chat", "Voice", "Web Search"] as const;
 type Tab = (typeof TABS)[number];
+
+const KeyNamesContext = createContext<Map<string, string>>(new Map());
+
+function KeyName({ keyId }: { keyId: string | null }) {
+  const names = useContext(KeyNamesContext);
+  if (!keyId) return <>-</>;
+  return <span>{names.get(keyId) ?? keyId}</span>;
+}
 
 type LogColumn = {
   label: string;
@@ -26,7 +42,7 @@ const CHAT_COLUMNS: LogColumn[] = [
   { label: "Time", render: (row) => <span suppressHydrationWarning>{formatTime(row.createdAt)}</span> },
   { label: "Status", render: (row) => <StatusPill row={row} /> },
   { label: "Model", render: (row) => row.model ?? "-" },
-  { label: "API Key", render: (row) => <span className="font-mono">{row.keyId ?? "-"}</span> },
+  { label: "API Key", render: (row) => <KeyName keyId={row.keyId} /> },
   { label: "Duration", render: (row) => formatLatency(row.latencyMs) },
   { label: "Input tokens", className: "text-right", render: (row) => formatNumber(row.inputTokens) },
   { label: "Output tokens", className: "text-right", render: (row) => formatNumber(row.outputTokens) },
@@ -36,7 +52,7 @@ const VOICE_COLUMNS: LogColumn[] = [
   { label: "Time", render: (row) => <span suppressHydrationWarning>{formatTime(row.createdAt)}</span> },
   { label: "Status", render: (row) => <StatusPill row={row} /> },
   { label: "Model", render: (row) => row.model ?? "-" },
-  { label: "API Key", render: (row) => <span className="font-mono">{row.keyId ?? "-"}</span> },
+  { label: "API Key", render: (row) => <KeyName keyId={row.keyId} /> },
   { label: "Duration", render: (row) => formatLatency(row.latencyMs) },
   { label: "Turns", render: (row) => row.details?.turns ?? "—" },
 ];
@@ -169,6 +185,14 @@ function LogsPageContent() {
         999,
       ).toISOString()
     : undefined;
+  const keys = useApiKeys();
+  const keyNames = useMemo(
+    () =>
+      new Map(
+        (keys.data?.apiKeys ?? []).map((key) => [key.id, key.name ?? "Untitled"] as const),
+      ),
+    [keys.data],
+  );
   const common = { keyId, since, until, limit: 50 };
   const chat = useUsage({ ...common, logType: "chat", enabled: tab === "Chat" });
   const voice = useUsage({ ...common, logType: "voice", enabled: tab === "Voice" });
@@ -218,12 +242,14 @@ function LogsPageContent() {
           </button>
         </div>
       </div>
-      <LogsTable
-        tab={tab}
-        rows={active.data?.rows ?? []}
-        isLoading={active.isPending}
-        errorMessage={active.isError ? active.error.message : null}
-      />
+      <KeyNamesContext.Provider value={keyNames}>
+        <LogsTable
+          tab={tab}
+          rows={active.data?.rows ?? []}
+          isLoading={active.isPending}
+          errorMessage={active.isError ? active.error.message : null}
+        />
+      </KeyNamesContext.Provider>
     </div>
   );
 }

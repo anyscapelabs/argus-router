@@ -113,6 +113,7 @@ async fn list_usage(
 
     let mut out = Vec::new();
     for row in rows {
+        let error_code = row.try_get::<Option<String>, _>("error_code").ok().flatten();
         out.push(serde_json::json!({
             "id": row.try_get::<i64, _>("id").ok(),
             "createdAt": row.try_get::<chrono::DateTime<chrono::Utc>, _>("created_at").map(|v| v.to_rfc3339()).ok(),
@@ -129,7 +130,7 @@ async fn list_usage(
             "cacheReadTokens": row.try_get::<i64, _>("cache_read_tokens").ok(),
             "status": row.try_get::<i32, _>("status").ok(),
             "latencyMs": row.try_get::<Option<i64>, _>("latency_ms").ok().flatten(),
-            "errorCode": row.try_get::<Option<String>, _>("error_code").ok().flatten(),
+            "errorCode": crate::services::usage::normalize_error_code(error_code.as_deref()),
             "logType": row.try_get::<String, _>("log_type").unwrap_or_else(|_| "chat".to_owned()),
             "details": row.try_get::<String, _>("details")
                 .ok()
