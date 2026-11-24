@@ -154,20 +154,6 @@ model_list:
     model_info:
       disable_background_health_check: true
       max_tokens: 32768
-  - model_name: bedrock/nova-2-lite
-    litellm_params:
-      model: bedrock/global.amazon.nova-2-lite-v1:0
-      aws_region_name: eu-north-1
-    model_info:
-      disable_background_health_check: true
-      max_tokens: 64000
-  - model_name: bedrock/nova-pro
-    litellm_params:
-      model: bedrock/eu.amazon.nova-pro-v1:0
-      aws_region_name: eu-north-1
-    model_info:
-      disable_background_health_check: true
-      max_tokens: 10000
   - model_name: bedrock/kimi-k2.5
     litellm_params:
       model: bedrock/moonshotai.kimi-k2.5
@@ -331,22 +317,6 @@ model_list:
       disable_background_health_check: true
       id: bedrock-kimi-k2.5-auto-standard
       max_tokens: 16000
-  - model_name: argus/auto-standard-bedrock
-    litellm_params:
-      model: bedrock/global.amazon.nova-2-lite-v1:0
-      aws_region_name: eu-north-1
-    model_info:
-      disable_background_health_check: true
-      id: bedrock-nova-2-lite-auto-standard
-      max_tokens: 64000
-  - model_name: argus/auto-standard-bedrock
-    litellm_params:
-      model: bedrock/eu.amazon.nova-pro-v1:0
-      aws_region_name: eu-north-1
-    model_info:
-      disable_background_health_check: true
-      id: bedrock-nova-pro-auto-standard
-      max_tokens: 10000
   - model_name: argus/auto-standard-openrouter
     litellm_params:
       model: openrouter/deepseek/deepseek-v4-pro
