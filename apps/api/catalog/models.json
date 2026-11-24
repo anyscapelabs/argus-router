@@ -559,32 +559,6 @@
     "status": "manual-only"
   },
   {
-    "id": "bedrock/nova-lite",
-    "name": "Nova Lite (Bedrock)",
-    "compat": "openai",
-    "provider": "bedrock",
-    "upstream_model": "bedrock/eu.amazon.nova-lite-v1:0",
-    "context": 300000,
-    "max_output": 10000,
-    "capabilities": {
-      "tools": true,
-      "vision": true,
-      "reasoning": false
-    },
-    "pricing": {
-      "input": "0.06",
-      "output": "0.24",
-      "cache_read": "0.015",
-      "cache_write": null
-    },
-    "free": false,
-    "tier": "lite",
-    "auto": true,
-    "auto_priority": 1,
-    "group": "lite",
-    "status": "auto-eligible"
-  },
-  {
     "id": "bedrock/nova-2-lite",
     "name": "Nova 2 Lite (Bedrock)",
     "compat": "openai",

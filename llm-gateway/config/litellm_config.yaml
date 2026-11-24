@@ -154,13 +154,6 @@ model_list:
     model_info:
       disable_background_health_check: true
       max_tokens: 32768
-  - model_name: bedrock/nova-lite
-    litellm_params:
-      model: bedrock/eu.amazon.nova-lite-v1:0
-      aws_region_name: eu-north-1
-    model_info:
-      disable_background_health_check: true
-      max_tokens: 10000
   - model_name: bedrock/nova-2-lite
     litellm_params:
       model: bedrock/global.amazon.nova-2-lite-v1:0
@@ -246,14 +239,6 @@ model_list:
       disable_background_health_check: true
       id: bedrock-glm-4.7-flash-auto-lite
       max_tokens: 128000
-  - model_name: argus/auto-lite-bedrock
-    litellm_params:
-      model: bedrock/eu.amazon.nova-lite-v1:0
-      aws_region_name: eu-north-1
-    model_info:
-      disable_background_health_check: true
-      id: bedrock-nova-lite-auto-lite
-      max_tokens: 10000
   - model_name: argus/auto-lite-openrouter
     litellm_params:
       model: openrouter/anthropic/claude-haiku-5.5
