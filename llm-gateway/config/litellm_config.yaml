@@ -189,13 +189,6 @@ model_list:
     model_info:
       disable_background_health_check: true
       max_tokens: 64000
-  - model_name: bedrock/glm-4.7-flash
-    litellm_params:
-      model: bedrock/zai.glm-4.7-flash
-      aws_region_name: eu-north-1
-    model_info:
-      disable_background_health_check: true
-      max_tokens: 128000
   - model_name: bedrock/glm-4.7
     litellm_params:
       model: bedrock/zai.glm-4.7
@@ -217,14 +210,6 @@ model_list:
     model_info:
       disable_background_health_check: true
       max_tokens: 8000
-  - model_name: argus/auto-lite-bedrock
-    litellm_params:
-      model: bedrock/zai.glm-4.7-flash
-      aws_region_name: eu-north-1
-    model_info:
-      disable_background_health_check: true
-      id: bedrock-glm-4.7-flash-auto-lite
-      max_tokens: 128000
   - model_name: argus/auto-lite-openrouter
     litellm_params:
       model: openrouter/anthropic/claude-haiku-5.5

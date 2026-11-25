@@ -146,7 +146,7 @@ fn starter_max_max_plus_model_sets_nest() {
 fn plan_model_counts_match_expected_groups() {
     let catalog = api::services::catalog::seed_entries();
     let plans = api::services::plans::expand_groups(api::services::plans::seed_entries(), &catalog);
-    let expected = [("free", 7), ("starter", 16), ("max", 21), ("max-plus", 26)];
+    let expected = [("free", 6), ("starter", 15), ("max", 20), ("max-plus", 25)];
     for (id, count) in expected {
         let plan = plans.iter().find(|plan| plan.id == id).expect("plan exists");
         assert_eq!(

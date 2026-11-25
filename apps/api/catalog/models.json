@@ -679,32 +679,6 @@
     "status": "manual-only"
   },
   {
-    "id": "bedrock/glm-4.7-flash",
-    "name": "GLM 4.7 Flash (Bedrock)",
-    "compat": "openai",
-    "provider": "bedrock",
-    "upstream_model": "bedrock/zai.glm-4.7-flash",
-    "context": 203000,
-    "max_output": 128000,
-    "capabilities": {
-      "tools": true,
-      "vision": false,
-      "reasoning": false
-    },
-    "pricing": {
-      "input": "0.07",
-      "output": "0.40",
-      "cache_read": "0.0175",
-      "cache_write": null
-    },
-    "free": false,
-    "tier": "lite",
-    "auto": true,
-    "auto_priority": 2,
-    "group": "lite",
-    "status": "auto-eligible"
-  },
-  {
     "id": "bedrock/glm-4.7",
     "name": "GLM 4.7 (Bedrock)",
     "compat": "openai",
